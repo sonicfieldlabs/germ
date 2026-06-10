@@ -250,9 +250,9 @@ running outside the realtime audio path.
 
 ## POST /jobs/{job_id}/cancel
 
-Cancels a queued job. A job whose provider subprocess is already running finishes its
-current render (cancellation is cooperative today; see `germ-plan.md` Phase 1 for the
-planned hard-kill upgrade).
+Cancels a queued or running dashboard job. Queued jobs are removed before execution;
+running jobs receive a provider cancellation signal. The MLX provider terminates its
+child process group when that signal is observed.
 
 ## GET /control/ports
 
@@ -295,10 +295,21 @@ default.
 
 Returns recent persisted control monitor events.
 
+## GET /control/monitor
+
+Alias for `/control/events`. It is intentionally read-only and does not open any
+hardware listener or background UDP/MIDI process.
+
 ## POST /control/events
 
 Records a typed local monitor event. The dashboard uses this for MIDI scan results,
 OSC bridge events, and canvas control snapshots.
+
+## POST /control/panic
+
+Disarms all CV profiles and records a `panic_zero` control event. This is a local
+safety action only: MIDI output is not enabled and CV hardware output remains gated by
+profile calibration, speaker-protection, and explicit arm confirmation.
 
 ## POST /control/osc/send
 

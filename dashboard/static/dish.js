@@ -3017,9 +3017,9 @@ function openLibraryPicker(worldPoint) {
             </button>`).join("") : '<div class="dish-library-empty">No sounds match.</div>'}
         </div>
         ${totalPages > 1 ? `<div class="dish-library-pagination">
-          <button type="button" data-lib-page="prev" ${currentPage === 0 ? "disabled" : ""}>&larr;</button>
+          <button type="button" data-lib-page="prev" aria-label="Previous library page" title="Previous page" ${currentPage === 0 ? "disabled" : ""}>&larr;</button>
           <span>${currentPage + 1} / ${totalPages}</span>
-          <button type="button" data-lib-page="next" ${currentPage >= totalPages - 1 ? "disabled" : ""}>&rarr;</button>
+          <button type="button" data-lib-page="next" aria-label="Next library page" title="Next page" ${currentPage >= totalPages - 1 ? "disabled" : ""}>&rarr;</button>
         </div>` : ""}
         <button class="dish-cards-cancel" type="button" data-card-cancel>esc</button>
       </div>`;
@@ -3519,7 +3519,43 @@ function loadDish() {
       if (raw) localStorage.setItem(`${STORAGE_KEY}-corrupt`, raw);
     } catch { /* storage unavailable */ }
     germs = [];
+    showCorruptDishRecovery();
   }
+}
+
+function showCorruptDishRecovery() {
+  const host = dom.cards;
+  if (!host) {
+    E.finishWork?.("Microcosmos Reset", "bad", "Stored dish state was unreadable.");
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="dish-cards-inner">
+      <span class="dish-cards-kicker">Microcosmos Recovery</span>
+      <h3 style="margin: 0; font-size: 18px;">Stored dish state could not be read</h3>
+      <p style="margin: 0; color: var(--dish-soft); font-size: 13px; line-height: 1.45;">A raw backup was preserved locally. Restore it if you want to inspect it later, or discard it and continue with a clean dish.</p>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <button id="dishRestoreCorruptBtn" class="dish-pixel-button" type="button">Restore Raw</button>
+        <button id="dishDiscardCorruptBtn" class="dish-pixel-button" type="button">Discard</button>
+      </div>
+    </div>`;
+  document.getElementById("dishRestoreCorruptBtn")?.addEventListener("click", () => {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_KEY}-corrupt`);
+      if (raw) localStorage.setItem(STORAGE_KEY, raw);
+    } catch { /* storage unavailable */ }
+    host.hidden = true;
+    E.finishWork?.("Raw Backup Restored", "ok", "Reload Microcosmos to retry the saved state.");
+  });
+  document.getElementById("dishDiscardCorruptBtn")?.addEventListener("click", () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(`${STORAGE_KEY}-corrupt`);
+    } catch { /* storage unavailable */ }
+    host.hidden = true;
+    E.finishWork?.("Corrupt Backup Discarded", "ok", "Microcosmos is using a clean state.");
+  });
 }
 
 // ---- Pointer / interaction ----------------------------------------------

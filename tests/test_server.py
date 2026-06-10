@@ -17,6 +17,7 @@ from server.providers.stable_audio_mlx_provider import StableAudioMLXProvider
 from server.providers.stable_audio_python_provider import StableAudioPythonProvider
 from server.registry import control_registry, registry, settings, storage, strain_registry
 from server.routes import audio_tools
+from server.routes import micro as micro_routes
 from server.routes.time_render import time_clock_summary
 from server.schemas import GenerationResult, GenerateRequest, InpaintRequest, TimeClock, TimeRenderRequest
 from server.storage import JOB_EVICTION_GRACE_SECONDS, MAX_TRACKED_JOBS
@@ -419,6 +420,46 @@ def test_strain_registry_roundtrip_and_generation_metadata() -> None:
     assert metadata["strain_stack"] == metadata["lora_strains"]
 
 
+def test_strain_get_delete_and_direct_lora_routes() -> None:
+    save_response = client.post(
+        "/strains",
+        json={
+            "name": "pytest disposable strain",
+            "path": "output/strains/pytest_disposable.safetensors",
+            "tags": ["pytest"],
+        },
+    )
+    assert save_response.status_code == 200
+    strain = save_response.json()
+
+    get_response = client.get(f"/strains/{strain['id']}")
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == strain["id"]
+
+    lora_load = client.post(
+        "/lora/load",
+        json={"provider": "mock", "paths": ["output/strains/pytest_direct.safetensors"]},
+    )
+    assert lora_load.status_code == 200
+    assert lora_load.json()["status"] == "loaded"
+    assert "output/strains/pytest_direct.safetensors" in lora_load.json()["loaded_loras"]
+
+    lora_strength = client.post(
+        "/lora/strength",
+        json={"provider": "mock", "strength": 0.42, "lora_index": 0},
+    )
+    assert lora_strength.status_code == 200
+    assert lora_strength.json()["status"] == "set"
+    assert lora_strength.json()["strength"] == 0.42
+
+    delete_response = client.delete(f"/strains/{strain['id']}")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["status"] == "deleted"
+
+    missing_response = client.get(f"/strains/{strain['id']}")
+    assert missing_response.status_code == 404
+
+
 def test_micro_matter_profile_and_graph_links() -> None:
     strain_response = client.post(
         "/strains",
@@ -497,6 +538,37 @@ def test_micro_matter_profile_and_graph_links() -> None:
     assert "strain-applied" in edge_types
     assert "micro-shape" in edge_types
     assert "micro-profiled" in edge_types
+
+
+def test_micro_matter_profile_reuses_cached_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    source_path = settings.audio_dir / "pytest_micro_cache_source.wav"
+    write_sine_wav(source_path, duration=0.25)
+    with micro_routes._MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
+        micro_routes._MATTER_PROFILE_ANALYSIS_CACHE.clear()
+
+    calls = 0
+    original_analyze = micro_routes._analyze_features
+
+    def counting_analyze(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original_analyze(**kwargs)
+
+    monkeypatch.setattr(micro_routes, "_analyze_features", counting_analyze)
+    payload = {
+        "input_audio_path": storage.relative_path(source_path),
+        "module": "microscope",
+        "window_ms": 20,
+        "hop_ms": 10,
+        "output_name": "pytest_micro_cache_profile",
+    }
+    first = client.post("/micro/matter-profile", json=payload)
+    second = client.post("/micro/matter-profile", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["descriptors"] == second.json()["descriptors"]
+    assert calls == 1
 
 
 def test_huggingface_status_reports_cli_auth_without_model_check() -> None:
@@ -1298,8 +1370,10 @@ def test_cancel_running_job_signals_provider(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_job_eviction_keeps_recent_terminal_jobs_during_grace_window() -> None:
     original_jobs = dict(storage.jobs)
+    original_listeners = dict(storage.job_listeners)
     try:
         storage.jobs.clear()
+        storage.job_listeners.clear()
         recent = datetime.now(timezone.utc).isoformat()
         for index in range(MAX_TRACKED_JOBS + 1):
             storage.jobs[f"recent-{index}"] = {
@@ -1322,9 +1396,38 @@ def test_job_eviction_keeps_recent_terminal_jobs_during_grace_window() -> None:
 
         storage._evict_old_jobs()
         assert len(storage.jobs) == MAX_TRACKED_JOBS
+
+        jobs_before_listener_pressure = set(storage.jobs)
+        storage.jobs["old-active-listener"] = {
+            "job_id": "old-active-listener",
+            "status": "done",
+            "created_at": old,
+            "updated_at": old,
+        }
+        storage.job_listeners["old-active-listener"] = 1
+        storage._evict_old_jobs()
+        assert "old-active-listener" in storage.jobs
+        assert len(storage.jobs) == MAX_TRACKED_JOBS
+        assert len(jobs_before_listener_pressure - set(storage.jobs)) == 1
+
+        storage.job_listeners.pop("old-active-listener", None)
+        for job_id, job in storage.jobs.items():
+            if job_id != "old-active-listener":
+                job["status"] = "running"
+        storage.jobs["running-pressure"] = {
+            "job_id": "running-pressure",
+            "status": "running",
+            "created_at": old,
+            "updated_at": old,
+        }
+        storage._evict_old_jobs()
+        assert "old-active-listener" not in storage.jobs
+        assert len(storage.jobs) == MAX_TRACKED_JOBS
     finally:
         storage.jobs.clear()
         storage.jobs.update(original_jobs)
+        storage.job_listeners.clear()
+        storage.job_listeners.update(original_listeners)
 
 
 def test_mock_audio_to_audio_accepts_input_path() -> None:
@@ -1344,6 +1447,29 @@ def test_mock_audio_to_audio_accepts_input_path() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "done"
+    assert Path(body["audio_files"][0]).exists()
+
+
+def test_continue_route_renders_from_input_path() -> None:
+    input_path = settings.upload_dir / "pytest_continue_input.wav"
+    write_sine_wav(input_path, duration=0.25)
+    response = client.post(
+        "/continue",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "continue this short texture",
+            "input_audio_path": str(input_path),
+            "source_duration": 0.25,
+            "target_duration": 0.5,
+            "output_name": "pytest_continue",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["mode"] == "continuation"
+    assert body["duration"] == 0.5
     assert Path(body["audio_files"][0]).exists()
 
 
@@ -2084,3 +2210,20 @@ def test_files_bulk_delete_endpoint() -> None:
     assert not audio_path1.exists()
     assert not metadata_path1.exists()
     assert not audio_path2.exists()
+
+
+def test_files_bulk_delete_rejects_more_than_500_items() -> None:
+    response = client.post(
+        "/files/delete",
+        json={
+            "items": [
+                {
+                    "audio_path": "output/audio/does-not-exist.wav",
+                    "metadata_path": None,
+                }
+                for _ in range(501)
+            ]
+        },
+    )
+    assert response.status_code == 400
+    assert "max 500" in response.json()["detail"]

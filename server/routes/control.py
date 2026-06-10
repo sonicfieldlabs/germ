@@ -9,7 +9,9 @@ import socket
 import struct
 import sys
 import wave
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -59,6 +61,10 @@ MICRO_MODULE_TYPES = {
     "microscope",
     "incubator",
 }
+
+CONTROL_GRAPH_JSON_CACHE_LIMIT = 600
+_CONTROL_GRAPH_JSON_CACHE_LOCK = Lock()
+_CONTROL_GRAPH_JSON_CACHE: OrderedDict[str, tuple[int, dict[str, Any] | None]] = OrderedDict()
 
 
 @router.get("/ports", response_model=ControlPortsResponse)
@@ -335,35 +341,62 @@ def arm_cv_profile(profile_id: str, request: ControlCVArmRequest) -> ControlCVPr
 
 
 def _metadata_items_for_control_graph(limit: int = 300) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for path in sorted(storage.metadata_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        if len(items) >= limit:
-            break
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        data["_metadata_path"] = storage.relative_path(path)
-        items.append(data)
-    return items
+    return _cached_json_items_for_control_graph(
+        root=storage.metadata_dir,
+        limit=limit,
+        marker_key="_metadata_path",
+    )
 
 
 def _micro_profile_items_for_control_graph(limit: int = 300) -> list[dict[str, Any]]:
     micro_dir = settings.output_root / "micro"
-    if not micro_dir.exists():
+    return _cached_json_items_for_control_graph(
+        root=micro_dir,
+        limit=limit,
+        marker_key="_profile_file",
+    )
+
+
+def _cached_json_items_for_control_graph(
+    *,
+    root: Path,
+    limit: int,
+    marker_key: str,
+) -> list[dict[str, Any]]:
+    if not root.exists():
         return []
-    items: list[dict[str, Any]] = []
-    for path in sorted(micro_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        if len(items) >= limit:
-            break
+    entries: list[tuple[Path, int]] = []
+    for path in root.glob("*.json"):
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            entries.append((path, path.stat().st_mtime_ns))
+        except OSError:
             continue
-        if not isinstance(data, dict):
+    entries.sort(key=lambda item: item[1], reverse=True)
+    items: list[dict[str, Any]] = []
+    for path, mtime_ns in entries[: max(1, limit)]:
+        cache_key = path.resolve().as_posix()
+        with _CONTROL_GRAPH_JSON_CACHE_LOCK:
+            cached = _CONTROL_GRAPH_JSON_CACHE.get(cache_key)
+        if cached and cached[0] == mtime_ns:
+            with _CONTROL_GRAPH_JSON_CACHE_LOCK:
+                _CONTROL_GRAPH_JSON_CACHE.move_to_end(cache_key)
+            data = cached[1]
+        else:
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                data = loaded if isinstance(loaded, dict) else None
+            except (json.JSONDecodeError, OSError):
+                data = None
+            with _CONTROL_GRAPH_JSON_CACHE_LOCK:
+                _CONTROL_GRAPH_JSON_CACHE[cache_key] = (mtime_ns, data)
+                _CONTROL_GRAPH_JSON_CACHE.move_to_end(cache_key)
+                while len(_CONTROL_GRAPH_JSON_CACHE) > CONTROL_GRAPH_JSON_CACHE_LIMIT:
+                    _CONTROL_GRAPH_JSON_CACHE.popitem(last=False)
+        if data is None:
             continue
-        data["_profile_file"] = storage.relative_path(path)
-        items.append(data)
+        item = dict(data)
+        item[marker_key] = storage.relative_path(path)
+        items.append(item)
     return items
 
 

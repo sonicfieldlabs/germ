@@ -338,6 +338,7 @@ Run the environment report:
 .venv/bin/python scripts/check_environment.py
 ```
 
-Prototype TODOs live in the UI for waveform region selection, loopability scoring,
-seam repair, LoRA strength sweeps, SAME latent exploration, dataset builder export,
-and real Listener/agent integration.
+Current follow-up work is tracked in `germ-future.md`. The core review path now has
+route tests, cache-aware library refreshes, cancellation propagation, Microcosmos
+state recovery, and generated-output ignores in place; larger feature work should
+start from the future plan rather than stale in-UI TODO labels.

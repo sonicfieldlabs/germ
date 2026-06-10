@@ -1,5 +1,5 @@
 import { escapeHtml, iconSvg } from "./ui_utils.js";
-import { initOneBitDish } from "./dish.js?v=20260610-review-p2";
+import { initOneBitDish } from "./dish.js?v=20260610-review-p3";
 
 /* Theme toggle */
 (function initTheme() {
@@ -50,6 +50,7 @@ const PETRI_STATE_STORAGE_KEY = "germinator-petri-state";
 const SNAPSHOT_LIMIT = 48;
 
 let initialized = false;
+let generateInFlight = false;
 let lastResult = null;
 let libraryItems = [];
 let libraryEtag = null;
@@ -532,9 +533,11 @@ const GENERATION_DESTINATIONS = {
 };
 let timeState = createDefaultTimeState();
 const canvasAudioCache = new Map();
+const canvasReverseAudioCache = new Map();
 // Decoded AudioBuffers hold raw PCM (~3.5 MB per 10 s stereo take), so the cache
 // is kept as an insertion-ordered LRU instead of growing for the whole session.
 const CANVAS_AUDIO_CACHE_MAX = 32;
+const CANVAS_REVERSE_AUDIO_CACHE_MAX = 32;
 let canvasMasterRecordDestination = null;
 let canvasMasterRecorder = null;
 let canvasMasterRecording = null;
@@ -9016,7 +9019,7 @@ function renderCanvasCandidates() {
           <button class="secondary" type="button" data-action="canvas-accept-candidate" data-accept="replace_source" data-candidate-id="${escapeHtml(candidate.id)}">Replace source</button>
           <button class="secondary" type="button" data-action="canvas-accept-candidate" data-accept="branch" data-candidate-id="${escapeHtml(candidate.id)}">Branch</button>
           <button class="secondary" type="button" data-action="canvas-save-candidate" data-candidate-id="${escapeHtml(candidate.id)}">Save</button>
-          <button class="danger" type="button" data-action="canvas-discard-candidate" data-candidate-id="${escapeHtml(candidate.id)}">&times;</button>
+          <button class="danger" type="button" data-action="canvas-discard-candidate" data-candidate-id="${escapeHtml(candidate.id)}" aria-label="Discard candidate" title="Discard candidate">&times;</button>
         </div>
       </article>
     `;
@@ -9685,10 +9688,39 @@ function canvasDisposeNodeAudio(node) {
 async function canvasPrepareReverseAudio(node) {
   if (!node?.reversePlayback || node.reverseObjectUrl) return;
   const asset = canvasAssetById(node.assetId);
+  if (!asset) return;
+  const cachedUrl = canvasReverseAudioCache.get(asset?.id);
+  if (cachedUrl) {
+    canvasReverseAudioCache.delete(asset.id);
+    canvasReverseAudioCache.set(asset.id, cachedUrl);
+    node.reverseObjectUrl = cachedUrl;
+    return;
+  }
   const buffer = await fetchCanvasAudioBuffer(asset);
   if (!buffer) return;
   const blob = audioBufferToWavBlob(buffer, { reverse: true });
   node.reverseObjectUrl = URL.createObjectURL(blob);
+  canvasReverseAudioCache.set(asset.id, node.reverseObjectUrl);
+  trimCanvasReverseAudioCache();
+}
+
+function trimCanvasReverseAudioCache() {
+  while (canvasReverseAudioCache.size > CANVAS_REVERSE_AUDIO_CACHE_MAX) {
+    const entry = canvasReverseAudioCache.entries().next().value;
+    if (!entry) return;
+    const [assetId, objectUrl] = entry;
+    const isInUse = canvasNodes.some((node) => node.reverseObjectUrl === objectUrl);
+    if (isInUse) {
+      canvasReverseAudioCache.delete(assetId);
+      canvasReverseAudioCache.set(assetId, objectUrl);
+      if ([...canvasReverseAudioCache.values()].every((url) => canvasNodes.some((node) => node.reverseObjectUrl === url))) {
+        return;
+      }
+      continue;
+    }
+    canvasReverseAudioCache.delete(assetId);
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 async function canvasEnsurePlaybackAudio(node) {
@@ -10911,7 +10943,13 @@ function canvasDeleteNode(nodeId) {
     node.audio.src = "";
   }
   if (node.reverseObjectUrl) {
-    URL.revokeObjectURL(node.reverseObjectUrl);
+    if (!canvasNodes.some((item) => item !== node && item.reverseObjectUrl === node.reverseObjectUrl)) {
+      const cachedEntry = [...canvasReverseAudioCache.entries()].find(([, url]) => url === node.reverseObjectUrl);
+      if (cachedEntry) {
+        canvasReverseAudioCache.delete(cachedEntry[0]);
+      }
+      URL.revokeObjectURL(node.reverseObjectUrl);
+    }
     node.reverseObjectUrl = null;
   }
   if (node.recorder && node.recording) {
@@ -13859,13 +13897,19 @@ async function loadModel() {
 }
 
 async function generate() {
-  beginWork("Generating", `${$("provider").value} / ${$("model").value}`);
-  const result = await api("/generate", {
-    method: "POST",
-    body: JSON.stringify(payloadBase()),
-  });
-  await renderOutput(result);
-  finishWork(result.status === "done" ? "Generation Done" : "Generation Error", result.status === "done" ? "ok" : "bad", result.error || metadataSummary(currentTrack?.metadata));
+  if (generateInFlight) return;
+  generateInFlight = true;
+  try {
+    beginWork("Generating", `${$("provider").value} / ${$("model").value}`);
+    const result = await api("/generate", {
+      method: "POST",
+      body: JSON.stringify(payloadBase()),
+    });
+    await renderOutput(result);
+    finishWork(result.status === "done" ? "Generation Done" : "Generation Error", result.status === "done" ? "ok" : "bad", result.error || metadataSummary(currentTrack?.metadata));
+  } finally {
+    generateInFlight = false;
+  }
 }
 
 async function runModelTest() {
@@ -17266,19 +17310,36 @@ async function drawPetriCanvas(canvas) {
   canvas.dataset.renderedMode = mode;
 }
 
+function ensurePetriCanvasObserver() {
+  if (petriCanvasObserver || typeof IntersectionObserver === "undefined") return petriCanvasObserver;
+  petriCanvasObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        petriCanvasObserver.unobserve(entry.target);
+        drawPetriCanvas(entry.target);
+      }
+    },
+    { rootMargin: "220px 0px", threshold: 0.01 },
+  );
+  return petriCanvasObserver;
+}
+
 function renderPetriCanvases() {
   const activePanel = document.querySelector("#tab-petri.active") || document.querySelector(".tab-panel.active:not(.canvas-panel)");
   const canvases = activePanel
     ? activePanel.querySelectorAll(".petri-canvas[data-audio]")
     : document.querySelectorAll(".petri-canvas[data-audio]");
   if (petriCanvasObserver) petriCanvasObserver.disconnect();
+  const observer = ensurePetriCanvasObserver();
   for (const canvas of canvases) {
     if (canvas.offsetParent === null) continue;
     const mode = $("petriViz")?.value || "waveform";
     if (canvas.dataset.renderedAudio !== canvas.dataset.audio || canvas.dataset.renderedMode !== mode) {
       drawMiniWaveform(canvas, null, "Loading…");
     }
-    drawPetriCanvas(canvas);
+    if (observer) observer.observe(canvas);
+    else drawPetriCanvas(canvas);
   }
 }
 

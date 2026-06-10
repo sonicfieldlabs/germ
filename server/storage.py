@@ -54,6 +54,7 @@ class StorageManager:
         self.upload_dir = settings.upload_dir
         self.scratch_dir = settings.scratch_dir
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.job_listeners: dict[str, int] = {}
         self._lock = RLock()
         self._lineage_child_locks: dict[Path, RLock] = {}
         self.library_version = 0
@@ -86,10 +87,13 @@ class StorageManager:
                 if len(self.jobs) <= MAX_TRACKED_JOBS:
                     return
                 age = self._iso_age_seconds(job.get("updated_at") or job.get("created_at"))
-                if job.get("status") in terminal and (
-                    age is None or age >= JOB_EVICTION_GRACE_SECONDS
+                if (
+                    job.get("status") in terminal
+                    and self.job_listeners.get(job_id, 0) <= 0
+                    and (age is None or age >= JOB_EVICTION_GRACE_SECONDS)
                 ):
                     self.jobs.pop(job_id, None)
+                    self.job_listeners.pop(job_id, None)
 
     def ensure_dirs(self) -> None:
         self.audio_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +158,21 @@ class StorageManager:
                 current_metrics = job.get("metrics") if isinstance(job.get("metrics"), dict) else {}
                 job["metrics"] = {**current_metrics, **metrics}
             job["updated_at"] = utc_now_iso()
+
+    def add_job_listener(self, job_id: str) -> int:
+        with self._lock:
+            count = self.job_listeners.get(job_id, 0) + 1
+            self.job_listeners[job_id] = count
+            return count
+
+    def remove_job_listener(self, job_id: str) -> int:
+        with self._lock:
+            count = max(0, self.job_listeners.get(job_id, 0) - 1)
+            if count:
+                self.job_listeners[job_id] = count
+            else:
+                self.job_listeners.pop(job_id, None)
+            return count
 
     def relative_path(self, path: str | Path) -> str:
         path = Path(path).resolve()

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -31,6 +34,13 @@ MICRO_FEATURES = [
     "timbre",
     "pitch",
 ]
+
+MATTER_PROFILE_CACHE_LIMIT = 32
+_MATTER_PROFILE_ANALYSIS_CACHE_LOCK = Lock()
+_MATTER_PROFILE_ANALYSIS_CACHE: OrderedDict[
+    tuple[str, int, int, int, tuple[str, ...]],
+    tuple[dict[str, list[dict[str, float]]], list[ControlFeatureSummary]],
+] = OrderedDict()
 
 
 def _summary_map(summaries: list[ControlFeatureSummary]) -> dict[str, ControlFeatureSummary]:
@@ -127,6 +137,45 @@ def list_matter_profiles(limit: int = 100) -> dict[str, Any]:
     return {"profiles": _micro_profile_items(max(1, min(limit, 500)))}
 
 
+def _cached_matter_analysis(
+    *,
+    source_path: Path,
+    samples,
+    channels: int,
+    sample_rate: int,
+    frame_count: int,
+    request: ControlAudioAnalysisRequest,
+) -> tuple[dict[str, list[dict[str, float]]], list[ControlFeatureSummary]]:
+    stat = source_path.stat()
+    key = (
+        source_path.resolve().as_posix(),
+        stat.st_mtime_ns,
+        request.window_ms,
+        request.hop_ms,
+        tuple(request.features),
+    )
+    with _MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
+        cached = _MATTER_PROFILE_ANALYSIS_CACHE.get(key)
+        if cached is not None:
+            _MATTER_PROFILE_ANALYSIS_CACHE.move_to_end(key)
+            return copy.deepcopy(cached[0]), [summary.model_copy(deep=True) for summary in cached[1]]
+    feature_points, summaries = _analyze_features(
+        samples=samples,
+        channels=channels,
+        sample_rate=sample_rate,
+        frame_count=frame_count,
+        request=request,
+    )
+    with _MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
+        _MATTER_PROFILE_ANALYSIS_CACHE[key] = (
+            copy.deepcopy(feature_points),
+            [summary.model_copy(deep=True) for summary in summaries],
+        )
+        while len(_MATTER_PROFILE_ANALYSIS_CACHE) > MATTER_PROFILE_CACHE_LIMIT:
+            _MATTER_PROFILE_ANALYSIS_CACHE.popitem(last=False)
+    return feature_points, summaries
+
+
 @router.post("/matter-profile", response_model=MicroMatterProfileResult)
 def create_matter_profile(request: MicroMatterRequest) -> MicroMatterProfileResult:
     source_path = _resolve_output_wav(request.input_audio_path)
@@ -144,7 +193,8 @@ def create_matter_profile(request: MicroMatterRequest) -> MicroMatterProfileResu
         output_name=request.output_name,
         lineage=request.lineage,
     )
-    feature_points, summaries = _analyze_features(
+    feature_points, summaries = _cached_matter_analysis(
+        source_path=source_path,
         samples=samples,
         channels=channels,
         sample_rate=sample_rate,

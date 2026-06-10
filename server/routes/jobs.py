@@ -75,6 +75,7 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=1008)
         return
     await websocket.accept()
+    storage.add_job_listener(job_id)
     last_signature: tuple[str, str] | None = None
     deadline = time.monotonic() + JOB_EVENTS_TIMEOUT_SECONDS
     try:
@@ -105,3 +106,5 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         return
+    finally:
+        storage.remove_job_listener(job_id)
