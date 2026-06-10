@@ -1,5 +1,6 @@
 import { escapeHtml, iconSvg } from "./ui_utils.js";
 import { initOneBitDish } from "./dish.js?v=20260610-review-p3";
+import { createGermSynthEngine } from "./wavetable_synth.js?v=20260610-wt-p1";
 
 /* Theme toggle */
 (function initTheme() {
@@ -53,6 +54,9 @@ let initialized = false;
 let generateInFlight = false;
 let lastResult = null;
 let libraryItems = [];
+let wavetableItems = [];
+let wavetableRefreshPromise = null;
+let germSynthEngine = null;
 let libraryEtag = null;
 let libraryRefreshPromise = null;
 let libraryRefreshTimer = null;
@@ -534,6 +538,7 @@ const GENERATION_DESTINATIONS = {
 let timeState = createDefaultTimeState();
 const canvasAudioCache = new Map();
 const canvasReverseAudioCache = new Map();
+const wavetableCache = new Map();
 // Decoded AudioBuffers hold raw PCM (~3.5 MB per 10 s stereo take), so the cache
 // is kept as an insertion-ordered LRU instead of growing for the whole session.
 const CANVAS_AUDIO_CACHE_MAX = 32;
@@ -1021,6 +1026,106 @@ async function api(path, options = {}) {
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return body;
+}
+
+async function refreshWavetables({ force = false } = {}) {
+  if (wavetableRefreshPromise && !force) return wavetableRefreshPromise;
+  wavetableRefreshPromise = api("/wavetables")
+    .then((items) => {
+      wavetableItems = Array.isArray(items) ? items : [];
+      if (canvasNodes.some((node) => node.type === "germ" || node.type === "wavetable_forge")) {
+        renderCanvas();
+      }
+      if (petriLibraryView === "wavetables") renderHerbarium();
+      renderRack();
+      return wavetableItems;
+    })
+    .finally(() => {
+      wavetableRefreshPromise = null;
+    });
+  return wavetableRefreshPromise;
+}
+
+function wavetableById(id) {
+  return wavetableItems.find((item) => item.id === id) || null;
+}
+
+async function fetchWavetableData(id) {
+  if (!id) return null;
+  if (wavetableCache.has(id)) return wavetableCache.get(id);
+  const response = await fetch(`${baseUrl()}/wavetables/${encodeURIComponent(id)}/data`);
+  if (!response.ok) throw new Error(`Could not load wavetable data (${response.status})`);
+  const buffer = await response.arrayBuffer();
+  const data = new Float32Array(buffer);
+  wavetableCache.set(id, data);
+  return data;
+}
+
+function renderGermWavetableOptions(selectedId = "") {
+  if (!wavetableItems.length) return '<option value="">No tables yet</option>';
+  return wavetableItems
+    .map((item) => `<option value="${escapeHtml(item.id)}"${item.id === selectedId ? " selected" : ""}>${escapeHtml(item.name || item.id)}</option>`)
+    .join("");
+}
+
+function drawWavetableMiniScope(canvas, wavetable, frames = null, position = 0) {
+  if (!canvas) return;
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.round((canvas.clientWidth || canvas.width || 120) * ratio));
+  const height = Math.max(1, Math.round((canvas.clientHeight || canvas.height || 44) * ratio));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = document.documentElement.getAttribute("data-theme") === "dark" ? "#151817" : "#fbfbf9";
+  ctx.fillRect(0, 0, width, height);
+  const frameSize = Number(wavetable?.frame_size || 0);
+  const frameCount = Number(wavetable?.frame_count || 0);
+  if (!frames || !frameSize || !frameCount) {
+    ctx.strokeStyle = "rgba(71,111,93,0.35)";
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+    return;
+  }
+  const frameIndex = Math.max(0, Math.min(frameCount - 1, Math.round((Number(position) || 0) * (frameCount - 1))));
+  const start = frameIndex * frameSize;
+  ctx.strokeStyle = "#476f5d";
+  ctx.lineWidth = Math.max(1, ratio);
+  ctx.beginPath();
+  for (let x = 0; x < width; x += 1) {
+    const idx = start + Math.min(frameSize - 1, Math.floor((x / Math.max(1, width - 1)) * frameSize));
+    const y = ((1 - (frames[idx] || 0)) * height) / 2;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawWavetableFrameStrip(canvas, wavetable, frames = null) {
+  if (!canvas) return;
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.round((canvas.clientWidth || canvas.width || 180) * ratio));
+  const height = Math.max(1, Math.round((canvas.clientHeight || canvas.height || 38) * ratio));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  const frameSize = Number(wavetable?.frame_size || 0);
+  const frameCount = Number(wavetable?.frame_count || 0);
+  if (!frames || !frameSize || !frameCount) return;
+  const barWidth = Math.max(1, width / frameCount);
+  for (let i = 0; i < frameCount; i += 1) {
+    let energy = 0;
+    const start = i * frameSize;
+    for (let j = 0; j < frameSize; j += Math.max(1, Math.floor(frameSize / 64))) {
+      energy += Math.abs(frames[start + j] || 0);
+    }
+    energy = Math.min(1, energy / 64);
+    ctx.fillStyle = `rgba(71,111,93,${0.18 + energy * 0.72})`;
+    ctx.fillRect(i * barWidth, height * (1 - energy), Math.max(1, barWidth - 1), height * energy);
+  }
 }
 
 async function mediaStreamWithPermissionTimeout(requestPromise, label, timeoutMs = 20000) {
@@ -2324,6 +2429,45 @@ function sourceTypeForItem(item) {
   return item.source_type || item.source?.type || (typeof item.source === "string" ? item.source : "") || item.runtime || item.lineage?.source_type || "library";
 }
 
+function isWavetableItem(item) {
+  return item?.asset_type === "wavetable" || Boolean(item?.wavetable_id || item?.data_file);
+}
+
+function libraryAssetTitle(item) {
+  if (isWavetableItem(item)) return item.name || item.wavetable_id || item.id || displayNameFromPath(item.metadata_file);
+  return displayNameFromPath(item.audio_file || item.metadata_file);
+}
+
+function wavetableLibraryItems() {
+  const byId = new Map();
+  libraryItems.filter(isWavetableItem).forEach((item) => {
+    const id = item.wavetable_id || item.id;
+    if (id) byId.set(id, item);
+  });
+  wavetableItems.forEach((item) => {
+    if (!byId.has(item.id)) {
+      byId.set(item.id, {
+        asset_type: "wavetable",
+        id: item.id,
+        wavetable_id: item.id,
+        name: item.name,
+        frame_count: item.frame_count,
+        frame_size: item.frame_size,
+        root_note: item.root_note,
+        prompt: item.source_prompt,
+        tags: item.tags || [],
+        metadata_file: item.metadata_path,
+        data_file: item.data_path,
+        operation: item.operation,
+        created_at: item.created_at,
+        table_classification: item.table_classification,
+        warnings: item.warnings || [],
+      });
+    }
+  });
+  return [...byId.values()];
+}
+
 function ratingForItem(item) {
   const state = petriState[petriItemKey(item)] || {};
   return Number(state.rating ?? item.ratings?.rating ?? item.rating ?? 0) || 0;
@@ -2433,6 +2577,101 @@ function candidateCard(item, scope = "petri") {
   `;
 }
 
+function wavetableMatchesLibrary(item) {
+  const query = ($("libSearch")?.value || "").trim().toLowerCase();
+  const tag = $("libTag")?.value || "";
+  const ratingFilter = $("libRating")?.value || "";
+  if (tag && !(item.tags || []).includes(tag)) return false;
+  if (ratingFilter === "favorite" && !petriState[petriItemKey(item)]?.favorite) return false;
+  if (ratingFilter === "rated" && ratingForItem(item) <= 0) return false;
+  if (!query) return true;
+  return [
+    item.name,
+    item.wavetable_id,
+    item.id,
+    item.prompt,
+    item.operation,
+    item.metadata_file,
+    item.data_file,
+    item.root_note,
+    item.table_classification,
+    ...(item.tags || []),
+    ...(item.warnings || []),
+  ].join(" ").toLowerCase().includes(query);
+}
+
+function sortedWavetableLibraryItems() {
+  return wavetableLibraryItems()
+    .filter(wavetableMatchesLibrary)
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+}
+
+function wavetableCard(item) {
+  const key = petriItemKey(item);
+  const state = petriState[key] || {};
+  const id = item.wavetable_id || item.id || "";
+  const favoriteLabel = state.favorite ? "Unfavorite" : "Favorite";
+  const exportHref = `/wavetables/${encodeURIComponent(id)}/export?format=gwt`;
+  const frameText = `${item.frame_count || "-"} x ${item.frame_size || "-"} · ${item.root_note || "-"}`;
+  return `
+    <article class="petri-card ${state.favorite ? "favorite" : ""}" data-candidate-key="${escapeHtml(key)}">
+      <div class="petri-wave-shell">
+        <canvas class="petri-wavetable-strip" width="300" height="300" data-wavetable-id="${escapeHtml(id)}"></canvas>
+        <div class="petri-wave-actions">
+          <button class="petri-wave-action action-favorite${state.favorite ? " active" : ""}" type="button" data-action="petri-favorite" data-key="${escapeHtml(key)}" aria-label="${favoriteLabel}" title="${favoriteLabel}">${iconSvg("favorite")}</button>
+          <button class="petri-wave-action action-source" type="button" data-action="wavetable-asset-use" data-wavetable-id="${escapeHtml(id)}" aria-label="Use in Germ" title="Use in Germ">${iconSvg("source")}</button>
+          <button class="petri-wave-action action-play" type="button" data-action="wavetable-asset-render" data-wavetable-id="${escapeHtml(id)}" aria-label="Render" title="Render">${iconSvg("render")}</button>
+          <a class="petri-wave-action action-lineage" href="${escapeHtml(exportHref)}" download title="Export GWT" aria-label="Export GWT">${iconSvg("download")}</a>
+        </div>
+      </div>
+      <strong>${escapeHtml(libraryAssetTitle(item))}</strong>
+      <small>${escapeHtml(frameText)}</small>
+    </article>
+  `;
+}
+
+function renderWavetableHerbarium() {
+  const target = $("herbariumList");
+  if (!target) return;
+  const total = wavetableLibraryItems().length;
+  if ($("libTotal")) $("libTotal").textContent = String(total);
+  if ($("libDone")) $("libDone").textContent = String(total);
+  if ($("libError")) $("libError").textContent = "0";
+  if ($("libFavorites")) $("libFavorites").textContent = String(wavetableLibraryItems().filter(i => petriState[petriItemKey(i)]?.favorite).length);
+  if (!total) {
+    target.className = "petri-disc-grid empty";
+    target.textContent = "No wavetables found.";
+    updatePetriPagination(0, 0);
+    return;
+  }
+  const items = sortedWavetableLibraryItems();
+  if (!items.length) {
+    target.className = "petri-disc-grid empty";
+    target.textContent = "No wavetables match the current filters.";
+    updatePetriPagination(0, 0);
+    return;
+  }
+  const totalPages = Math.ceil(items.length / PETRI_PAGE_SIZE);
+  petriPage = Math.max(0, Math.min(petriPage, totalPages - 1));
+  const start = petriPage * PETRI_PAGE_SIZE;
+  const pageItems = items.slice(start, start + PETRI_PAGE_SIZE);
+  target.className = "petri-disc-grid";
+  target.innerHTML = pageItems.map(wavetableCard).join("");
+  updatePetriPagination(petriPage, totalPages);
+  requestAnimationFrame(() => drawWavetableLibraryCanvases(target));
+}
+
+function drawWavetableLibraryCanvases(root = document) {
+  root.querySelectorAll(".petri-wavetable-strip[data-wavetable-id]").forEach((canvas) => {
+    const id = canvas.dataset.wavetableId || "";
+    const table = wavetableById(id) || wavetableLibraryItems().find((item) => (item.wavetable_id || item.id) === id);
+    drawWavetableFrameStrip(canvas, table, null);
+    fetchWavetableData(id)
+      .then((frames) => drawWavetableFrameStrip(canvas, table, frames))
+      .catch(() => drawWavetableMiniScope(canvas, table, null));
+  });
+}
+
 function groupCard(group) {
   const items = group.items || [];
   const dots = items.slice(0, 8).map((item, index) => {
@@ -2487,6 +2726,10 @@ function renderHerbarium() {
   document.querySelectorAll(".petri-tab").forEach((button) => button.classList.toggle("active", button.dataset.view === petriLibraryView));
   if (petriLibraryView === "groups") {
     renderPetriGroups();
+    return;
+  }
+  if (petriLibraryView === "wavetables") {
+    renderWavetableHerbarium();
     return;
   }
 
@@ -2551,10 +2794,12 @@ function formatFileSize(bytes) {
 }
 
 function rackSearchMatches(item) {
-  if (!item.audio_file || item.audio_exists === false) return false;
-  
+  if (!isWavetableItem(item) && (!item.audio_file || item.audio_exists === false)) return false;
+
   const filterMode = $("rackFilterMode")?.value;
   if (filterMode) {
+    if (filterMode === "wavetable") return isWavetableItem(item);
+    if (isWavetableItem(item)) return false;
     const itemMode = item.germinator_mode || item.mode || "";
     if (filterMode === "archive") {
       if (itemMode !== "archive" && itemMode !== "file") return false;
@@ -2572,21 +2817,30 @@ function rackSearchMatches(item) {
   const query = ($("rackSearch")?.value || "").trim().toLowerCase();
   if (!query) return true;
   return [
-    displayNameFromPath(item.audio_file || item.metadata_file),
+    libraryAssetTitle(item),
     item.prompt,
+    item.name,
     item.notes,
     item.model,
     item.provider,
     item.mode,
     item.germinator_mode,
+    item.operation,
     item.seed,
     item.audio_file,
     item.metadata_file,
+    item.data_file,
+    item.wavetable_id,
     ...(item.tags || []),
   ].join(" ").toLowerCase().includes(query);
 }
 
 function rackGroupValue(item, groupBy) {
+  if (isWavetableItem(item)) {
+    if (groupBy === "mode") return "wavetable";
+    if (groupBy === "model") return item.runtime || "wavetable";
+    if (groupBy === "tag") return (item.tags || [])[0] || "wavetable";
+  }
   if (groupBy === "mode") return item.germinator_mode || item.mode || "archive";
   if (groupBy === "model") return item.model || "unknown";
   if (groupBy === "tag") return (item.tags || [])[0] || "untagged";
@@ -2605,7 +2859,7 @@ function rackItems() {
   } else if (sortVal === "date_asc") {
     sortFn = (a, b) => String(a.created_at || "").localeCompare(String(b.created_at || ""));
   } else if (sortVal === "name_asc") {
-    sortFn = (a, b) => getFilenameStem(a.audio_file).localeCompare(getFilenameStem(b.audio_file));
+    sortFn = (a, b) => libraryAssetTitle(a).localeCompare(libraryAssetTitle(b));
   } else if (sortVal === "duration_desc") {
     sortFn = (a, b) => (b.duration || 0) - (a.duration || 0);
   } else if (sortVal === "size_desc") {
@@ -2643,7 +2897,9 @@ function renderRack() {
   
   const statsLabel = $("rackStats");
   if (statsLabel) {
-    statsLabel.textContent = `Total: ${items.length} sounds · Selected: ${rackSelectedKeys.size} (${selectedDuration.toFixed(1)}s, ${formatFileSize(selectedSize)})`;
+    const tableCount = items.filter(isWavetableItem).length;
+    const soundCount = items.length - tableCount;
+    statsLabel.textContent = `Total: ${items.length} assets · ${soundCount} sounds · ${tableCount} tables · Selected: ${rackSelectedKeys.size} (${selectedDuration.toFixed(1)}s, ${formatFileSize(selectedSize)})`;
   }
   
   const bulkDeleteBtn = $("rackBulkDeleteBtn");
@@ -2674,6 +2930,44 @@ function renderRack() {
     }
     
     const selected = rackSelectedKeys.has(key) ? " checked" : "";
+    if (isWavetableItem(item)) {
+      const id = item.wavetable_id || item.id || "";
+      const title = libraryAssetTitle(item);
+      const tags = (item.tags || []).join(", ");
+      const frameText = `${item.frame_count || "-"} frames · ${item.frame_size || "-"} samples · ${item.root_note || "-"}`;
+      const classification = item.table_classification || item.operation || "wavetable";
+      rows.push(`
+        <tr class="rack-row" data-key="${escapeHtml(key)}">
+          <td><input class="rack-select-row" type="checkbox" data-action="rack-select" data-key="${escapeHtml(key)}"${selected} aria-label="Select ${escapeHtml(title)}" /></td>
+          <td>
+            <div class="rack-filename-wrapper">
+              <input class="rack-filename-input" data-key="${escapeHtml(key)}" value="${escapeHtml(title)}" aria-label="Wavetable name" title="Wavetable name" readonly />
+              <span class="rack-filename-ext">.gwt</span>
+            </div>
+          </td>
+          <td>
+            <input class="rack-prompt-input" data-key="${escapeHtml(key)}" value="${escapeHtml(item.prompt || "")}" aria-label="Prompt text" title="Prompt description" readonly />
+          </td>
+          <td>
+            <input class="rack-tags-input" data-key="${escapeHtml(key)}" value="${escapeHtml(tags)}" aria-label="Tags" title="Tags" readonly />
+          </td>
+          <td>wavetable</td>
+          <td>${escapeHtml(item.runtime || "-")}</td>
+          <td class="rack-stats-cell">${escapeHtml(`${frameText} · ${classification}`)}</td>
+          <td>
+            <div class="rack-actions">
+              <button type="button" data-action="wavetable-asset-use" data-wavetable-id="${escapeHtml(id)}" aria-label="Use in Germ" title="Use in Germ">${iconSvg("source")}</button>
+              <button type="button" data-action="wavetable-asset-render" data-wavetable-id="${escapeHtml(id)}" aria-label="Render as source" title="Render as source">${iconSvg("render")}</button>
+              <button type="button" data-action="wavetable-asset-mutate" data-wavetable-id="${escapeHtml(id)}" aria-label="Mutate table" title="Mutate">${iconSvg("lineage")}</button>
+              <a href="/wavetables/${encodeURIComponent(id)}/export?format=gwt" download class="rack-button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 0;" title="Export GWT">${iconSvg("download")}</a>
+              <button type="button" data-action="rack-lineage" data-metadata="${escapeHtml(item.metadata_file || "")}" data-audio="" aria-label="Lineage" title="Lineage">${iconSvg("lineage")}</button>
+              <button type="button" data-action="rack-copy-path" data-path="${escapeHtml(item.metadata_file || "")}" aria-label="Copy metadata path" title="Copy metadata path">${iconSvg("copy")}</button>
+            </div>
+          </td>
+        </tr>
+      `);
+      return;
+    }
     const stem = getFilenameStem(item.audio_file);
     const ext = getFilenameExtension(item.audio_file);
     const prompt = item.prompt || "";
@@ -3243,6 +3537,32 @@ function modulationFxTargetsForNode(node) {
 
 function modulationTargetsForNode(node) {
   if (!node || node.type === "modulator") return [];
+  if (node.type === "germ") {
+    const germ = normalizeGermNode(node);
+    const label = germ.label || "Germ";
+    return [
+      modulationPromptTarget(germ, "prompt", `${label} / prompt`),
+      { ...modulationPromptTarget(germ, "negativePrompt", `${label} / avoid`), type: "negative", param: "negativePrompt" },
+      modulationNumberTarget(germ, "tablePosition", `${label} / table position`, "tablePosition", 0, 1, { modulationRate: "realtime", defaultValue: germ.tablePosition }),
+      modulationNumberTarget(germ, "scanSpeed", `${label} / scan speed`, "scanSpeed", -1, 1, { modulationRate: "realtime", defaultValue: germ.scanSpeed }),
+      modulationNumberTarget(germ, "pitch", `${label} / pitch`, "pitch", -24, 24, { modulationRate: "realtime", defaultValue: germ.pitch }),
+      modulationNumberTarget(germ, "fineTune", `${label} / fine tune`, "fineTune", -100, 100, { modulationRate: "realtime", defaultValue: germ.fineTune }),
+      modulationNumberTarget(germ, "unisonDetune", `${label} / unison detune`, "unisonDetune", 0, 48, { modulationRate: "realtime", defaultValue: germ.unisonDetune }),
+      modulationNumberTarget(germ, "ampAttack", `${label} / amp attack`, "ampAttack", 0.001, 5, { modulationRate: "realtime", defaultValue: germ.ampAttack }),
+      modulationNumberTarget(germ, "ampDecay", `${label} / amp decay`, "ampDecay", 0.001, 5, { modulationRate: "realtime", defaultValue: germ.ampDecay }),
+      modulationNumberTarget(germ, "ampSustain", `${label} / amp sustain`, "ampSustain", 0, 1, { modulationRate: "realtime", defaultValue: germ.ampSustain }),
+      modulationNumberTarget(germ, "ampRelease", `${label} / amp release`, "ampRelease", 0.001, 8, { modulationRate: "realtime", defaultValue: germ.ampRelease }),
+      modulationNumberTarget(germ, "filterCutoff", `${label} / filter cutoff`, "filterCutoff", 20, 20000, { modulationRate: "realtime", defaultValue: germ.filterCutoff }),
+      modulationNumberTarget(germ, "filterResonance", `${label} / filter resonance`, "filterResonance", 0.1, 20, { modulationRate: "realtime", defaultValue: germ.filterResonance }),
+      modulationNumberTarget(germ, "filterEnvAmount", `${label} / filter env`, "filterEnvAmount", -1, 1, { modulationRate: "realtime", defaultValue: germ.filterEnvAmount }),
+      modulationNumberTarget(germ, "wavetableIndex", `${label} / table index`, "wavetableIndex", 0, 512, { modulationRate: "realtime", defaultValue: germ.wavetableIndex }),
+      modulationNumberTarget(germ, "durationSec", `${label} / duration`, "durationSec", 1, 8, { modulationRate: "generation", defaultValue: germ.durationSec }),
+      modulationNumberTarget(germ, "mutationDepth", `${label} / mutation depth`, "mutationDepth", 0, 1, { modulationRate: "generation", defaultValue: germ.mutationDepth }),
+      modulationNumberTarget(germ, "frameCount", `${label} / frame count`, "frameCount", 1, 512, { modulationRate: "generation", defaultValue: germ.frameCount }),
+      modulationNumberTarget(germ, "frameSize", `${label} / frame size`, "frameSize", 512, 4096, { modulationRate: "generation", defaultValue: germ.frameSize }),
+      modulationNumberTarget(germ, "variationCount", `${label} / variations`, "variationCount", 1, 16, { modulationRate: "generation", defaultValue: germ.variationCount }),
+    ].filter(Boolean);
+  }
   if (node.type === "sound") {
     const label = node.label || "Sound";
     return [
@@ -5661,6 +5981,253 @@ function canvasCreateAudioSnapshotNode({ x = 80, y = 88 } = {}) {
   return node;
 }
 
+function normalizeGermNode(node = {}) {
+  const normalized = {
+    id: node.id || canvasId("node"),
+    projectId: node.projectId || activeCulture.id,
+    type: "germ",
+    x: Number(node.x) || 80,
+    y: Number(node.y) || 88,
+    width: Number(node.width) || 384,
+    height: Number(node.height) || 440,
+    label: node.label || "Germ",
+    activePanel: node.activePanel || "germinate",
+    prompt: node.prompt || "glassy metallic vowel",
+    negativePrompt: node.negativePrompt || "",
+    provider: node.provider || "",
+    model: node.model || "",
+    durationSec: Number(node.durationSec) || 2,
+    rootNote: node.rootNote || "C3",
+    note: node.note || "C3",
+    generationMode: node.generationMode || "glassy_metallic",
+    extractionMode: node.extractionMode || "simple",
+    frameCount: Number(node.frameCount) || 64,
+    frameSize: Number(node.frameSize) || 2048,
+    wavetableId: node.wavetableId || "",
+    tablePosition: Number(node.tablePosition) || 0,
+    scanSpeed: Number(node.scanSpeed) || 0,
+    pitch: Number(node.pitch) || 0,
+    fineTune: Number(node.fineTune) || 0,
+    unisonDetune: Number(node.unisonDetune) || 0,
+    ampAttack: Number(node.ampAttack) || 0.01,
+    ampDecay: Number(node.ampDecay) || 0.12,
+    ampSustain: Number.isFinite(Number(node.ampSustain)) ? Number(node.ampSustain) : 0.8,
+    ampRelease: Number(node.ampRelease) || 0.18,
+    filterCutoff: Number(node.filterCutoff) || 8000,
+    filterResonance: Number(node.filterResonance) || 0.7,
+    filterEnvAmount: Number(node.filterEnvAmount) || 0,
+    wavetableIndex: Number(node.wavetableIndex) || 0,
+    gain: Number(node.gain) || 0.7,
+    mutationPrompt: node.mutationPrompt || "more brittle glass harmonics",
+    mutationDepth: Number(node.mutationDepth) || 0.42,
+    variationCount: Number(node.variationCount) || 1,
+  };
+  normalized.tablePosition = Math.max(0, Math.min(1, normalized.tablePosition));
+  normalized.variationCount = Math.max(1, Math.min(16, Math.round(normalized.variationCount)));
+  return normalized;
+}
+
+function normalizeWavetableForgeNode(node = {}) {
+  return {
+    id: node.id || canvasId("node"),
+    projectId: node.projectId || activeCulture.id,
+    type: "wavetable_forge",
+    x: Number(node.x) || 92,
+    y: Number(node.y) || 96,
+    width: Number(node.width) || 392,
+    height: Number(node.height) || 450,
+    label: node.label || "Wavetable Forge",
+    activePanel: node.activePanel || "generate",
+    prompt: node.prompt || "single glass oscillator",
+    negativePrompt: node.negativePrompt || "",
+    durationSec: Number(node.durationSec) || 2,
+    rootNote: node.rootNote || "C3",
+    generationMode: node.generationMode || "single_cycle_tone",
+    extractionMode: node.extractionMode || "simple",
+    frameCount: Number(node.frameCount) || 64,
+    frameSize: Number(node.frameSize) || 2048,
+    wavetableId: node.wavetableId || "",
+    selectedAudioPath: node.selectedAudioPath || "",
+    mutationPrompt: node.mutationPrompt || "more harmonic motion",
+    mutationDepth: Number(node.mutationDepth) || 0.42,
+    variationCount: Number(node.variationCount) || 1,
+    exportFormat: node.exportFormat || "gwt",
+  };
+}
+
+function canvasCreateGermNode({ x = 80, y = 88 } = {}) {
+  pushUndo();
+  const node = normalizeGermNode({ x, y });
+  canvasNodes.push(node);
+  selectedCanvasNodeId = node.id;
+  renderCanvas();
+  return node;
+}
+
+function canvasCreateWavetableForgeNode({ x = 92, y = 96 } = {}) {
+  pushUndo();
+  const node = normalizeWavetableForgeNode({ x, y });
+  canvasNodes.push(node);
+  selectedCanvasNodeId = node.id;
+  renderCanvas();
+  return node;
+}
+
+function wavetableModeOptions(selected) {
+  const modes = {
+    single_cycle_tone: "Single cycle tone",
+    evolving_timbre: "Evolving timbre",
+    bass_oscillator: "Bass oscillator",
+    glassy_metallic: "Glassy metallic",
+    soft_pad_source: "Soft pad source",
+    formant_no_voice: "Formant no voice",
+    noisy_oscillator: "Noisy oscillator",
+    organic_reed: "Organic reed",
+  };
+  return Object.entries(modes)
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${selected === value ? " selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+function wavetableAudioOptions(selected = "") {
+  const items = libraryItems.filter((item) => item.audio_file && item.audio_exists !== false).slice(0, 200);
+  if (!items.length) return '<option value="">No audio sources</option>';
+  return items.map((item) => `<option value="${escapeHtml(item.audio_file)}"${item.audio_file === selected ? " selected" : ""}>${escapeHtml(displayNameFromPath(item.audio_file))}</option>`).join("");
+}
+
+function wavetableNodeTabs(node, tabs) {
+  return `<div class="canvas-node-tabs">${tabs.map(([id, label]) => `
+    <button class="canvas-node-tab${node.activePanel === id ? " active" : ""}" type="button" data-action="wavetable-node-tab" data-node-id="${escapeHtml(node.id)}" data-tab="${escapeHtml(id)}">${escapeHtml(label)}</button>
+  `).join("")}</div>`;
+}
+
+function canvasGermNodeMarkup(node, selected, style) {
+  node = normalizeGermNode(node);
+  const table = wavetableById(node.wavetableId) || wavetableItems[0] || null;
+  const selectedId = node.wavetableId || table?.id || "";
+  const active = node.activePanel || "germinate";
+  return `
+    <article class="canvas-node time-node germ-node${selected}" data-node-id="${escapeHtml(node.id)}" style="${style}" data-help="Prompt-grown wavetable organism.">
+      ${canvasIoPortsMarkup(node.id, { output: true })}
+      <div class="time-head">
+        <div>
+          <span>Prompt-grown wavetable organism</span>
+          <strong>Germ</strong>
+          <small>${escapeHtml(table?.name || "No wavetable")} | ${escapeHtml(node.rootNote)} | ${Math.round(node.tablePosition * 100)}%</small>
+        </div>
+        <div class="time-node-actions">
+          <button class="time-action" type="button" data-action="wavetable-preview" data-node-id="${escapeHtml(node.id)}">Play</button>
+          <button class="time-action" type="button" data-action="wavetable-hold" data-node-id="${escapeHtml(node.id)}">Hold</button>
+          <button class="time-action primary" type="button" data-action="wavetable-render-source" data-node-id="${escapeHtml(node.id)}">Render</button>
+          <button class="prompt-node-icon delete" type="button" data-action="canvas-delete-node" data-node-id="${escapeHtml(node.id)}" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
+        </div>
+      </div>
+      <div class="time-node-body">
+        <canvas class="wavetable-mini-scope" data-node-id="${escapeHtml(node.id)}" width="280" height="54"></canvas>
+        ${wavetableNodeTabs(node, [["germinate", "Germinate"], ["table", "Table"], ["synth", "Synth"]])}
+        ${active === "germinate" ? `
+          <label class="canvas-prompt-label">Prompt
+            <textarea class="wavetable-node-text" data-node-id="${escapeHtml(node.id)}" data-field="prompt" rows="3">${escapeHtml(node.prompt)}</textarea>
+          </label>
+          <label class="canvas-prompt-label">Avoid
+            <textarea class="wavetable-node-text" data-node-id="${escapeHtml(node.id)}" data-field="negativePrompt" rows="2">${escapeHtml(node.negativePrompt)}</textarea>
+          </label>
+          <div class="time-control-row">
+            <label>Mode <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="generationMode">${wavetableModeOptions(node.generationMode)}</select></label>
+            <label>Len <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="durationSec" type="number" min="1" max="8" step="0.5" value="${escapeHtml(node.durationSec)}" /></label>
+            <label>Frames <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="frameCount" type="number" min="1" max="512" step="1" value="${escapeHtml(node.frameCount)}" /></label>
+            <label>Size <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="frameSize"><option${node.frameSize === 512 ? " selected" : ""}>512</option><option${node.frameSize === 1024 ? " selected" : ""}>1024</option><option${node.frameSize === 2048 ? " selected" : ""}>2048</option><option${node.frameSize === 4096 ? " selected" : ""}>4096</option></select></label>
+          </div>
+          <div class="time-node-actions">
+            <button class="time-action" type="button" data-action="wavetable-generate-audio" data-node-id="${escapeHtml(node.id)}">Generate Audio</button>
+            <button class="time-action primary" type="button" data-action="wavetable-prompt" data-node-id="${escapeHtml(node.id)}">Generate + Convert</button>
+          </div>
+        ` : ""}
+        ${active === "table" ? `
+          <div class="time-control-row">
+            <label>Table <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="wavetableId">${renderGermWavetableOptions(selectedId)}</select></label>
+            <label>Scan <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="tablePosition" type="range" min="0" max="1" step="0.01" value="${escapeHtml(node.tablePosition)}" /></label>
+          </div>
+          <canvas class="wavetable-frame-strip" data-node-id="${escapeHtml(node.id)}" width="280" height="42"></canvas>
+          <div class="time-node-actions">
+            <button class="time-action" type="button" data-action="wavetable-mutate" data-node-id="${escapeHtml(node.id)}">Mutate</button>
+            <a class="time-action" href="${selectedId ? `${baseUrl()}/wavetables/${encodeURIComponent(selectedId)}/export?format=gwt` : "#"}">Export</a>
+          </div>
+        ` : ""}
+        ${active === "synth" ? `
+          <div class="time-control-row">
+            <label>Table <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="wavetableId">${renderGermWavetableOptions(selectedId)}</select></label>
+            <label>Root <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="rootNote" value="${escapeHtml(node.rootNote)}" /></label>
+            <label>Note <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="note" value="${escapeHtml(node.note)}" /></label>
+            <label>Gain <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="gain" type="range" min="0" max="1" step="0.01" value="${escapeHtml(node.gain)}" /></label>
+          </div>
+          <div class="time-node-actions">
+            <button class="time-action" type="button" data-action="wavetable-preview" data-node-id="${escapeHtml(node.id)}">Preview</button>
+            <button class="time-action" type="button" data-action="wavetable-stop" data-node-id="${escapeHtml(node.id)}">Stop</button>
+            <button class="time-action primary" type="button" data-action="wavetable-render-source" data-node-id="${escapeHtml(node.id)}">Render as Source</button>
+          </div>
+        ` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function canvasWavetableForgeNodeMarkup(node, selected, style) {
+  node = normalizeWavetableForgeNode(node);
+  const selectedId = node.wavetableId || wavetableItems[0]?.id || "";
+  const active = node.activePanel || "generate";
+  return `
+    <article class="canvas-node time-node wavetable-forge-node${selected}" data-node-id="${escapeHtml(node.id)}" style="${style}" data-help="Convert, mutate, render, import, export wavetables.">
+      <div class="time-head">
+        <div>
+          <span>Utility / FX tools</span>
+          <strong>Wavetable Forge</strong>
+          <small>${escapeHtml(wavetableById(selectedId)?.name || "No table selected")}</small>
+        </div>
+        <div class="time-node-actions">
+          <button class="time-action" type="button" data-action="refresh-wavetables">Refresh</button>
+          <button class="prompt-node-icon delete" type="button" data-action="canvas-delete-node" data-node-id="${escapeHtml(node.id)}" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
+        </div>
+      </div>
+      <div class="time-node-body">
+        ${wavetableNodeTabs(node, [["generate", "Generate"], ["convert", "Convert"], ["mutate", "Mutate"], ["export", "Export"]])}
+        ${active === "generate" ? `
+          <label class="canvas-prompt-label">Prompt <textarea class="wavetable-node-text" data-node-id="${escapeHtml(node.id)}" data-field="prompt" rows="3">${escapeHtml(node.prompt)}</textarea></label>
+          <div class="time-control-row">
+            <label>Mode <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="generationMode">${wavetableModeOptions(node.generationMode)}</select></label>
+            <label>Len <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="durationSec" type="number" min="1" max="8" step="0.5" value="${escapeHtml(node.durationSec)}" /></label>
+            <label>Frames <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="frameCount" type="number" min="1" max="512" step="1" value="${escapeHtml(node.frameCount)}" /></label>
+          </div>
+          <button class="time-action primary" type="button" data-action="forge-generate-table" data-node-id="${escapeHtml(node.id)}">Generate Table</button>
+        ` : ""}
+        ${active === "convert" ? `
+          <div class="time-control-row">
+            <label>Audio <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="selectedAudioPath">${wavetableAudioOptions(node.selectedAudioPath)}</select></label>
+            <label>Size <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="frameSize"><option${node.frameSize === 512 ? " selected" : ""}>512</option><option${node.frameSize === 1024 ? " selected" : ""}>1024</option><option${node.frameSize === 2048 ? " selected" : ""}>2048</option><option${node.frameSize === 4096 ? " selected" : ""}>4096</option></select></label>
+          </div>
+          <button class="time-action primary" type="button" data-action="forge-convert-audio" data-node-id="${escapeHtml(node.id)}">Convert Selected Audio</button>
+        ` : ""}
+        ${active === "mutate" ? `
+          <div class="time-control-row">
+            <label>Table <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="wavetableId">${renderGermWavetableOptions(selectedId)}</select></label>
+            <label>Depth <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="mutationDepth" type="range" min="0" max="1" step="0.01" value="${escapeHtml(node.mutationDepth)}" /></label>
+            <label>Vars <input class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="variationCount" type="number" min="1" max="16" step="1" value="${escapeHtml(node.variationCount)}" /></label>
+          </div>
+          <textarea class="wavetable-node-text" data-node-id="${escapeHtml(node.id)}" data-field="mutationPrompt" rows="2">${escapeHtml(node.mutationPrompt)}</textarea>
+          <button class="time-action primary" type="button" data-action="forge-mutate-table" data-node-id="${escapeHtml(node.id)}">Mutate</button>
+        ` : ""}
+        ${active === "export" ? `
+          <div class="time-control-row">
+            <label>Table <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="wavetableId">${renderGermWavetableOptions(selectedId)}</select></label>
+            <label>Format <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="exportFormat"><option value="gwt"${node.exportFormat === "gwt" ? " selected" : ""}>gwt</option><option value="wav-stack"${node.exportFormat === "wav-stack" ? " selected" : ""}>wav-stack</option><option value="single-cycle"${node.exportFormat === "single-cycle" ? " selected" : ""}>single-cycle</option><option value="metadata"${node.exportFormat === "metadata" ? " selected" : ""}>metadata</option></select></label>
+          </div>
+          <a class="time-action primary" href="${selectedId ? `${baseUrl()}/wavetables/${encodeURIComponent(selectedId)}/export?format=${encodeURIComponent(node.exportFormat)}` : "#"}">Export</a>
+        ` : ""}
+      </div>
+    </article>
+  `;
+}
+
 function geneticModuleLabel(geneticType) {
   return {
     identity_extractor: "Identity Extractor",
@@ -6951,6 +7518,8 @@ function canvasHydrateGraph(graph) {
       }
       if (hydrated.type === "time") return normalizeTimeNode(hydrated);
       if (hydrated.type === "modulator") return normalizeModulatorNode(hydrated);
+      if (hydrated.type === "germ") return normalizeGermNode(hydrated);
+      if (hydrated.type === "wavetable_forge") return normalizeWavetableForgeNode(hydrated);
       return hydrated;
     });
   const nodeIds = new Set(nodes.map((node) => node.id));
@@ -8469,6 +9038,8 @@ function canvasNodeMarkup(node) {
   if (node.type === "time") return canvasTimeNodeMarkup(node, selected, style);
   if (node.type === "modulator") return canvasModulatorNodeMarkup(node, selected, style);
   if (node.type === "genetic") return canvasGeneticNodeMarkup(node, selected, style);
+  if (node.type === "germ") return canvasGermNodeMarkup(node, selected, style);
+  if (node.type === "wavetable_forge") return canvasWavetableForgeNodeMarkup(node, selected, style);
   if (node.type === "prompt") {
     const settings = canvasNormalizePromptSettings(node);
     const activePanel = node.activePanel || "main";
@@ -8797,6 +9368,8 @@ function renderCanvas() {
   canvasNodes = canvasNodes.map((node) => {
     if (node?.type === "time") return normalizeTimeNode(node);
     if (node?.type === "modulator") return normalizeModulatorNode(node);
+    if (node?.type === "germ") return normalizeGermNode(node);
+    if (node?.type === "wavetable_forge") return normalizeWavetableForgeNode(node);
     return node;
   });
   nodes.innerHTML = canvasNodes.map(canvasNodeMarkup).join("");
@@ -8815,8 +9388,465 @@ function renderCanvas() {
   requestAnimationFrame(() => {
     drawCanvasWaveforms();
     drawCanvasFxFilters();
+    drawGermWavetableCanvases();
   });
   canvasSaveState();
+}
+
+async function drawGermWavetableCanvases() {
+  const canvases = document.querySelectorAll(".wavetable-mini-scope[data-node-id], .wavetable-frame-strip[data-node-id]");
+  for (const canvas of canvases) {
+    const node = canvasNodes.find((item) => item.id === canvas.dataset.nodeId);
+    if (!node || !["germ", "wavetable_forge"].includes(node.type)) continue;
+    const tableId = node.wavetableId || wavetableItems[0]?.id || "";
+    const table = wavetableById(tableId);
+    let frames = tableId && wavetableCache.has(tableId) ? wavetableCache.get(tableId) : null;
+    if (tableId && !frames) {
+      try {
+        frames = await fetchWavetableData(tableId);
+      } catch {
+        frames = null;
+      }
+    }
+    if (canvas.classList.contains("wavetable-frame-strip")) drawWavetableFrameStrip(canvas, table, frames);
+    else drawWavetableMiniScope(canvas, table, frames, node.tablePosition || 0);
+  }
+}
+
+function wavetableProviderModel(node) {
+  return {
+    provider: node.provider || $("provider")?.value || "mock",
+    model: node.model || $("model")?.value || "mock-sine",
+  };
+}
+
+async function ensureNodeWavetable(node) {
+  await refreshWavetables();
+  let table = wavetableById(node.wavetableId);
+  if (!table && wavetableItems.length) {
+    table = wavetableItems[0];
+    node.wavetableId = table.id;
+  }
+  if (!table) throw new Error("No wavetable available.");
+  const frames = await fetchWavetableData(table.id);
+  if (!germSynthEngine) germSynthEngine = createGermSynthEngine();
+  await germSynthEngine.loadWavetable(table, frames);
+  return { table, frames };
+}
+
+async function canvasPreviewWavetableNode(nodeId, mode = "preview") {
+  const node = canvasNodes.find((item) => item.id === nodeId);
+  if (!node || !["germ", "wavetable_forge"].includes(node.type)) return;
+  try {
+    const normalized = node.type === "germ" ? normalizeGermNode(node) : normalizeWavetableForgeNode(node);
+    await ensureNodeWavetable(normalized);
+    if (mode === "hold") {
+      await germSynthEngine.holdNote({
+        position: normalized.tablePosition || 0,
+        note: normalized.note || normalized.rootNote || "C3",
+        gain: normalized.gain || 0.5,
+      });
+      setState("Holding Wavetable", "ok", wavetableById(normalized.wavetableId)?.name || normalized.wavetableId);
+    } else {
+      await germSynthEngine.previewFrame({
+        position: normalized.tablePosition || 0,
+        note: normalized.note || normalized.rootNote || "C3",
+        gain: normalized.gain || 0.5,
+      });
+      setState("Previewing Wavetable", "ok", wavetableById(normalized.wavetableId)?.name || normalized.wavetableId);
+    }
+  } catch (error) {
+    finishWork("Wavetable Preview Error", "bad", error.message);
+  }
+}
+
+function canvasStopWavetablePreview() {
+  germSynthEngine?.stop();
+  setState("Wavetable Stopped", "ok", "Preview stopped.");
+}
+
+async function canvasCreateSoundNodesFromAudioResult(result, parentNodeId, edgeType = "wavetable-render") {
+  const created = [];
+  const audioFiles = result.audio_files || [];
+  const metadataFiles = result.metadata_files || [];
+  for (let index = 0; index < audioFiles.length; index += 1) {
+    const audioPath = audioFiles[index];
+    const metadataPath = metadataFiles[index] || "";
+    const asset = canvasCreateAsset({
+      audioPath,
+      metadataPath,
+      metadata: { duration: result.duration, sample_rate: result.sample_rate },
+      origin: edgeType,
+    });
+    const point = canvasFindOpenPoint(canvasBoardDefaultPoint(), { width: 352, height: 262 });
+    created.push(canvasCreateSoundNode({
+      asset,
+      label: displayNameFromPath(audioPath),
+      x: point.x,
+      y: point.y,
+      parentNodeId,
+      edgeType,
+    }));
+  }
+  await refreshLibrary(false);
+  return created;
+}
+
+function frontendWavetablePrompt(prompt, generationMode) {
+  const modeText = {
+    single_cycle_tone: "stable single-cycle oscillator tone",
+    evolving_timbre: "slowly evolving oscillator timbre with stable pitch",
+    bass_oscillator: "solid bass oscillator source with strong fundamental",
+    glassy_metallic: "glassy metallic vowel timbre with clear harmonic focus",
+    soft_pad_source: "soft pad oscillator source with smooth harmonic motion",
+    formant_no_voice: "formant-like instrumental vowel color without voice or speech",
+    noisy_oscillator: "controlled noisy oscillator texture with stable tonal center",
+    organic_reed: "organic reed-like oscillator tone with steady pitch",
+  }[generationMode] || "stable oscillator tone";
+  return `Single sustained instrumental tone, ${modeText}, ${prompt}, clear tonal center, stable pitch, no rhythm, no drums, no voice, no melody phrase, no long ambience.`;
+}
+
+function wavetableFrameSize(value, fallback = 2048) {
+  const allowed = [512, 1024, 2048, 4096];
+  const numeric = Math.round(Number(value));
+  if (allowed.includes(numeric)) return numeric;
+  return allowed.includes(Number(fallback)) ? Number(fallback) : 2048;
+}
+
+async function canvasGenerateWavetableAudio(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeGermNode(original);
+  const { provider, model } = wavetableProviderModel(node);
+  beginWork("Generating Audio", node.prompt);
+  const result = await api("/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      provider,
+      model,
+      prompt: frontendWavetablePrompt(node.prompt, node.generationMode),
+      negative_prompt: node.negativePrompt,
+      base_prompt: node.prompt,
+      duration: node.durationSec,
+      output_name: safeOutputName(`${node.label || "germ"}_source`),
+      tags: ["wavetable-source"],
+    }),
+  });
+  await canvasCreateSoundNodesFromAudioResult(result, node.id, "wavetable-source");
+  finishWork("Audio Ready", result.status === "done" ? "ok" : "bad", result.error || node.prompt);
+}
+
+async function canvasPromptWavetableNode(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeGermNode(original);
+  const { provider, model } = wavetableProviderModel(node);
+  const resolved = canvasResolveGenerationSettings(
+    node.id,
+    {
+      prompt: node.prompt,
+      negative_prompt: node.negativePrompt,
+      duration: node.durationSec,
+      operation: "wavetable_prompt",
+    },
+    {
+      targetNodeId: node.id,
+      operation: "wavetable_prompt",
+      targetPaths: ["prompt", "negativePrompt", "durationSec", "frameCount", "frameSize", "variationCount"],
+    },
+  );
+  const frameCount = Math.max(1, Math.min(512, Math.round(Number(resolved.frameCount ?? node.frameCount) || node.frameCount)));
+  const frameSize = wavetableFrameSize(resolved.frameSize, node.frameSize);
+  const variationCount = Math.max(1, Math.min(16, Math.round(Number(resolved.variationCount ?? 1) || 1)));
+  beginWork("Germinating Table", resolved.prompt);
+  const result = await api("/wavetables/prompt", {
+    method: "POST",
+    body: JSON.stringify({
+      provider,
+      model,
+      prompt: resolved.prompt,
+      negative_prompt: resolved.negativePrompt,
+      duration: resolved.durationSec,
+      root_note: node.rootNote,
+      generation_mode: node.generationMode,
+      extraction_mode: node.extractionMode,
+      frame_count: frameCount,
+      frame_size: frameSize,
+      output_name: safeOutputName(resolved.prompt || "germ_table"),
+      tags: ["wavetable", "germ"],
+      variation_count: variationCount,
+      modulators: resolved.modulationRecords || [],
+      lineage: {
+        operation_params: {
+          base_prompt: resolved.basePrompt,
+          modulated_prompt: resolved.prompt,
+          base_negative_prompt: resolved.baseNegativePrompt,
+          modulated_negative_prompt: resolved.negativePrompt,
+          modulators: resolved.modulationRecords || [],
+          generation_context: resolved.generationContext || {},
+        },
+      },
+    }),
+  });
+  await refreshWavetables({ force: true });
+  if (result.wavetable?.id) {
+    node.wavetableId = result.wavetable.id;
+    canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeGermNode(node);
+  }
+  renderCanvas();
+  finishWork("Wavetable Ready", "ok", result.wavetable?.name || node.prompt);
+}
+
+async function canvasRenderWavetableNodeToSource(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeGermNode(original);
+  if (!node.wavetableId && wavetableItems[0]) node.wavetableId = wavetableItems[0].id;
+  if (!node.wavetableId) throw new Error("Select a wavetable first.");
+  beginWork("Rendering Table", wavetableById(node.wavetableId)?.name || node.wavetableId);
+  const result = await api("/wavetables/render", {
+    method: "POST",
+    body: JSON.stringify({
+      wavetable_id: node.wavetableId,
+      duration: node.durationSec || 2,
+      root_note: node.rootNote,
+      note: node.note || node.rootNote,
+      scan_start: 0,
+      scan_end: node.tablePosition || 1,
+      gain: node.gain || 0.7,
+      output_name: safeOutputName(`${node.label || "germ"}_render`),
+    }),
+  });
+  await canvasCreateSoundNodesFromAudioResult(result, node.id, "wavetable-render");
+  renderCanvas();
+  finishWork("Rendered Source Ready", "ok", result.audio_files?.[0] || "");
+}
+
+async function canvasMutateWavetableNode(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeGermNode(original);
+  if (!node.wavetableId) throw new Error("Select a wavetable first.");
+  const { provider, model } = wavetableProviderModel(node);
+  const resolved = canvasResolveGenerationSettings(
+    node.id,
+    {
+      prompt: node.mutationPrompt,
+      negative_prompt: node.negativePrompt,
+      duration: node.durationSec,
+      init_noise_level: node.mutationDepth,
+      operation: "wavetable_mutation",
+    },
+    {
+      targetNodeId: node.id,
+      operation: "wavetable_mutation",
+      targetPaths: ["durationSec", "mutationDepth", "frameCount", "frameSize", "variationCount"],
+    },
+  );
+  const mutationDepth = Math.max(0, Math.min(1, Number(resolved.mutationDepth ?? resolved.mutation ?? node.mutationDepth)));
+  const frameCount = Math.max(1, Math.min(512, Math.round(Number(resolved.frameCount ?? node.frameCount) || node.frameCount)));
+  const frameSize = wavetableFrameSize(resolved.frameSize, node.frameSize);
+  const variationCount = Math.max(1, Math.min(16, Math.round(Number(resolved.variationCount ?? 1) || 1)));
+  beginWork("Mutating Table", node.mutationPrompt);
+  const result = await api("/wavetables/mutate", {
+    method: "POST",
+    body: JSON.stringify({
+      wavetable_id: node.wavetableId,
+      provider,
+      model,
+      prompt: node.mutationPrompt,
+      negative_prompt: node.negativePrompt,
+      init_noise_level: mutationDepth,
+      render_duration: resolved.durationSec || node.durationSec || 2,
+      root_note: node.rootNote,
+      extraction_mode: node.extractionMode,
+      frame_count: frameCount,
+      frame_size: frameSize,
+      variation_count: variationCount,
+      modulators: resolved.modulationRecords || [],
+      lineage: {
+        operation_params: {
+          mutation_depth: mutationDepth,
+          base_prompt: node.mutationPrompt,
+          modulated_prompt: node.mutationPrompt,
+          base_negative_prompt: node.negativePrompt,
+          modulated_negative_prompt: node.negativePrompt,
+          modulators: resolved.modulationRecords || [],
+          generation_context: resolved.generationContext || {},
+        },
+      },
+    }),
+  });
+  await refreshWavetables({ force: true });
+  if (result.wavetable?.id) {
+    node.wavetableId = result.wavetable.id;
+    canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeGermNode(node);
+  }
+  renderCanvas();
+  finishWork("Mutation Ready", "ok", result.wavetable?.name || "");
+}
+
+async function forgeGenerateTable(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeWavetableForgeNode(original);
+  const { provider, model } = wavetableProviderModel(node);
+  const result = await api("/wavetables/prompt", {
+    method: "POST",
+    body: JSON.stringify({
+      provider,
+      model,
+      prompt: node.prompt,
+      negative_prompt: node.negativePrompt,
+      duration: node.durationSec,
+      root_note: node.rootNote,
+      generation_mode: node.generationMode,
+      extraction_mode: node.extractionMode,
+      frame_count: node.frameCount,
+      frame_size: node.frameSize,
+      output_name: safeOutputName(node.prompt || "forge_table"),
+      tags: ["wavetable", "forge"],
+    }),
+  });
+  await refreshWavetables({ force: true });
+  if (result.wavetable?.id) node.wavetableId = result.wavetable.id;
+  canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeWavetableForgeNode(node);
+  renderCanvas();
+  finishWork("Forge Table Ready", "ok", result.wavetable?.name || "");
+}
+
+async function forgeConvertAudio(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeWavetableForgeNode(original);
+  if (!node.selectedAudioPath) throw new Error("Select an audio source first.");
+  const result = await api("/wavetables/convert", {
+    method: "POST",
+    body: JSON.stringify({
+      input_audio_path: node.selectedAudioPath,
+      name: displayNameFromPath(node.selectedAudioPath),
+      frame_count: node.frameCount,
+      frame_size: node.frameSize,
+      root_note: node.rootNote,
+      extraction_mode: node.extractionMode,
+      tags: ["wavetable", "forge"],
+    }),
+  });
+  await refreshWavetables({ force: true });
+  if (result.wavetable?.id) node.wavetableId = result.wavetable.id;
+  canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeWavetableForgeNode(node);
+  renderCanvas();
+  finishWork("Audio Converted", "ok", result.wavetable?.name || "");
+}
+
+async function forgeMutateTable(nodeId) {
+  const original = canvasNodes.find((item) => item.id === nodeId);
+  if (!original) return;
+  const node = normalizeWavetableForgeNode(original);
+  if (!node.wavetableId) throw new Error("Select a wavetable first.");
+  const { provider, model } = wavetableProviderModel(node);
+  const result = await api("/wavetables/mutate", {
+    method: "POST",
+    body: JSON.stringify({
+      wavetable_id: node.wavetableId,
+      provider,
+      model,
+      prompt: node.mutationPrompt,
+      negative_prompt: node.negativePrompt,
+      init_noise_level: node.mutationDepth,
+      render_duration: node.durationSec,
+      root_note: node.rootNote,
+      extraction_mode: node.extractionMode,
+      frame_count: node.frameCount,
+      frame_size: node.frameSize,
+      variation_count: Math.max(1, Math.min(16, node.variationCount || 1)),
+    }),
+  });
+  await refreshWavetables({ force: true });
+  if (result.wavetable?.id) node.wavetableId = result.wavetable.id;
+  canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeWavetableForgeNode(node);
+  renderCanvas();
+  finishWork("Forge Mutation Ready", "ok", `${result.wavetables?.length || 1} table(s)`);
+}
+
+function wavetableAssetById(id) {
+  return wavetableById(id) || wavetableLibraryItems().find((item) => (item.wavetable_id || item.id) === id) || null;
+}
+
+function canvasUseWavetableInGerm(wavetableId) {
+  const table = wavetableAssetById(wavetableId);
+  if (!table) throw new Error("Wavetable not found.");
+  const point = canvasBoardDefaultPoint();
+  const node = canvasCreateGermNode({ x: point.x, y: point.y });
+  const index = canvasNodes.findIndex((item) => item.id === node.id);
+  const next = normalizeGermNode({
+    ...node,
+    activePanel: "table",
+    wavetableId,
+    prompt: table.prompt || table.name || node.prompt,
+    rootNote: table.root_note || node.rootNote,
+    frameCount: table.frame_count || node.frameCount,
+    frameSize: table.frame_size || node.frameSize,
+  });
+  canvasNodes[index] = next;
+  selectedCanvasNodeId = next.id;
+  canvasSaveState();
+  renderCanvas();
+  activateTab("chamber");
+  setState("Germ Loaded", "ok", table.name || wavetableId);
+}
+
+async function renderWavetableAssetToSource(wavetableId) {
+  const table = wavetableAssetById(wavetableId);
+  if (!table) throw new Error("Wavetable not found.");
+  beginWork("Rendering Table", table.name || wavetableId);
+  const result = await api("/wavetables/render", {
+    method: "POST",
+    body: JSON.stringify({
+      wavetable_id: wavetableId,
+      duration: 2,
+      root_note: table.root_note || "C3",
+      note: table.root_note || "C3",
+      scan_start: 0,
+      scan_end: 1,
+      gain: 0.7,
+      output_name: safeOutputName(`${table.name || wavetableId}_render`),
+      tags: ["wavetable-render"],
+    }),
+  });
+  await refreshLibrary(false, { force: true });
+  await refreshWavetables({ force: true });
+  finishWork("Rendered Source Ready", "ok", result.audio_files?.[0] || "");
+}
+
+async function mutateWavetableAsset(wavetableId) {
+  const table = wavetableAssetById(wavetableId);
+  if (!table) throw new Error("Wavetable not found.");
+  const provider = $("provider")?.value || "mock";
+  const model = $("model")?.value || "mock-sine";
+  beginWork("Mutating Table", table.name || wavetableId);
+  const result = await api("/wavetables/mutate", {
+    method: "POST",
+    body: JSON.stringify({
+      wavetable_id: wavetableId,
+      provider,
+      model,
+      prompt: "subtle living harmonic variation",
+      negative_prompt: "",
+      init_noise_level: 0.35,
+      render_duration: 2,
+      root_note: table.root_note || "C3",
+      extraction_mode: "simple",
+      frame_count: Math.max(1, Math.min(512, Math.round(Number(table.frame_count) || 64))),
+      frame_size: wavetableFrameSize(table.frame_size, 2048),
+      variation_count: 1,
+    }),
+  });
+  await refreshWavetables({ force: true });
+  await refreshLibrary(false, { force: true });
+  renderHerbarium();
+  renderRack();
+  finishWork("Mutation Ready", "ok", result.wavetable?.name || "");
 }
 
 function updateCanvasMixerButton() {
@@ -13872,6 +14902,7 @@ async function refreshAll() {
     $("diagnosticsText").textContent = diagnosticsText(diagnostics);
     renderReadiness(diagnostics);
     await refreshLibrary(false);
+    await refreshWavetables({ force: true });
     await refreshStrains({ render: false });
     finishWork("Ready", "ok", `${$("provider").value} / ${$("model").value || "-"}`);
   } catch (error) {
@@ -14220,6 +15251,7 @@ function refreshLibrary(showState = true, options = {}) {
 }
 
 function libraryMatches(item) {
+  if (isWavetableItem(item)) return false;
   const query = ($("librarySearch")?.value || "").trim().toLowerCase();
   const mode = $("libraryMode")?.value || "";
   const status = $("libraryStatus")?.value || "";
@@ -14288,7 +15320,10 @@ async function libraryItemByReference(metadataPath = "", audioPath = "") {
   );
   if (!item) return null;
   let metadata = null;
-  if (item.metadata_file) {
+  if (isWavetableItem(item)) {
+    const wavetableId = item.wavetable_id || item.id;
+    metadata = wavetableId ? await api(`/wavetables/${encodeURIComponent(wavetableId)}`) : item;
+  } else if (item.metadata_file) {
     metadata = await loadMetadata(item.metadata_file);
   } else {
     metadata = {
@@ -15310,6 +16345,16 @@ document.addEventListener("click", async (event) => {
           canvasCreatePromptNode({ x: point.x, y: point.y });
           closeCanvasSourceMenu();
         }
+        if (source === "germ") {
+          closeCanvasSourceMenu();
+          canvasCreateGermNode({ x: point.x, y: point.y });
+          setState("Germ Created", "ok", "Prompt-grown wavetable organism.");
+        }
+        if (source === "wavetable_forge") {
+          closeCanvasSourceMenu();
+          canvasCreateWavetableForgeNode({ x: point.x, y: point.y });
+          setState("Wavetable Forge", "ok", "Utility module ready.");
+        }
         if (source === "upload") {
           closeCanvasSourceMenu({ keepPosition: true });
           $("canvasUploadInput")?.click();
@@ -15371,6 +16416,29 @@ document.addEventListener("click", async (event) => {
           });
         }
       }
+      if (action === "wavetable-node-tab") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        if (node && ["germ", "wavetable_forge"].includes(node.type)) {
+          node.activePanel = button.dataset.tab || node.activePanel;
+          selectedCanvasNodeId = node.id;
+          renderCanvas();
+        }
+      }
+      if (action === "refresh-wavetables") {
+        await refreshWavetables({ force: true });
+        renderCanvas();
+        setState("Wavetables Ready", "ok", `${wavetableItems.length} table(s)`);
+      }
+      if (action === "wavetable-preview") await canvasPreviewWavetableNode(button.dataset.nodeId, "preview");
+      if (action === "wavetable-hold") await canvasPreviewWavetableNode(button.dataset.nodeId, "hold");
+      if (action === "wavetable-stop") canvasStopWavetablePreview();
+      if (action === "wavetable-generate-audio") await canvasGenerateWavetableAudio(button.dataset.nodeId);
+      if (action === "wavetable-prompt") await canvasPromptWavetableNode(button.dataset.nodeId);
+      if (action === "wavetable-render-source") await canvasRenderWavetableNodeToSource(button.dataset.nodeId);
+      if (action === "wavetable-mutate") await canvasMutateWavetableNode(button.dataset.nodeId);
+      if (action === "forge-generate-table") await forgeGenerateTable(button.dataset.nodeId);
+      if (action === "forge-convert-audio") await forgeConvertAudio(button.dataset.nodeId);
+      if (action === "forge-mutate-table") await forgeMutateTable(button.dataset.nodeId);
       if (action === "canvas-modulator-add-route") {
         const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
         if (node?.type === "modulator") {
@@ -15812,6 +16880,21 @@ document.addEventListener("click", async (event) => {
         activateTab("seeds");
       }
     }
+    if (action.startsWith("wavetable-asset-")) {
+      const wavetableId = button.dataset.wavetableId || "";
+      if (action === "wavetable-asset-use") {
+        canvasUseWavetableInGerm(wavetableId);
+        return;
+      }
+      if (action === "wavetable-asset-render") {
+        await renderWavetableAssetToSource(wavetableId);
+        return;
+      }
+      if (action === "wavetable-asset-mutate") {
+        await mutateWavetableAsset(wavetableId);
+        return;
+      }
+    }
     if (action.startsWith("rack-")) {
       if (action === "rack-select") {
         const key = button.dataset.key;
@@ -16221,6 +17304,30 @@ document.addEventListener("input", (event) => {
   if (handleCanvasModulatorControl(event)) return;
   if (handleCanvasGeneticControl(event)) return;
   if (handleAudioSnapshotControl(event)) return;
+  const wavetableText = event.target.closest?.(".wavetable-node-text[data-node-id][data-field]");
+  if (wavetableText) {
+    const node = canvasNodes.find((item) => item.id === wavetableText.dataset.nodeId);
+    if (!node || !["germ", "wavetable_forge"].includes(node.type)) return;
+    node[wavetableText.dataset.field] = wavetableText.value;
+    selectedCanvasNodeId = node.id;
+    canvasSaveState();
+    updateCanvasInspector();
+    return;
+  }
+  const wavetableSetting = event.target.closest?.(".wavetable-node-setting[data-node-id][data-field]");
+  if (wavetableSetting) {
+    const node = canvasNodes.find((item) => item.id === wavetableSetting.dataset.nodeId);
+    if (!node || !["germ", "wavetable_forge"].includes(node.type)) return;
+    const field = wavetableSetting.dataset.field;
+    const numericFields = new Set(["durationSec", "frameCount", "frameSize", "tablePosition", "gain", "mutationDepth", "variationCount"]);
+    node[field] = numericFields.has(field) ? Number(wavetableSetting.value) : wavetableSetting.value;
+    selectedCanvasNodeId = node.id;
+    if (node.type === "germ") canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeGermNode(node);
+    if (node.type === "wavetable_forge") canvasNodes[canvasNodes.findIndex((item) => item.id === node.id)] = normalizeWavetableForgeNode(node);
+    canvasSaveState();
+    if (field === "tablePosition" || field === "wavetableId") requestAnimationFrame(drawGermWavetableCanvases);
+    return;
+  }
   const field = event.target.closest?.(".canvas-prompt-edit[data-node-id][data-field]");
   if (field) {
     const node = canvasNodes.find((item) => item.id === field.dataset.nodeId);

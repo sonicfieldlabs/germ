@@ -348,6 +348,14 @@ def _metadata_items_for_control_graph(limit: int = 300) -> list[dict[str, Any]]:
     )
 
 
+def _wavetable_items_for_control_graph(limit: int = 300) -> list[dict[str, Any]]:
+    return _cached_json_items_for_control_graph(
+        root=settings.wavetable_metadata_dir,
+        limit=limit,
+        marker_key="_metadata_path",
+    )
+
+
 def _micro_profile_items_for_control_graph(limit: int = 300) -> list[dict[str, Any]]:
     micro_dir = settings.output_root / "micro"
     return _cached_json_items_for_control_graph(
@@ -431,6 +439,7 @@ def control_genetic_graph(limit: int = 300) -> ControlGeneticGraphResponse:
     edges: list[dict[str, Any]] = []
     metadata_limit = max(1, min(limit, 1000))
     metadata_items = _metadata_items_for_control_graph(metadata_limit)
+    wavetable_items = _wavetable_items_for_control_graph(metadata_limit)
     metadata_path_to_sound: dict[str, str] = {}
     audio_path_to_sound: dict[str, str] = {}
 
@@ -470,11 +479,21 @@ def control_genetic_graph(limit: int = 300) -> ControlGeneticGraphResponse:
         ):
             audio_path_to_sound[key] = sound_id
 
+        operation = str(item.get("operation") or lineage.get("operation") or "")
         parents = item.get("parents") if isinstance(item.get("parents"), list) else lineage.get("parents", [])
         for parent in parents or []:
             parent_id = str(parent)
-            nodes.setdefault(parent_id, {"id": parent_id, "type": "sound", "label": parent_id})
-            edges.append({"from": parent_id, "to": sound_id, "type": "parent"})
+            parent_type = "wavetable" if parent_id.startswith("wt_") else "sound"
+            nodes.setdefault(parent_id, {"id": parent_id, "type": parent_type, "label": parent_id})
+            edge_type = "parent"
+            if parent_type == "wavetable":
+                if "render" in operation:
+                    edge_type = "wavetable-render"
+                elif "mutation" in operation:
+                    edge_type = "wavetable-mutation"
+                else:
+                    edge_type = "wavetable-child"
+            edges.append({"from": parent_id, "to": sound_id, "type": edge_type})
 
         for strain in _strain_records(item, lineage):
             node_id = _strain_node_id(strain)
@@ -543,6 +562,75 @@ def control_genetic_graph(limit: int = 300) -> ControlGeneticGraphResponse:
             )
             edges.append({"from": route_id, "to": sound_id, "type": "controlled-result"})
 
+    for table in wavetable_items:
+        if table.get("type") != "germ_wavetable":
+            continue
+        lineage = table.get("lineage") if isinstance(table.get("lineage"), dict) else {}
+        operation_params = table.get("operation_params") if isinstance(table.get("operation_params"), dict) else {}
+        operation = str(table.get("operation") or lineage.get("operation") or "")
+        table_id = str(table.get("id") or lineage.get("id") or table.get("_metadata_path"))
+        nodes[table_id] = {
+            "id": table_id,
+            "type": "wavetable",
+            "label": table.get("name") or table_id,
+            "metadata_path": table.get("_metadata_path"),
+            "data_path": table.get("data_path"),
+            "frame_count": table.get("frame_count"),
+            "frame_size": table.get("frame_size"),
+            "root_note": table.get("root_note"),
+            "operation": operation,
+            "created_at": table.get("created_at"),
+            "table_classification": table.get("table_classification"),
+        }
+        for key in _metadata_path_keys(table.get("_metadata_path"), table.get("metadata_path")):
+            metadata_path_to_sound[key] = table_id
+
+        source_sound = None
+        for key in _metadata_path_keys(table.get("source_metadata_path"), operation_params.get("source_metadata_path")):
+            source_sound = source_sound or metadata_path_to_sound.get(key)
+        for key in _metadata_path_keys(table.get("source_audio_path"), lineage.get("audio_path"), operation_params.get("source_audio_path")):
+            source_sound = source_sound or audio_path_to_sound.get(key)
+        if source_sound:
+            edge_type = "prompt-to-wavetable" if operation == "prompt_to_wavetable" else "audio-to-wavetable"
+            edges.append({"from": source_sound, "to": table_id, "type": edge_type})
+
+        prompt_contract = operation_params.get("prompt_contract") if isinstance(operation_params.get("prompt_contract"), dict) else {}
+        prompt_text = table.get("source_prompt") or prompt_contract.get("user_prompt")
+        if prompt_text and operation == "prompt_to_wavetable":
+            prompt_id = f"prompt:{safe_stem(str(prompt_text)[:80], fallback='wavetable_prompt')}"
+            nodes.setdefault(
+                prompt_id,
+                {
+                    "id": prompt_id,
+                    "type": "prompt",
+                    "label": str(prompt_text)[:80],
+                },
+            )
+            edges.append({"from": prompt_id, "to": table_id, "type": "prompt-to-wavetable"})
+
+        parents = table.get("parents") if isinstance(table.get("parents"), list) else lineage.get("parents", [])
+        for parent in parents or []:
+            parent_id = str(parent)
+            parent_type = "wavetable" if parent_id.startswith("wt_") else "sound"
+            nodes.setdefault(parent_id, {"id": parent_id, "type": parent_type, "label": parent_id})
+            if parent_type == "wavetable":
+                edge_type = "wavetable-mutation" if operation == "wavetable_mutation" else "wavetable-child"
+            else:
+                if source_sound and parent_id == source_sound:
+                    continue
+                edge_type = "prompt-to-wavetable" if operation == "prompt_to_wavetable" else "audio-to-wavetable"
+            edges.append({"from": parent_id, "to": table_id, "type": edge_type})
+
+        children = table.get("children") if isinstance(table.get("children"), list) else lineage.get("children", [])
+        for child in children or []:
+            child_id = str(child)
+            nodes.setdefault(child_id, {"id": child_id, "type": "wavetable", "label": child_id})
+            edges.append({"from": table_id, "to": child_id, "type": "wavetable-child"})
+
+        render_audio_id = table.get("render_audio_id") or operation_params.get("render_audio_id")
+        if render_audio_id and str(render_audio_id) in nodes:
+            edges.append({"from": str(render_audio_id), "to": table_id, "type": "wavetable-mutation-source"})
+
     for event in control_registry.events():
         event_id = event.id or f"event_{len(nodes)}"
         nodes[event_id] = {
@@ -589,6 +677,7 @@ def control_genetic_graph(limit: int = 300) -> ControlGeneticGraphResponse:
             "event_count": len(control_registry.events()),
             "strain_count": sum(1 for node in nodes.values() if node.get("type") == "strain"),
             "micro_profile_count": len(micro_profiles),
+            "wavetable_count": len(wavetable_items),
             "limit": limit,
         },
     )

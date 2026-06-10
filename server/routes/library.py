@@ -73,7 +73,18 @@ def _output_signature() -> tuple[int, tuple[tuple[str, int, int], ...]]:
     directories: list[tuple[str, int, int]] = []
     if not root.exists():
         return (storage.library_version, tuple())
-    for path in [root, *(item for item in root.iterdir() if item.is_dir())]:
+    watch_dirs = [
+        root,
+        *(item for item in root.iterdir() if item.is_dir()),
+        settings.wavetable_metadata_dir,
+        settings.wavetable_data_dir,
+        settings.wavetable_preview_dir,
+    ]
+    seen_dirs: set[Path] = set()
+    for path in watch_dirs:
+        if path in seen_dirs or not path.exists():
+            continue
+        seen_dirs.add(path)
         try:
             stat = path.stat()
         except OSError:
@@ -126,6 +137,7 @@ def _audio_item(path: Path) -> dict[str, Any]:
     source = _audio_source(path)
     return {
         "id": path.stem,
+        "asset_type": "audio",
         "app": PRODUCT_NAME,
         "product": PRODUCT_NAME,
         "legacy_app": LEGACY_ENGINE_NAME,
@@ -210,6 +222,7 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
 
     return {
         "id": path.stem,
+        "asset_type": "audio",
         "app": data.get("app"),
         "provider": data.get("provider"),
         "runtime": data.get("runtime"),
@@ -260,10 +273,61 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
     }
 
 
+def _wavetable_item(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if data.get("type") != "germ_wavetable":
+        return None
+
+    data_file = data.get("data_path")
+    data_target = settings.project_root / data_file if data_file else None
+    data_exists = bool(data_target and data_target.exists())
+    lineage = data.get("lineage") if isinstance(data.get("lineage"), dict) else {}
+    prompt = data.get("source_prompt") or data.get("prompt")
+    metadata_file = storage.relative_path(path)
+    return {
+        "asset_type": "wavetable",
+        "id": data.get("id") or path.stem,
+        "wavetable_id": data.get("id") or path.stem,
+        "name": data.get("name") or path.stem,
+        "frame_size": data.get("frame_size"),
+        "frame_count": data.get("frame_count"),
+        "sample_rate": data.get("sample_rate"),
+        "root_note": data.get("root_note"),
+        "root_frequency": data.get("root_frequency"),
+        "prompt": prompt,
+        "negative_prompt": data.get("negative_prompt"),
+        "tags": data.get("tags") or [],
+        "metadata_file": metadata_file,
+        "data_file": data_file,
+        "audio_file": None,
+        "audio_exists": False,
+        "data_exists": data_exists,
+        "operation": data.get("operation") or lineage.get("operation"),
+        "operation_params": data.get("operation_params") or lineage.get("operation_params") or {},
+        "parents": data.get("parents") or lineage.get("parents") or [],
+        "children": data.get("children") or lineage.get("children") or [],
+        "lineage": lineage,
+        "runtime": data.get("runtime"),
+        "created_at": data.get("created_at"),
+        "source_audio_path": data.get("source_audio_path"),
+        "source_metadata_path": data.get("source_metadata_path"),
+        "source_type": "wavetable",
+        "source": data.get("source") or "wavetable",
+        "table_classification": data.get("table_classification"),
+        "warnings": data.get("warnings") or [],
+        "descriptors": data.get("descriptors") if isinstance(data.get("descriptors"), dict) else {},
+        "file_size": data_target.stat().st_size if data_exists and data_target else None,
+    }
+
+
 def _build_library_items() -> list[dict[str, Any]]:
     metadata_dir = settings.metadata_dir
     items: list[dict[str, Any]] = []
     indexed_audio: set[str] = set()
+    seen: set[str] = set()
     if metadata_dir.exists():
         entries: list[tuple[Path, int]] = []
         for path in metadata_dir.glob("*.json"):
@@ -273,7 +337,6 @@ def _build_library_items() -> list[dict[str, Any]]:
                 continue
             entries.append((path, mtime_ns))
         entries.sort(key=lambda entry: entry[1], reverse=True)
-        seen: set[str] = set()
         for path, mtime_ns in entries[:MAX_LIBRARY_ITEMS]:
             key = str(path)
             seen.add(key)
@@ -287,9 +350,31 @@ def _build_library_items() -> list[dict[str, Any]]:
                 items.append(item)
                 if item.get("audio_file"):
                     indexed_audio.add(item["audio_file"])
-        # Drop cache entries for metadata files that no longer exist.
-        for stale_key in [key for key in _metadata_item_cache if key not in seen]:
-            _metadata_item_cache.pop(stale_key, None)
+
+    wavetable_metadata_dir = settings.wavetable_metadata_dir
+    if wavetable_metadata_dir.exists():
+        entries = []
+        for path in wavetable_metadata_dir.glob("*.json"):
+            try:
+                entries.append((path, path.stat().st_mtime_ns))
+            except OSError:
+                continue
+        entries.sort(key=lambda entry: entry[1], reverse=True)
+        for path, mtime_ns in entries[:MAX_LIBRARY_ITEMS]:
+            key = str(path)
+            seen.add(key)
+            cached = _metadata_item_cache.get(key)
+            if cached is not None and cached[0] == mtime_ns:
+                item = cached[1]
+            else:
+                item = _wavetable_item(path)
+                _metadata_item_cache[key] = (mtime_ns, item)
+            if item:
+                items.append(item)
+
+    # Drop cache entries for metadata files that no longer exist.
+    for stale_key in [key for key in _metadata_item_cache if key not in seen]:
+        _metadata_item_cache.pop(stale_key, None)
 
     if settings.output_root.exists():
         audio_paths = (
@@ -298,6 +383,7 @@ def _build_library_items() -> list[dict[str, Any]]:
             if path.is_file()
             and path.suffix.lower() in AUDIO_EXTENSIONS
             and settings.metadata_dir not in path.parents
+            and settings.wavetable_dir not in path.parents
             and settings.scratch_dir not in path.parents
         )
         for path in sorted(audio_paths, key=lambda item: item.stat().st_mtime, reverse=True):
@@ -351,4 +437,5 @@ def list_library(
         "items": items,
         "audio_dir": storage.relative_path(settings.audio_dir),
         "metadata_dir": storage.relative_path(settings.metadata_dir),
+        "wavetable_dir": storage.relative_path(settings.wavetable_dir),
     }

@@ -54,6 +54,10 @@ class Settings:
         self.metadata_dir = self.output_root / "metadata"
         self.upload_dir = self.output_root / "uploads"
         self.scratch_dir = self.output_root / "scratch"
+        self.wavetable_dir = self.output_root / "wavetables"
+        self.wavetable_metadata_dir = self.wavetable_dir / "metadata"
+        self.wavetable_data_dir = self.wavetable_dir / "tables"
+        self.wavetable_preview_dir = self.wavetable_dir / "previews"
         self.allowed_input_roots = _path_list_from_env(
             "GERMINATOR_ALLOWED_INPUT_ROOTS",
             [self.output_root],

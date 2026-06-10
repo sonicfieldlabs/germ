@@ -13,6 +13,12 @@ output/metadata/*
 !output/metadata/.gitkeep
 output/uploads/*
 !output/uploads/.gitkeep
+output/wavetables/metadata/*
+!output/wavetables/metadata/.gitkeep
+output/wavetables/tables/*
+!output/wavetables/tables/.gitkeep
+output/wavetables/previews/*
+!output/wavetables/previews/.gitkeep
 output/control/
 output/micro/
 output/intermediate/

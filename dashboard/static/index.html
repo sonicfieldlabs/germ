@@ -352,6 +352,11 @@
                             <strong class="source-tool-title">Prompt</strong>
                             <span class="source-tool-desc">Text seed with avoid fields.</span>
                           </button>
+                          <button class="source-tool-card" type="button" title="Germ" aria-label="Add Germ wavetable source" data-action="canvas-source-option" data-source="germ">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg></span>
+                            <strong class="source-tool-title">Germ</strong>
+                            <span class="source-tool-desc">Prompt-grown wavetable organism.</span>
+                          </button>
                           <button class="source-tool-card" type="button" title="Upload" aria-label="Add Upload source" data-action="canvas-source-option" data-source="upload">
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconUpload"></use></svg></span>
                             <strong class="source-tool-title">Upload</strong>
@@ -559,6 +564,11 @@
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconLoopDoctor"></use></svg></span>
                             <strong class="source-tool-title">Loop Doctor</strong>
                             <span class="source-tool-desc">Detect loops and heal seams.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Wavetable Forge" aria-label="Add Wavetable Forge utility" data-action="canvas-source-option" data-source="wavetable_forge">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFilter"></use></svg></span>
+                            <strong class="source-tool-title">Wavetable Forge</strong>
+                            <span class="source-tool-desc">Convert, mutate, render, import, export wavetables.</span>
                           </button>
                           <button class="source-tool-card" type="button" title="Space" aria-label="Add Space effect" data-action="canvas-source-option" data-source="fx" data-fx="space">
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSpace"></use></svg></span>
@@ -1049,7 +1059,7 @@
               <div class="petri-toolbar-row-top">
                 <div class="petri-toolbar-cluster petri-toolbar-stats">
                   <div class="library-stats">
-                    <span class="lib-stat"><strong id="libTotal">0</strong> sounds</span>
+                    <span class="lib-stat"><strong id="libTotal">0</strong> assets</span>
                     <span class="lib-stat"><strong id="libDone">0</strong> done</span>
                     <span class="lib-stat"><strong id="libError">0</strong> errors</span>
                     <span class="lib-stat"><strong id="libFavorites">0</strong> favorites</span>
@@ -1058,6 +1068,7 @@
                 <div class="petri-toolbar-cluster petri-toolbar-views">
                   <div class="petri-tabs" role="tablist" aria-label="Petri views">
                     <button id="petriSoundsTab" class="petri-tab active" type="button" data-action="petri-view" data-view="sounds">Sounds</button>
+                    <button id="petriWavetableTab" class="petri-tab" type="button" data-action="petri-view" data-view="wavetables">Wavetables</button>
                     <button id="petriGroupsTab" class="petri-tab" type="button" data-action="petri-view" data-view="groups">Groups</button>
                   </div>
                   <button id="petriVizToggle" class="petri-toolbar-icon" type="button" aria-label="Toggle waveform / spectrogram" title="Waveform / Spectrogram" data-help="Switch disc view between waveform and spectrogram.">
@@ -1159,6 +1170,7 @@
                   </select>
                   <select id="rackFilterMode" class="rack-select" aria-label="Filter by mode" title="Filter by mode" data-help="Filter list items by mode.">
                     <option value="">all modes</option>
+                    <option value="wavetable">wavetables</option>
                     <option value="generate">generate</option>
                     <option value="inpaint">inpaint</option>
                     <option value="audio-to-audio">audio-to-audio</option>
@@ -1379,6 +1391,6 @@
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260610-review-p3"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260610-wt-p1"></script>
   </body>
 </html>

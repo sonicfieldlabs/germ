@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import math
 import socket
+import struct
 import time
+import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
@@ -106,6 +110,21 @@ def poll_job(status_url: str, timeout: float = 5.0) -> dict:
             return last
         time.sleep(0.02)
     raise AssertionError(f"job did not finish before timeout: {last}")
+
+
+def write_wavetable_stack(path: Path, *, frame_size: int = 512, frame_count: int = 4) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(44100)
+        frames = bytearray()
+        for frame_index in range(frame_count):
+            harmonic = frame_index + 1
+            for sample_index in range(frame_size):
+                phase = (sample_index / frame_size) * harmonic * 2.0 * math.pi
+                frames.extend(struct.pack("<h", int(18000 * math.sin(phase))))
+        wav.writeframes(bytes(frames))
 
 
 def test_health_returns_ok() -> None:
@@ -614,6 +633,367 @@ def test_mock_generate_creates_wav_and_metadata() -> None:
     assert metadata["output_audio_path"] == body["audio_files"][0]
     assert metadata["culture_id"] == "culture-pytest"
     assert metadata["tags"] == ["SFX", "review"]
+
+
+def test_wavetable_convert_list_detail_and_data_routes() -> None:
+    source_path = settings.audio_dir / "pytest_wavetable_sine.wav"
+    write_sine_wav(source_path, duration=0.35, frequency=130.8128, amplitude=0.4)
+
+    response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "name": "pytest sine table",
+            "frame_count": 8,
+            "frame_size": 512,
+            "root_note": "C3",
+            "extraction_mode": "simple",
+        },
+    )
+
+    assert response.status_code == 200
+    wavetable = response.json()["wavetable"]
+    assert wavetable["id"].startswith("wt_")
+    assert wavetable["type"] == "germ_wavetable"
+    assert wavetable["frame_count"] == 8
+    assert wavetable["frame_size"] == 512
+    assert wavetable["root_note"] == "C3"
+    assert wavetable["operation"] == "audio_to_wavetable"
+    assert Path(wavetable["metadata_path"]).exists()
+    data_path = Path(wavetable["data_path"])
+    assert data_path.exists()
+    assert data_path.stat().st_size == 8 * 512 * 4
+
+    list_response = client.get("/wavetables")
+    assert list_response.status_code == 200
+    assert any(item["id"] == wavetable["id"] for item in list_response.json())
+
+    detail_response = client.get(f"/wavetables/{wavetable['id']}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["id"] == wavetable["id"]
+
+    data_response = client.get(f"/wavetables/{wavetable['id']}/data")
+    assert data_response.status_code == 200
+    assert len(data_response.content) == 8 * 512 * 4
+
+
+def test_wavetable_conversion_rejects_external_paths(tmp_path: Path) -> None:
+    source_path = tmp_path / "external.wav"
+    write_sine_wav(source_path, duration=0.1)
+    response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": str(source_path),
+            "name": "external",
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_wavetable_conversion_rejects_unsupported_frame_size() -> None:
+    source_path = settings.audio_dir / "pytest_wavetable_bad_frame.wav"
+    write_sine_wav(source_path, duration=0.1)
+    response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "name": "bad frame",
+            "frame_count": 4,
+            "frame_size": 256,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_wavetable_render_creates_audio_and_metadata() -> None:
+    source_path = settings.audio_dir / "pytest_wavetable_render_source.wav"
+    write_sine_wav(source_path, duration=0.35, frequency=220.0, amplitude=0.35)
+    convert_response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "name": "pytest render table",
+            "frame_count": 6,
+            "frame_size": 512,
+        },
+    )
+    assert convert_response.status_code == 200
+    wavetable = convert_response.json()["wavetable"]
+
+    render_response = client.post(
+        "/wavetables/render",
+        json={
+            "wavetable_id": wavetable["id"],
+            "duration": 0.2,
+            "root_note": "C3",
+            "note": "C3",
+            "scan_start": 0.0,
+            "scan_end": 1.0,
+            "gain": 0.5,
+            "output_name": "pytest_rendered_table",
+        },
+    )
+
+    assert render_response.status_code == 200
+    body = render_response.json()
+    audio_path = Path(body["audio_files"][0])
+    metadata_path = Path(body["metadata_files"][0])
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    with wave.open(str(audio_path), "rb") as wav:
+        assert wav.getnchannels() == 2
+        assert wav.getframerate() == 44100
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["wavetable_id"] == wavetable["id"]
+    assert metadata["lineage"]["operation"] == "wavetable-render"
+
+
+def test_wavetable_import_and_exports() -> None:
+    stack_path = settings.audio_dir / "pytest_wavetable_stack.wav"
+    write_wavetable_stack(stack_path, frame_size=512, frame_count=4)
+    import_response = client.post(
+        "/wavetables/import",
+        json={
+            "input_audio_path": storage.relative_path(stack_path),
+            "frame_size": 512,
+            "name": "pytest imported stack",
+        },
+    )
+    assert import_response.status_code == 200
+    wavetable = import_response.json()["wavetable"]
+    assert wavetable["frame_count"] == 4
+    assert wavetable["operation"] == "import_wav_stack"
+
+    metadata_export = client.get(f"/wavetables/{wavetable['id']}/export?format=metadata")
+    assert metadata_export.status_code == 200
+    assert metadata_export.json()["id"] == wavetable["id"]
+
+    gwt_export = client.get(f"/wavetables/{wavetable['id']}/export?format=gwt")
+    assert gwt_export.status_code == 200
+    assert len(gwt_export.content) == 4 * 512 * 4
+
+    stack_export = client.get(f"/wavetables/{wavetable['id']}/export?format=wav-stack")
+    assert stack_export.status_code == 200
+    with wave.open(io.BytesIO(stack_export.content), "rb") as wav:
+        assert wav.getnchannels() == 1
+        assert wav.getnframes() == 4 * 512
+
+    single_cycle = client.get(f"/wavetables/{wavetable['id']}/export?format=single-cycle")
+    assert single_cycle.status_code == 200
+    with wave.open(io.BytesIO(single_cycle.content), "rb") as wav:
+        assert wav.getnchannels() == 1
+        assert wav.getnframes() == 512
+
+
+def test_wavetable_prompt_route_wraps_prompt_and_creates_table() -> None:
+    response = client.post(
+        "/wavetables/prompt",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "glassy metallic vowel",
+            "duration": 0.25,
+            "root_note": "C3",
+            "generation_mode": "glassy_metallic",
+            "frame_count": 4,
+            "frame_size": 512,
+            "output_name": "pytest_prompt_table",
+            "modulators": [{"target_path": "prompt", "final_value": "glassy metallic vowel with motion"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    wavetable = body["wavetable"]
+    assert body["status"] == "done"
+    assert Path(body["source_audio_files"][0]).exists()
+    source_metadata = json.loads(Path(body["source_metadata_files"][0]).read_text(encoding="utf-8"))
+    assert "Single sustained instrumental tone" in source_metadata["prompt"]
+    assert "glassy metallic vowel" in source_metadata["prompt"]
+    assert source_metadata["base_prompt"] == "glassy metallic vowel"
+    assert "speech, vocals" in source_metadata["negative_prompt"]
+
+    wavetable_metadata = json.loads(Path(wavetable["metadata_path"]).read_text(encoding="utf-8"))
+    assert wavetable_metadata["operation"] == "prompt_to_wavetable"
+    contract = wavetable_metadata["operation_params"]["prompt_contract"]
+    assert contract["user_prompt"] == "glassy metallic vowel"
+    assert "no rhythm" in contract["prompt"]
+    assert wavetable_metadata["operation_params"]["modulators"][0]["target_path"] == "prompt"
+
+
+def test_wavetable_mutation_creates_child_lineage() -> None:
+    source_path = settings.audio_dir / "pytest_wavetable_parent.wav"
+    write_sine_wav(source_path, duration=0.35, frequency=220.0, amplitude=0.35)
+    parent_response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "name": "pytest parent table",
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+    assert parent_response.status_code == 200
+    parent = parent_response.json()["wavetable"]
+
+    mutation_response = client.post(
+        "/wavetables/mutate",
+        json={
+            "wavetable_id": parent["id"],
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "more brittle glass harmonics",
+            "init_noise_level": 0.42,
+            "render_duration": 0.2,
+            "root_note": "C3",
+            "frame_count": 4,
+            "frame_size": 512,
+            "modulators": [{"target_path": "mutationDepth", "final_value": 0.42}],
+        },
+    )
+
+    assert mutation_response.status_code == 200
+    body = mutation_response.json()
+    child = body["wavetable"]
+    assert child["id"] != parent["id"]
+    assert Path(body["source_audio_files"][0]).exists()
+    assert Path(body["audio_files"][0]).exists()
+
+    child_metadata = json.loads(Path(child["metadata_path"]).read_text(encoding="utf-8"))
+    assert child_metadata["operation"] == "wavetable_mutation"
+    assert child_metadata["parent_wavetable_id"] == parent["id"]
+    assert child_metadata["render_audio_id"]
+    assert child_metadata["child_wavetable_id"] == child["id"]
+    params = child_metadata["operation_params"]
+    assert params["stable_audio_mode"] == "audio-to-audio"
+    assert params["init_noise_level"] == 0.42
+    assert params["prompt"] == "more brittle glass harmonics"
+    assert params["child_wavetable_id"] == child["id"]
+    assert params["modulators"][0]["target_path"] == "mutationDepth"
+
+    parent_metadata = client.get(f"/wavetables/{parent['id']}").json()
+    assert child["id"] in parent_metadata["children"]
+
+
+def test_wavetable_variation_count_is_capped() -> None:
+    response = client.post(
+        "/wavetables/prompt",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "too many variations",
+            "variation_count": 17,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_wavetable_quality_warnings_for_low_signal_prompt() -> None:
+    response = client.post(
+        "/wavetables/prompt",
+        json={
+            "provider": "mock",
+            "model": "mock-silence",
+            "prompt": "silent oscillator test",
+            "duration": 0.2,
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+    assert response.status_code == 200
+    wavetable = response.json()["wavetable"]
+    assert "low_signal" in wavetable["warnings"]
+    assert wavetable["table_classification"] == "glitch"
+
+
+def test_library_lists_wavetable_assets_without_breaking_audio_items() -> None:
+    audio_path = settings.audio_dir / "pytest_library_asset_audio.wav"
+    write_sine_wav(audio_path, duration=0.25)
+    convert_response = client.post(
+        "/wavetables/convert",
+        json={
+            "input_audio_path": storage.relative_path(audio_path),
+            "name": "pytest library table asset",
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+    assert convert_response.status_code == 200
+    wavetable = convert_response.json()["wavetable"]
+
+    response = client.get("/library?limit=0")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    table_items = [item for item in items if item.get("asset_type") == "wavetable"]
+    audio_items = [item for item in items if item.get("audio_file") == storage.relative_path(audio_path)]
+    assert any(item["wavetable_id"] == wavetable["id"] for item in table_items)
+    assert audio_items
+    assert all(item.get("asset_type") == "audio" for item in audio_items)
+
+
+def test_wavetable_control_graph_includes_lineage_edges() -> None:
+    prompt_response = client.post(
+        "/wavetables/prompt",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "graph glass wavetable",
+            "duration": 0.2,
+            "frame_count": 4,
+            "frame_size": 512,
+            "output_name": "pytest_graph_table",
+        },
+    )
+    assert prompt_response.status_code == 200
+    parent = prompt_response.json()["wavetable"]
+
+    render_response = client.post(
+        "/wavetables/render",
+        json={
+            "wavetable_id": parent["id"],
+            "duration": 0.2,
+            "root_note": "C3",
+            "note": "C3",
+            "output_name": "pytest_graph_table_render",
+        },
+    )
+    assert render_response.status_code == 200
+
+    mutation_response = client.post(
+        "/wavetables/mutate",
+        json={
+            "wavetable_id": parent["id"],
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "graph child harmonics",
+            "render_duration": 0.2,
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+    assert mutation_response.status_code == 200
+    child = mutation_response.json()["wavetable"]
+
+    graph_response = client.get("/control/genetic/control-graph?limit=1000")
+    assert graph_response.status_code == 200
+    graph = graph_response.json()
+    nodes = graph["nodes"]
+    edges = graph["edges"]
+    assert any(node["id"] == parent["id"] and node["type"] == "wavetable" for node in nodes)
+    assert any(node["id"] == child["id"] and node["type"] == "wavetable" for node in nodes)
+    assert any(edge["to"] == parent["id"] and edge["type"] == "prompt-to-wavetable" for edge in edges)
+    assert any(edge["from"] == parent["id"] and edge["type"] == "wavetable-render" for edge in edges)
+    assert any(edge["from"] == parent["id"] and edge["to"] == child["id"] and edge["type"] == "wavetable-mutation" for edge in edges)
+    assert not any(
+        edge["type"] == "wavetable-child" and not str(edge["from"]).startswith("wt_")
+        for edge in edges
+    )
+    assert not any(
+        edge["type"] == "wavetable-mutation" and not str(edge["from"]).startswith("wt_")
+        for edge in edges
+    )
 
 
 def test_mock_batch_generate_records_unique_metadata_seeds() -> None:

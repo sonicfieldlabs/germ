@@ -103,8 +103,24 @@ function checkMicroRenderer() {
   assert.equal(stats.frameDraws, 1);
 }
 
+function checkWavetableContracts() {
+  const html = read("dashboard/static/index.html");
+  const app = read("dashboard/static/app.js");
+  const synth = read("dashboard/static/wavetable_synth.js");
+  assert.match(html, /data-source="germ"/, "Germ source card should be present");
+  assert.match(html, /data-source="wavetable_forge"/, "Wavetable Forge card should be present");
+  assert.match(app, /type: "germ"/, "Germ node type should be normalized");
+  assert.match(app, /type: "wavetable_forge"/, "Wavetable Forge node type should be normalized");
+  assert.match(app, /wavetable-asset-use/, "Wavetable library should expose Use in Germ actions");
+  assert.match(app, /mutationDepth/, "Germ mutation depth should be available as a modulation target");
+  assert.match(app, /tablePosition/, "Germ table position should be available as a modulation target");
+  assert.match(synth, /export function createGermSynthEngine/, "Wavetable synth engine export should exist");
+  assert.match(synth, /createPeriodicWave/, "Preview synth should build PeriodicWave frames");
+}
+
 checkJsSyntax();
 checkDuplicateIds();
 checkCssVars();
 checkMicroRenderer();
+checkWavetableContracts();
 console.log("dashboard smoke passed");

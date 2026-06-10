@@ -29,6 +29,7 @@ from server.routes import (
     performance,
     strains,
     time_render,
+    wavetables,
 )
 from server.performance import PerformanceMiddleware
 from server.security import LocalOriginAndHeadersMiddleware
@@ -83,6 +84,7 @@ app.include_router(jobs.router)
 app.include_router(library.router)
 app.include_router(files.router)
 app.include_router(time_render.router)
+app.include_router(wavetables.router)
 
 dashboard_dir = settings.project_root / "dashboard" / "static"
 app.mount("/dashboard/assets", StaticFiles(directory=dashboard_dir), name="dashboard-assets")

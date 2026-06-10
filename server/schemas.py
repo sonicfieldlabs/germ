@@ -60,6 +60,21 @@ ControlAnalysisFeature = Literal[
 ]
 ControlCVMode = Literal["cv", "gate", "clock", "pitch"]
 ControlCVRange = Literal["unipolar", "bipolar"]
+WavetableExtractionMode = Literal["simple", "cycle", "spectral", "harmonic", "texture"]
+WavetableExportFormat = Literal["gwt", "wav-stack", "single-cycle", "metadata"]
+WavetableGenerationMode = Literal[
+    "single_cycle_tone",
+    "evolving_timbre",
+    "bass_oscillator",
+    "glassy_metallic",
+    "soft_pad_source",
+    "formant_no_voice",
+    "noisy_oscillator",
+    "organic_reed",
+]
+
+
+SUPPORTED_WAVETABLE_FRAME_SIZES = {512, 1024, 2048, 4096}
 
 
 class LoraSpec(BaseModel):
@@ -148,6 +163,178 @@ class MicroMatterProfileResult(BaseModel):
     module: str = "microscope"
     descriptors: dict[str, Any] = Field(default_factory=dict)
     module_suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    error: str | None = None
+
+
+class WavetableConvertRequest(BaseModel):
+    input_audio_path: str
+    metadata_path: str | None = None
+    name: str | None = None
+    frame_size: int = 2048
+    frame_count: int = Field(default=128, ge=1, le=512)
+    root_note: str = "C3"
+    extraction_mode: WavetableExtractionMode = "simple"
+    output_name: str | None = None
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"])
+    operation_params: dict[str, Any] = Field(default_factory=dict)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("frame_size")
+    @classmethod
+    def validate_frame_size(cls, value: int) -> int:
+        if value not in SUPPORTED_WAVETABLE_FRAME_SIZES:
+            raise ValueError("frame_size must be one of 512, 1024, 2048, or 4096")
+        return value
+
+    @field_validator("extraction_mode")
+    @classmethod
+    def validate_extraction_mode(cls, value: WavetableExtractionMode) -> WavetableExtractionMode:
+        if value != "simple":
+            raise ValueError("only simple wavetable extraction is implemented in this phase")
+        return value
+
+
+class WavetableRenderRequest(BaseModel):
+    wavetable_id: str
+    duration: float = Field(default=2.0, gt=0.0, le=60.0)
+    root_note: str | None = None
+    note: str = "C3"
+    scan_start: float = Field(default=0.0, ge=0.0, le=1.0)
+    scan_end: float = Field(default=1.0, ge=0.0, le=1.0)
+    gain: float = Field(default=0.7, ge=0.0, le=2.0)
+    output_name: str | None = None
+    tags: list[str] = Field(default_factory=lambda: ["wavetable-render"])
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+
+class WavetableImportRequest(BaseModel):
+    input_audio_path: str
+    frame_size: int = 2048
+    name: str = "imported table"
+    root_note: str = "C3"
+    output_name: str | None = None
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "imported"])
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("frame_size")
+    @classmethod
+    def validate_frame_size(cls, value: int) -> int:
+        if value not in SUPPORTED_WAVETABLE_FRAME_SIZES:
+            raise ValueError("frame_size must be one of 512, 1024, 2048, or 4096")
+        return value
+
+
+class WavetablePromptContract(BaseModel):
+    user_prompt: str
+    generation_mode: WavetableGenerationMode
+    prompt: str
+    negative_prompt: str
+
+
+class WavetablePromptRequest(BaseModel):
+    provider: ProviderId = "mock"
+    model: str = "mock-sine"
+    prompt: str
+    negative_prompt: str = ""
+    duration: float = Field(default=2.0, gt=0.0, le=380.0)
+    root_note: str = "C3"
+    generation_mode: WavetableGenerationMode = "single_cycle_tone"
+    extraction_mode: WavetableExtractionMode = "simple"
+    frame_count: int = Field(default=64, ge=1, le=512)
+    frame_size: int = 2048
+    output_name: str | None = None
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"])
+    variation_count: int = Field(default=1, ge=1, le=16)
+    modulators: list[dict[str, Any]] = Field(default_factory=list)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("frame_size")
+    @classmethod
+    def validate_frame_size(cls, value: int) -> int:
+        if value not in SUPPORTED_WAVETABLE_FRAME_SIZES:
+            raise ValueError("frame_size must be one of 512, 1024, 2048, or 4096")
+        return value
+
+    @field_validator("extraction_mode")
+    @classmethod
+    def validate_extraction_mode(cls, value: WavetableExtractionMode) -> WavetableExtractionMode:
+        if value != "simple":
+            raise ValueError("only simple wavetable extraction is implemented in this phase")
+        return value
+
+
+class WavetableMutationRequest(BaseModel):
+    wavetable_id: str
+    provider: ProviderId = "mock"
+    model: str = "mock-sine"
+    prompt: str
+    negative_prompt: str = ""
+    init_noise_level: float = Field(default=0.42, ge=0.0, le=1.0)
+    render_duration: float = Field(default=2.0, gt=0.0, le=60.0)
+    root_note: str = "C3"
+    extraction_mode: WavetableExtractionMode = "simple"
+    frame_count: int = Field(default=64, ge=1, le=512)
+    frame_size: int = 2048
+    variation_count: int = Field(default=1, ge=1, le=16)
+    modulators: list[dict[str, Any]] = Field(default_factory=list)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("frame_size")
+    @classmethod
+    def validate_frame_size(cls, value: int) -> int:
+        if value not in SUPPORTED_WAVETABLE_FRAME_SIZES:
+            raise ValueError("frame_size must be one of 512, 1024, 2048, or 4096")
+        return value
+
+    @field_validator("extraction_mode")
+    @classmethod
+    def validate_extraction_mode(cls, value: WavetableExtractionMode) -> WavetableExtractionMode:
+        if value != "simple":
+            raise ValueError("only simple wavetable extraction is implemented in this phase")
+        return value
+
+
+class WavetableSummary(BaseModel):
+    id: str
+    name: str
+    frame_size: int
+    frame_count: int
+    sample_rate: int
+    root_note: str
+    root_frequency: float
+    data_path: str
+    metadata_path: str
+    source_audio_path: str | None = None
+    source_prompt: str | None = None
+    runtime: str | None = None
+    operation: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    descriptors: dict[str, Any] = Field(default_factory=dict)
+    table_classification: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    parents: list[str] = Field(default_factory=list)
+    children: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+
+
+class WavetableDetail(WavetableSummary):
+    type: str = "germ_wavetable"
+    source_metadata_path: str | None = None
+    negative_prompt: str | None = None
+    generation_model: str | None = None
+    extraction_mode: str = "simple"
+    operation_params: dict[str, Any] = Field(default_factory=dict)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+
+class WavetableOperationResult(BaseModel):
+    status: Literal["done", "error"]
+    wavetable: WavetableDetail | None = None
+    wavetables: list[WavetableDetail] = Field(default_factory=list)
+    audio_files: list[str] = Field(default_factory=list)
+    metadata_files: list[str] = Field(default_factory=list)
+    source_audio_files: list[str] = Field(default_factory=list)
+    source_metadata_files: list[str] = Field(default_factory=list)
     error: str | None = None
 
 
