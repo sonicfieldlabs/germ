@@ -1,0 +1,1384 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="germ — an open-source modular lab for generative microsound, sound matter, and control signals." />
+    <meta property="og:title" content="germ — generative microsound system" />
+    <meta property="og:description" content="A local modular environment for sound organisms, grains, control signals, and Stable Audio 3 workflows." />
+    <meta name="theme-color" content="#FAFAFA" />
+    <title>germ — generative microsound system</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f7f7f4'/%3E%3Ccircle cx='22' cy='22' r='8' fill='%23476f5d'/%3E%3Ccircle cx='43' cy='20' r='5' fill='%23b9784a'/%3E%3Ccircle cx='38' cy='43' r='10' fill='%23292929'/%3E%3Cpath d='M26 27 35 37M30 20h12M25 42h12' stroke='%23292929' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260610-review-p2" />
+  </head>
+  <body class="canvas-active no-left-sidebar">
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+    <main class="app-shell">
+
+      <section id="workspace" class="stage" tabindex="-1">
+        <p id="statusDetail" aria-live="polite" style="display:none">Waiting for a request.</p>
+        <span id="healthPill" class="state-pill muted" style="display:none">checking</span>
+        <span id="activeProvider" style="display:none">mock</span>
+        <span id="activeModel" style="display:none">-</span>
+        <span id="activeDevice" style="display:none">unknown</span>
+
+        <div class="workspace">
+
+          <!-- CHAMBER -->
+          <section class="tab-panel canvas-panel active" id="tab-chamber">
+            <div id="canvasTransportModule" class="canvas-floating-transport" aria-label="Transport controls">
+              <div class="transport-status-strip" aria-live="polite">
+                <span id="statusTitle" class="topbar-state-pill">Idle</span>
+                <span id="elapsedTime" class="topbar-elapsed">0.0s</span>
+                <span id="masterRecordTime" class="topbar-elapsed master-record-time" hidden>REC 0.0s</span>
+              </div>
+              <div class="transport-shell">
+                <div class="transport-buttons">
+                <div class="transport-nav-group">
+                  <button class="transport-icon-button nav-item" type="button" data-tab="chamber" aria-label="Canvas" title="Canvas" data-help="Show canvas.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="7" r="2"/><circle cx="17" cy="5" r="2"/><circle cx="18" cy="17" r="2"/><circle cx="7" cy="18" r="2"/><path d="M8 7h7M16.2 6.8L18 15M16 17H9M7 16V9"/></svg>
+                  </button>
+                  <button class="transport-icon-button nav-item" type="button" data-tab="petri" aria-label="Sound library" title="Library" data-help="Show sound library.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v7c0 1.7 3.1 3 7 3s7-1.3 7-3V7"/><path d="M8.5 12.5c1.2.5 2.3.7 3.5.7s2.3-.2 3.5-.7"/><circle cx="9" cy="10" r=".7"/><circle cx="14.5" cy="11" r=".7"/></svg>
+                  </button>
+                  <button class="transport-icon-button nav-item" type="button" data-tab="rack" aria-label="Germ librarian" title="Librarian" data-help="Show germ librarian.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 5v14"/><path d="M4 10h16M4 15h16"/><path d="M11 7h6M11 12h5M11 17h4"/></svg>
+                  </button>
+                  <button class="transport-icon-button nav-item" type="button" data-tab="thermostat" aria-label="Thermostat" title="Thermostat" data-help="Show LoRA controls.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V5a4 4 0 00-8 0v9.76a6 6 0 108 0z"/><path d="M10 18V9"/><path d="M17 6h4"/><path d="M17 10h3"/><path d="M17 14h4"/></svg>
+                  </button>
+                  <button class="transport-icon-button nav-item" type="button" data-tab="onebit" aria-label="Microcosmos" title="Microcosmos" data-help="Open Microcosmos — a scope-based world where sounds grow as germs.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="13.5" r="2.3" fill="currentColor" stroke="none"/><circle cx="13" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+                  </button>
+                </div>
+                </div>
+                <span class="transport-separator"></span>
+                <button id="canvasGlobalPlayBtn" class="transport-icon-button" type="button" aria-label="Play all sound modules" title="Play" data-help="Play / stop all sound modules.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="6,4 20,12 6,20"/></svg>
+                </button>
+                <button id="canvasMasterRecordBtn" class="transport-icon-button" type="button" aria-label="Record master output" title="Record master" data-help="Record the current master output as an organism.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>
+                </button>
+                <button id="canvasGlobalSyncBtn" class="transport-icon-button active" type="button" aria-label="Toggle global sync" title="Global sync on" data-help="Sync play starts modules together from their start point.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                </button>
+                <button id="canvasGlobalLoopBtn" class="transport-icon-button" type="button" aria-label="Toggle global loop" title="Global loop off" data-help="Loop all sound modules during global playback.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+                </button>
+                <button id="timeModeToggle" class="transport-icon-button" type="button" aria-label="Toggle Time Mode" title="Clock off" data-help="Turn the Chamber clock on or off.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/><path d="M4 12H2"/><path d="M22 12h-2"/></svg>
+                </button>
+                <div id="timeTransportControls" class="time-transport-controls" hidden>
+                  <label>BPM <input id="timeBpm" type="number" min="20" max="300" step="1" value="120" /></label>
+                  <label>Bars <input id="timeBars" type="number" min="1" max="128" step="1" value="4" /></label>
+                  <label>Sig
+                    <select id="timeSignature">
+                      <option value="4/4">4/4</option>
+                      <option value="3/4">3/4</option>
+                      <option value="5/4">5/4</option>
+                      <option value="6/8">6/8</option>
+                      <option value="7/8">7/8</option>
+                    </select>
+                  </label>
+                  <label>Snap
+                    <select id="timeSnapDivision">
+                      <option value="1/4">1/4</option>
+                      <option value="1/8">1/8</option>
+                      <option value="1/16">1/16</option>
+                      <option value="1/32">1/32</option>
+                      <option value="triplet">Trip</option>
+                    </select>
+                  </label>
+                  <button id="timeRenderSelectedBtn" class="time-render-selected" type="button" disabled>Harvest</button>
+                </div>
+                <span class="transport-separator"></span>
+                <button id="canvasCandidateModalBtn" class="transport-icon-button" type="button" aria-label="Open candidate tray" title="Candidate tray" data-help="Open generated alternatives waiting for audition or acceptance.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="4" rx="1"/><rect x="5" y="11" width="14" height="4" rx="1"/><rect x="5" y="17" width="14" height="2" rx="1"/></svg>
+                </button>
+                <button id="canvasLoadSnapshotBtn" class="transport-icon-button" type="button" aria-label="Load canvas snapshot" title="Load snapshot" data-help="Open the snapshot library to load a saved graph.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <button id="canvasSnapshotBtn" class="transport-icon-button" type="button" aria-label="Save canvas snapshot" title="Save snapshot" data-help="Save the current graph snapshot.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                </button>
+                <button id="canvasResetBtn" class="transport-icon-button" type="button" aria-label="Reset graph" title="Reset graph" data-help="Clear the current graph without deleting generated files.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                </button>
+                <button id="canvasUndoBtn" class="transport-icon-button" type="button" disabled aria-label="Undo" title="Undo" data-help="Undo the last canvas action (Ctrl+Z).">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                </button>
+                <button id="canvasRedoBtn" class="transport-icon-button" type="button" disabled aria-label="Redo" title="Redo" data-help="Redo the last undone action (Ctrl+Shift+Z).">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
+                </button>
+                <span class="transport-separator"></span>
+                <div class="transport-zoom-group">
+                  <button id="canvasResetViewBtn" class="transport-icon-button" type="button" aria-label="Reset zoom and center graph" title="Reset view" data-help="Return to 100% zoom and center the current graph.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+                  </button>
+                  <span id="canvasZoomReadout" class="transport-zoom-label">100%</span>
+                  <button id="canvasLockZoomBtn" class="transport-icon-button active" type="button" aria-label="Unlock zoom level" title="Unlock zoom" data-help="Lock the current zoom level to prevent accidental changes.">
+                    <svg id="lockZoomUnlocked" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 019.9-1"/></svg>
+                    <svg id="lockZoomLocked" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                  </button>
+                  <button id="orientationToggle" class="transport-icon-button" type="button" aria-label="Toggle horizontal / vertical waveform" title="Horizontal mode" data-help="Switch waveform orientation.">
+                    <svg id="orientIconH" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    <svg id="orientIconV" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/></svg>
+                  </button>
+                  <button id="canvasShapeToggle" class="transport-icon-button" type="button" aria-label="Toggle square / circular modules" title="Square modules" data-help="Switch sound modules between rectangular and circular shape.">
+                    <svg id="shapeIconSquare" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                    <svg id="shapeIconCircle" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><circle cx="12" cy="12" r="9"/></svg>
+                  </button>
+                  <button id="canvasSpectrogramToggle" class="transport-icon-button" type="button" aria-label="Toggle canvas waveform / spectrogram" title="Waveform view" data-help="Switch sound modules between waveform and spectrogram.">
+                    <svg id="canvasVizIconWave" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h2l3-7 4 14 4-14 3 7h2"/></svg>
+                    <svg id="canvasVizIconSpec" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none"><rect x="4" y="5" width="3" height="14"/><rect x="10.5" y="8" width="3" height="11"/><rect x="17" y="3" width="3" height="16"/></svg>
+                  </button>
+                </div>
+                <span class="transport-separator"></span>
+                <button id="canvasMixerBtn" class="transport-icon-button mixer-hidden" type="button" aria-label="Create mixer from selected group" title="Create mixer" data-help="Create a mixer module from the selected sound group.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V10"/><path d="M12 21V3"/><path d="M20 21v-7"/><path d="M2 10h4"/><path d="M10 14h4"/><path d="M18 7h4"/></svg>
+                </button>
+                <span class="transport-separator"></span>
+                <div id="masterVolumeControl" class="master-volume-control">
+                  <button id="masterVolumeBtn" class="transport-icon-button" type="button" aria-label="Master volume" title="Master volume" data-help="Hover to reveal the master output volume slider.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+                  </button>
+                  <div id="masterVolumePopover" class="master-volume-popover" hidden>
+                    <input id="masterVolumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Master volume" orient="vertical" />
+                    <span id="masterVolumeReadout" class="master-volume-readout">100%</span>
+                  </div>
+                </div>
+                <button id="transportSettingsBtn" class="transport-icon-button" type="button" aria-expanded="false" aria-controls="topbarSettingsMenu" aria-label="Settings" title="Settings" data-help="Open settings.">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                </button>
+              </div>
+              <span id="transportHint" class="module-hint">Transport controls.</span>
+            </div>
+            <div id="canvasToolsMenu" class="canvas-tools-menu" role="menu" aria-label="Selected sound tools" hidden>
+              <div class="canvas-tools-group">
+                <span class="canvas-tools-label">Repair</span>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="seam_healer">Seam Healer <span>repair boundaries</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loop_doctor">Loop Doctor <span>cyclic repair</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loudness_match">Loudness Match <span>fair compare</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="phase_mono_check">Phase / Mono Check <span>safe output</span></button>
+              </div>
+              <div class="canvas-tools-group">
+                <span class="canvas-tools-label">Prepare</span>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="transient_keeper">Transient Keeper <span>protect attacks</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="texture_flatten">Texture Flatten <span>mutation-ready</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="silence_cleaner">Silence Cleaner <span>trim dead air</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="stem_extract_prep">Stem Extract Prep <span>model prep</span></button>
+              </div>
+              <div class="canvas-tools-group">
+                <span class="canvas-tools-label">Regions</span>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="tail_extender">Tail Extender <span>decay stretch</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="spectral_freeze">Spectral Freeze <span>drone from region</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="onset_splitter">Onset Splitter <span>make one-shots</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="region_quantizer">Region Quantizer <span>align selection</span></button>
+              </div>
+              <div class="canvas-tools-group">
+                <span class="canvas-tools-label">Core</span>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="normalize">Normalize <span>peak level</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="fade">Fade <span>fade in / out</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-time-pitch">Warp / Pitch <span>stretch or retune</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="reverse">Reverse <span>reverse audio</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="duplicate">Duplicate <span>copy source</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="slice">Slice <span>split regions</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata_embedder">Metadata Embedder <span>lineage export</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata">Metadata <span>manual edit</span></button>
+              </div>
+            </div>
+            <div class="panel-head canvas-head">
+              <div id="topbarSettingsMenu" class="canvas-head-controls" role="dialog" aria-label="Settings menu" hidden>
+                <div class="topbar" id="topbar">
+                  <div class="topbar-controls">
+                    <label>Provider
+                      <select id="provider" data-help="Choose the generation backend for new jobs.">
+                        <option value="stable_audio_mlx">stable_audio_mlx</option>
+                        <option value="mock">mock</option>
+                        <option value="stable_audio_python">stable_audio_python</option>
+                        <option value="stability_api">stability_api</option>
+                      </select>
+                    </label>
+                    <label>Model <select id="model" data-help="Choose the audio model used by operations."></select></label>
+                    <label>Device
+                      <select id="device" data-help="Choose the preferred compute device for local providers.">
+                        <option value="auto">auto</option>
+                        <option value="mlx">mlx</option>
+                        <option value="mps">mps</option>
+                        <option value="cpu">cpu</option>
+                        <option value="cuda">cuda</option>
+                      </select>
+                    </label>
+                    <label>Server <input id="serverUrl" placeholder="http://127.0.0.1:8765" data-help="The API server address." /></label>
+                  </div>
+                  <div class="topbar-nav-entries">
+                    <button id="aboutAppModalBtn" class="topbar-nav-entry" type="button" aria-label="About germ" title="About" data-help="Open the germ system overview.">
+                      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                      About
+                    </button>
+                    <button id="canvasCompilerModalBtn" class="topbar-nav-entry" type="button" aria-label="Open operation compiler" title="Operation compiler" data-help="Inspect the model request compiled from the selected module.">
+                      <svg viewBox="0 0 24 24"><path d="M8 5 5 12l3 7"/><path d="M16 5l3 7-3 7"/><path d="M10 8h4"/><path d="M10 12h4"/><path d="M10 16h4"/></svg>
+                      Compiler
+                    </button>
+                    <button id="themeToggle" class="topbar-nav-entry" type="button" aria-label="Toggle dark mode" title="Toggle dark mode" data-help="Switch the interface between light and dark mode.">
+                      <svg id="themeIconMoon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                      <svg id="themeIconSun" viewBox="0 0 24 24" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                      Dark Mode
+                    </button>
+                    <button id="helpModeToggle" class="topbar-nav-entry" type="button" aria-label="Toggle help mode" title="Help mode" data-help="Show or hide the short tool descriptions under modules.">
+                      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                      Help Mode
+                    </button>
+                    <button id="refreshBtn" class="topbar-nav-entry" type="button" aria-label="Refresh status and library" title="Refresh" data-help="Refresh server status, sounds, and readiness data.">
+                      <svg viewBox="0 0 24 24"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M3.34 8A10 10 0 0121.5 8l-1 .5"/><path d="M20.66 16 A10 10 0 012.5 16l1-.5"/></svg>
+                      Refresh
+                    </button>
+                    <button id="loadBtn" class="topbar-nav-entry" type="button" aria-label="Load selected model" title="Load model" data-help="Load the selected provider model on the current device.">
+                      <svg viewBox="0 0 24 24"><path d="M4 14a1 1 0 01-.78-1.63l7.9-8.78a1.14 1.14 0 011.76 0l7.9 8.78A1 1 0 0120 14h-4.28l.78 5.22a1 1 0 01-1 1.17H8.5a1 1 0 01-1-1.17L8.28 14z"/></svg>
+                      Load Model
+                    </button>
+                    <button class="topbar-nav-entry nav-item" type="button" data-tab="controllers" aria-label="Controllers" title="Controllers" data-help="Open routing, modulation, MIDI, OSC, CV, and control monitor.">
+                      <svg viewBox="0 0 24 24"><path d="M4 7h5l2 10 2-10h7"/><path d="M4 17h5M15 17h5"/><path d="M8 5v4M16 15v4"/><path d="M6 12h12"/></svg>
+                      Controllers
+                    </button>
+                    <button class="topbar-nav-entry nav-item" type="button" data-tab="diagnostics" aria-label="Provider status" title="Provider status" data-help="Show provider diagnostics and readiness.">
+                      <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                      Provider Status
+                    </button>
+                  </div>
+                  <span id="topbarHint" class="module-hint">Hover a control for a short description.</span>
+                  <div class="topbar-progress"><span id="activityMeter"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="canvas-workbench">
+              <section class="canvas-center" aria-label="Canvas graph">
+                <div id="canvasBoard" class="canvas-board" tabindex="0" aria-label="Generative audio chamber">
+                  <div id="canvasSpace" class="canvas-space">
+                    <svg id="canvasEdges" class="canvas-edges" aria-hidden="true"></svg>
+                    <div id="canvasNodes" class="canvas-nodes"></div>
+                    <div id="canvasChainControls" class="canvas-chain-controls"></div>
+                    <div id="canvasSourceMenu" class="canvas-source-menu" hidden>
+                      <svg class="source-tool-symbols" aria-hidden="true" focusable="false">
+                        <symbol id="sourceIconPrompt" viewBox="0 0 24 24"><path d="M6 4h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2z"/><path d="M8 9h8M8 13h6M8 17h4"/></symbol>
+                        <symbol id="sourceIconUpload" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 002 2h10a2 2 0 002-2v-3"/></symbol>
+                        <symbol id="sourceIconPetri" viewBox="0 0 24 24"><path d="M4 8c0-2 16-2 16 0v8c0 2-16 2-16 0z"/><path d="M4 8c0 2 16 2 16 0"/><path d="M8 13h.01M12 15h.01M16 13h.01"/></symbol>
+                        <symbol id="sourceIconHardware" viewBox="0 0 24 24"><path d="M5 12a7 7 0 1014 0 7 7 0 00-14 0z"/><path d="M9 12h1l1.5-3 2 6L15 12h1"/></symbol>
+                        <symbol id="sourceIconSnapshot" viewBox="0 0 24 24"><path d="M4 7h5l2-3h4l2 3h3v13H4z"/><circle cx="12" cy="14" r="4"/><path d="M19 4v3M17.5 5.5h3"/></symbol>
+                        <symbol id="sourceIconImage" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z"/><path d="M8 14l2-2 3 3 2-3 4 5"/><path d="M8 9h.01"/></symbol>
+                        <symbol id="sourceIconColony" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14M8 4v16M16 4v16"/><path d="M8 6h.01M16 6h.01M12 12h.01M8 18h.01M16 18h.01"/></symbol>
+                        <symbol id="sourceIconPads" viewBox="0 0 24 24"><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"/></symbol>
+                        <symbol id="sourceIconSlicer" viewBox="0 0 24 24"><path d="M4 7l16 10"/><path d="M4 17L20 7"/><path d="M6 5a2 2 0 100 4 2 2 0 000-4zM6 15a2 2 0 100 4 2 2 0 000-4z"/></symbol>
+                        <symbol id="sourceIconMelody" viewBox="0 0 24 24"><path d="M10 18V6l9-2v12"/><path d="M10 18a3 3 0 11-2-2.82M19 16a3 3 0 11-2-2.82"/></symbol>
+                        <symbol id="sourceIconEuclidean" viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9"/><path d="M12 3v4M19.8 8l-3.4 2M18 18l-2.8-2.8M8 19.8l2-3.4M4.2 8l3.4 2"/></symbol>
+                        <symbol id="sourceIconLooper" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 013-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 01-3 3H3"/></symbol>
+                        <symbol id="sourceIconProbability" viewBox="0 0 24 24"><path d="M7 7h.01M17 17h.01"/><path d="M6 18L18 6"/><path d="M5 7a2 2 0 104 0 2 2 0 00-4 0zM15 17a2 2 0 104 0 2 2 0 00-4 0z"/></symbol>
+                        <symbol id="sourceIconDivider" viewBox="0 0 24 24"><path d="M4 12h6"/><path d="M10 12l4-6h6"/><path d="M10 12l4 6h6"/><path d="M19 6h1M19 18h1"/></symbol>
+                        <symbol id="sourceIconHumanizer" viewBox="0 0 24 24"><path d="M4 14c2.3-6 4.7 6 7 0s4.7 6 9 0"/><path d="M6 6v4M18 5v5M12 4v4"/></symbol>
+                        <symbol id="sourceIconPolymeter" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><path d="M7 5v4M12 5v4M17 5v4M9 15v4M15 15v4"/></symbol>
+                        <symbol id="sourceIconBus" viewBox="0 0 24 24"><path d="M4 7h5l4 5-4 5H4"/><path d="M13 12h7"/><path d="M17 8l4 4-4 4"/></symbol>
+                        <symbol id="sourceIconMacros" viewBox="0 0 24 24"><path d="M5 6h14v12H5z"/><path d="M8 9h3v3H8zM13 9h3v3h-3zM8 14h8"/><path d="M18 4l3 3-3 3"/></symbol>
+                        <symbol id="sourceIconGain" viewBox="0 0 24 24"><path d="M7 4v16M17 4v16"/><path d="M4 9h6M14 15h6"/><path d="M7 7v4M17 13v4"/></symbol>
+                        <symbol id="sourceIconPan" viewBox="0 0 24 24"><path d="M4 12h16"/><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"/><path d="M12 5v14"/></symbol>
+                        <symbol id="sourceIconPitch" viewBox="0 0 24 24"><path d="M7 17V7l10 5z"/><path d="M4 19h16"/><path d="M15 5l2-2 2 2M17 3v8"/></symbol>
+                        <symbol id="sourceIconFilter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></symbol>
+                        <symbol id="sourceIconGranular" viewBox="0 0 24 24"><path d="M5 7h.01M10 5h.01M16 7h.01M20 11h.01M15 15h.01M9 17h.01M4 13h.01"/><path d="M7 8c3 5 7 5 10 1"/><path d="M7 16c4-5 8-5 11-1"/></symbol>
+                        <symbol id="sourceIconLoopDoctor" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 013-3h18"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 01-3 3H3"/><path d="M8 12h8"/><path d="M12 8v8"/></symbol>
+                        <symbol id="sourceIconSpace" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1016 0 8 8 0 00-16 0z"/><path d="M8 12a4 4 0 108 0 4 4 0 00-8 0z"/><path d="M12 8v8"/></symbol>
+                        <symbol id="sourceIconEcho" viewBox="0 0 24 24"><path d="M7 7h10a4 4 0 010 8h-2"/><path d="M10 11l-4 4 4 4"/><path d="M6 15h9"/></symbol>
+                        <symbol id="sourceIconSaturation" viewBox="0 0 24 24"><path d="M4 14c2.5 0 2.5-4 5-4s2.5 8 5 8 2.5-8 6-8"/><path d="M4 5h16"/></symbol>
+                        <symbol id="sourceIconGate" viewBox="0 0 24 24"><path d="M4 16h5V8h6v8h5"/><path d="M4 20h16"/></symbol>
+                        <symbol id="sourceIconLayout" viewBox="0 0 24 24"><path d="M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v5H4zM13 14h7v5h-7z"/></symbol>
+                        <symbol id="sourceIconSourceTab" viewBox="0 0 24 24"><path d="M6 7h12M6 12h12M6 17h8"/><path d="M4 5h16v14H4z"/></symbol>
+                        <symbol id="sourceIconTimeTab" viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9 9 9 0 00-9-9z"/><path d="M12 7v5l3 2"/></symbol>
+                        <symbol id="sourceIconFxTab" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/><path d="M9 4v4M15 10v4M11 16v4"/></symbol>
+                        <symbol id="sourceIconModTab" viewBox="0 0 24 24"><path d="M4 7h5l2 10 2-10h7"/><path d="M5 17h4M15 17h4"/><path d="M8 5v4M16 15v4"/></symbol>
+                        <symbol id="sourceIconGeneticTab" viewBox="0 0 24 24"><path d="M7 4c5 2 5 14 10 16"/><path d="M17 4c-5 2-5 14-10 16"/><path d="M8.5 7h7M7 12h10M8.5 17h7"/></symbol>
+                        <symbol id="sourceIconIdentity" viewBox="0 0 24 24"><path d="M5 5h7a7 7 0 017 7v7h-7a7 7 0 01-7-7z"/><path d="M9 9c3 1 3 5 6 6"/><path d="M15 9c-3 1-3 5-6 6"/></symbol>
+                        <symbol id="sourceIconGenSequencer" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><path d="M7 5v4M12 10v4M17 15v4"/><path d="M19 4l2 3-2 3"/></symbol>
+                        <symbol id="sourceIconEcology" viewBox="0 0 24 24"><path d="M12 3a4 4 0 014 4c0 3-4 5-4 5S8 10 8 7a4 4 0 014-4z"/><path d="M5 13a4 4 0 014-4c3 0 5 4 5 4s-2 4-5 4a4 4 0 01-4-4z"/><path d="M15 13a4 4 0 014-4c3 0 4 4 4 4s-1 4-4 4a4 4 0 01-4-4z"/><path d="M9 19h6"/></symbol>
+                        <symbol id="sourceIconPromptMod" viewBox="0 0 24 24"><path d="M5 5h14v10H8l-3 4z"/><path d="M9 9h6M9 12h4"/><path d="M17 4l2-2M20 7h2M17 10l2 2"/></symbol>
+                        <symbol id="sourceIconMutationMod" viewBox="0 0 24 24"><path d="M5 12h4l2-6 3 12 2-6h3"/><path d="M7 5l-3 3 3 3"/><path d="M17 19l3-3-3-3"/></symbol>
+                        <symbol id="sourceIconMatrix" viewBox="0 0 24 24"><path d="M5 5h4v4H5zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4z"/><path d="M9 7h6M7 9v6M17 9v6M9 17h6"/><path d="M10 10l4 4M14 10l-4 4"/></symbol>
+                        <symbol id="sourceIconLfo" viewBox="0 0 24 24"><path d="M3 12c2.5-8 5.5-8 8 0s5.5 8 8 0"/><path d="M19 6v12"/></symbol>
+                        <symbol id="sourceIconRandom" viewBox="0 0 24 24"><path d="M4 7h3c5 0 5 10 10 10h3"/><path d="M4 17h3c2.3 0 3.5-2.1 5-4.5"/><path d="M17 4l3 3-3 3M17 14l3 3-3 3"/></symbol>
+                        <symbol id="sourceIconHold" viewBox="0 0 24 24"><path d="M4 17h4V9h4v5h4V6h4"/><path d="M4 20h16"/></symbol>
+                        <symbol id="sourceIconEnvelope" viewBox="0 0 24 24"><path d="M4 18l4-12 4 7 4-3 4 8"/><path d="M4 20h16"/></symbol>
+                        <symbol id="sourceIconAudioControl" viewBox="0 0 24 24"><path d="M4 14c2.5-8 5.5-8 8 0s5.5 8 8 0"/><path d="M4 20h16"/><path d="M8 18v2M12 12v8M16 16v4"/><path d="M18 5l3 3-3 3"/></symbol>
+                        <symbol id="sourceIconGesture" viewBox="0 0 24 24"><path d="M5 17c3-8 5 3 8-3s4-7 6-3"/><path d="M4 20h16"/><path d="M7 8l2-2 2 2M15 6l2-2 2 2"/></symbol>
+                        <symbol id="sourceIconMacro" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 12l4-4"/><path d="M7 18h10"/></symbol>
+                      </svg>
+                      <div class="canvas-source-menu-top">
+                        <div class="canvas-source-menu-title">
+                          <span class="canvas-source-menu-kicker">Toolbox</span>
+                          <strong>Add module</strong>
+                        </div>
+                        <button id="canvasSourceViewToggle" class="canvas-source-view-toggle" type="button" data-action="canvas-source-toggle-view" aria-label="Switch source menu layout" title="Switch source menu layout">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconLayout"></use></svg>
+                          <span data-view-label>Compact</span>
+                        </button>
+                      </div>
+                      <div class="canvas-source-menu-tabs" role="tablist" aria-label="Module categories">
+                        <button class="canvas-source-tab is-active" type="button" role="tab" aria-selected="true" data-action="canvas-source-tab" data-tab="core" title="Sources">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSourceTab"></use></svg>
+                          <span>Sources</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="genetic" title="Genetic">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGeneticTab"></use></svg>
+                          <span>Genetic</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="time" title="Time">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconTimeTab"></use></svg>
+                          <span>Time</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="fx" title="Effects">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFxTab"></use></svg>
+                          <span>Effects</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="modulators" title="Modulators">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconModTab"></use></svg>
+                          <span>Modulators</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="micro" title="Microsound">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg>
+                          <span>Microsound</span>
+                        </button>
+                      </div>
+                      <div class="canvas-source-panels">
+                        <section class="canvas-source-panel is-active" data-source-panel="core" aria-label="Source modules">
+                          <button class="source-tool-card" type="button" title="Prompt" aria-label="Add Prompt source" data-action="canvas-source-option" data-source="prompt">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPrompt"></use></svg></span>
+                            <strong class="source-tool-title">Prompt</strong>
+                            <span class="source-tool-desc">Text seed with avoid fields.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Upload" aria-label="Add Upload source" data-action="canvas-source-option" data-source="upload">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconUpload"></use></svg></span>
+                            <strong class="source-tool-title">Upload</strong>
+                            <span class="source-tool-desc">Import local audio.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Petri" aria-label="Open Petri library" data-action="canvas-source-option" data-source="petri">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPetri"></use></svg></span>
+                            <strong class="source-tool-title">Petri</strong>
+                            <span class="source-tool-desc">Browse sound organisms.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Hardware" aria-label="Add Hardware recording source" data-action="canvas-source-option" data-source="hardware">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconHardware"></use></svg></span>
+                            <strong class="source-tool-title">Hardware</strong>
+                            <span class="source-tool-desc">Create a recorder module.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Audio Snapshot" aria-label="Add Audio Snapshot source" data-action="canvas-source-option" data-source="audio_snapshot">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSnapshot"></use></svg></span>
+                            <strong class="source-tool-title">Audio Snapshot</strong>
+                            <span class="source-tool-desc">Capture computer audio into a germ.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Image" aria-label="Add Image source" data-action="canvas-source-option" data-source="image">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconImage"></use></svg></span>
+                            <strong class="source-tool-title">Image</strong>
+                            <span class="source-tool-desc">Use image input as seed.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel" data-source-panel="time" aria-label="Time modules" hidden>
+                          <button class="source-tool-card" type="button" title="Colony Sequencer" aria-label="Add Colony Sequencer" data-action="canvas-source-option" data-source="time" data-time="colony_sequencer">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconColony"></use></svg></span>
+                            <strong class="source-tool-title">Colony Sequencer</strong>
+                            <span class="source-tool-desc">Clock one-shot patterns.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Trigger Pads" aria-label="Add Trigger Pads" data-action="canvas-source-option" data-source="time" data-time="trigger_pads">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPads"></use></svg></span>
+                            <strong class="source-tool-title">Trigger Pads</strong>
+                            <span class="source-tool-desc">Play, record, harvest pads.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Slicer" aria-label="Add Slicer" data-action="canvas-source-option" data-source="time" data-time="slicer">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSlicer"></use></svg></span>
+                            <strong class="source-tool-title">Slicer</strong>
+                            <span class="source-tool-desc">Dissect into clocked slices.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Melody Maker" aria-label="Add Melody Maker" data-action="canvas-source-option" data-source="time" data-time="melody_maker">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMelody"></use></svg></span>
+                            <strong class="source-tool-title">Melody Maker</strong>
+                            <span class="source-tool-desc">Pitch a root note pattern.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Euclidean Colony" aria-label="Add Euclidean Colony" data-action="canvas-source-option" data-source="time" data-time="euclidean_colony">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEuclidean"></use></svg></span>
+                            <strong class="source-tool-title">Euclidean Colony</strong>
+                            <span class="source-tool-desc">Pulse distribution module.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Clocked Looper" aria-label="Add Clocked Looper" data-action="canvas-source-option" data-source="time" data-time="clocked_looper">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconLooper"></use></svg></span>
+                            <strong class="source-tool-title">Clocked Looper</strong>
+                            <span class="source-tool-desc">Fit source to cycle length.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Probability Gate" aria-label="Add Probability Gate" data-action="canvas-source-option" data-source="time" data-time="probability_gate">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconProbability"></use></svg></span>
+                            <strong class="source-tool-title">Probability Gate</strong>
+                            <span class="source-tool-desc">Deterministic event skipping.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Clock Divider" aria-label="Add Clock Divider" data-action="canvas-source-option" data-source="time" data-time="clock_divider">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconDivider"></use></svg></span>
+                            <strong class="source-tool-title">Clock Divider</strong>
+                            <span class="source-tool-desc">Trigger on clock divisions.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Humanizer" aria-label="Add Humanizer" data-action="canvas-source-option" data-source="time" data-time="humanizer">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconHumanizer"></use></svg></span>
+                            <strong class="source-tool-title">Humanizer</strong>
+                            <span class="source-tool-desc">Microtiming and velocity drift.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Polymeter" aria-label="Add Polymeter" data-action="canvas-source-option" data-source="time" data-time="polymeter">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPolymeter"></use></svg></span>
+                            <strong class="source-tool-title">Polymeter</strong>
+                            <span class="source-tool-desc">Layer unequal pulse cycles.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Render Bus" aria-label="Add Render Bus" data-action="canvas-source-option" data-source="time" data-time="render_bus">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconBus"></use></svg></span>
+                            <strong class="source-tool-title">Render Bus</strong>
+                            <span class="source-tool-desc">Harvest selected time modules.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Render Macros" aria-label="Add Render Macros" data-action="canvas-source-option" data-source="time" data-time="render_macros">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMacros"></use></svg></span>
+                            <strong class="source-tool-title">Render Macros</strong>
+                            <span class="source-tool-desc">One-click repair and evolution chains.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel" data-source-panel="micro" aria-label="Micro modules" hidden>
+                          <div class="sidebar-micro-section">
+                            <div class="micro-profile-panel">
+                              <span class="eyebrow" style="font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px;">Profiler</span>
+                              <div class="control-grid compact">
+                                <label style="font-size: 10px;">Module
+                                  <select id="microProfileModule" style="font-size: 10px; padding: 4px 6px;">
+                                    <option value="microscope">Microscope</option>
+                                    <option value="grain_culture">Grain Culture</option>
+                                    <option value="cell_splitter">Cell Splitter</option>
+                                    <option value="spectral_tissue">Spectral Tissue</option>
+                                  </select>
+                                </label>
+                                <label style="font-size: 10px;">Window ms <input id="microProfileWindow" type="number" min="5" max="1000" step="1" value="20" style="font-size: 10px; padding: 4px 6px;" /></label>
+                                <label style="font-size: 10px;">Hop ms <input id="microProfileHop" type="number" min="5" max="1000" step="1" value="10" style="font-size: 10px; padding: 4px 6px;" /></label>
+                              </div>
+                              <button class="primary-compact-btn" type="button" data-action="micro-profile-selected" data-help="Analyze the selected sound as sound matter." style="width: 100%; margin: 6px 0 2px 0; font-size: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); cursor: pointer;">Profile Selected Sound</button>
+                              <div id="microProfileSummary" class="micro-profile-summary"></div>
+                              <pre id="microProfileResult" class="log" style="max-height: 100px; overflow: auto; font-size: 9px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin: 0;"></pre>
+                            </div>
+                            <div class="micro-theory-card" style="margin-top: 4px;">
+                              <span class="eyebrow" style="font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px;">sound matter scales</span>
+                              <div class="micro-scale-row">
+                                <span style="font-size: 9px; padding: 6px;"><b style="font-size: 8px;">micro</b> grains, cells</span>
+                                <span style="font-size: 9px; padding: 6px;"><b style="font-size: 8px;">meso</b> colonies, swarms</span>
+                                <span style="font-size: 9px; padding: 6px;"><b style="font-size: 8px;">macro</b> organisms</span>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div class="sidebar-micro-title">
+                            <h3>Microsound Modules</h3>
+                          </div>
+                          <button class="source-tool-card" type="button" title="Grain Culture" aria-label="Add Grain Culture" data-action="canvas-source-option" data-source="fx" data-fx="grain_culture">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg></span>
+                            <strong class="source-tool-title">Grain Culture</strong>
+                            <span class="source-tool-desc">Corpus of sound cells.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Particle Engine" aria-label="Add Particle Engine" data-action="canvas-source-option" data-source="fx" data-fx="particle_engine">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg></span>
+                            <strong class="source-tool-title">Particle Engine</strong>
+                            <span class="source-tool-desc">Grain playback scaffold.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Cell Splitter" aria-label="Add Cell Splitter" data-action="canvas-source-option" data-source="fx" data-fx="cell_splitter">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSlicer"></use></svg></span>
+                            <strong class="source-tool-title">Cell Splitter</strong>
+                            <span class="source-tool-desc">Micro-event slicing.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Swarm" aria-label="Add Swarm" data-action="canvas-source-option" data-source="fx" data-fx="swarm">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg></span>
+                            <strong class="source-tool-title">Swarm</strong>
+                            <span class="source-tool-desc">Clouds, streams, sprays.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Colony" aria-label="Add Colony" data-action="canvas-source-option" data-source="fx" data-fx="colony">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconColony"></use></svg></span>
+                            <strong class="source-tool-title">Colony</strong>
+                            <span class="source-tool-desc">Related grain families.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Membrane" aria-label="Add Membrane" data-action="canvas-source-option" data-source="fx" data-fx="membrane">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFilter"></use></svg></span>
+                            <strong class="source-tool-title">Membrane</strong>
+                            <span class="source-tool-desc">Selective signal boundary.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Metabolism" aria-label="Add Metabolism" data-action="canvas-source-option" data-source="fx" data-fx="metabolism">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconAudioControl"></use></svg></span>
+                            <strong class="source-tool-title">Metabolism</strong>
+                            <span class="source-tool-desc">Audio becomes control.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Spectral Tissue" aria-label="Add Spectral Tissue" data-action="canvas-source-option" data-source="fx" data-fx="spectral_tissue">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFilter"></use></svg></span>
+                            <strong class="source-tool-title">Spectral Tissue</strong>
+                            <span class="source-tool-desc">Freeze, smear, mask.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Quanta" aria-label="Add Quanta" data-action="canvas-source-option" data-source="fx" data-fx="quanta">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconProbability"></use></svg></span>
+                            <strong class="source-tool-title">Quanta</strong>
+                            <span class="source-tool-desc">Gabor-style particles.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Microscope" aria-label="Add Microscope" data-action="canvas-source-option" data-source="fx" data-fx="microscope">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMatrix"></use></svg></span>
+                            <strong class="source-tool-title">Microscope</strong>
+                            <span class="source-tool-desc">Inspect density and partials.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Incubator" aria-label="Add Incubator" data-action="canvas-source-option" data-source="fx" data-fx="incubator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGeneticTab"></use></svg></span>
+                            <strong class="source-tool-title">Incubator</strong>
+                            <span class="source-tool-desc">Slow sound population drift.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel" data-source-panel="fx" aria-label="Effects and utilities" hidden>
+                          <button class="source-tool-card" type="button" title="Gain" aria-label="Add Gain effect" data-action="canvas-source-option" data-source="fx" data-fx="gain">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGain"></use></svg></span>
+                            <strong class="source-tool-title">Gain</strong>
+                            <span class="source-tool-desc">Potentiometer level control.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Pan" aria-label="Add Pan effect" data-action="canvas-source-option" data-source="fx" data-fx="pan">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPan"></use></svg></span>
+                            <strong class="source-tool-title">Pan</strong>
+                            <span class="source-tool-desc">Place signal left or right.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Pitch" aria-label="Add Pitch effect" data-action="canvas-source-option" data-source="fx" data-fx="pitch">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPitch"></use></svg></span>
+                            <strong class="source-tool-title">Pitch</strong>
+                            <span class="source-tool-desc">Realtime pitch/speed control.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Filter" aria-label="Add Filter effect" data-action="canvas-source-option" data-source="fx" data-fx="filter">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFilter"></use></svg></span>
+                            <strong class="source-tool-title">Filter</strong>
+                            <span class="source-tool-desc">Low, band, or high-pass curve.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Granular" aria-label="Add Granular effect" data-action="canvas-source-option" data-source="fx" data-fx="granular">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg></span>
+                            <strong class="source-tool-title">Granular</strong>
+                            <span class="source-tool-desc">Extract grain prompt language.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Loop Doctor" aria-label="Add Loop Doctor" data-action="canvas-source-option" data-source="fx" data-fx="loop_doctor">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconLoopDoctor"></use></svg></span>
+                            <strong class="source-tool-title">Loop Doctor</strong>
+                            <span class="source-tool-desc">Detect loops and heal seams.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Space" aria-label="Add Space effect" data-action="canvas-source-option" data-source="fx" data-fx="space">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSpace"></use></svg></span>
+                            <strong class="source-tool-title">Space</strong>
+                            <span class="source-tool-desc">Compact reverb modes.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Echo" aria-label="Add Echo effect" data-action="canvas-source-option" data-source="fx" data-fx="echo">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcho"></use></svg></span>
+                            <strong class="source-tool-title">Echo</strong>
+                            <span class="source-tool-desc">Delay modes and feedback.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Saturation" aria-label="Add Saturation effect" data-action="canvas-source-option" data-source="fx" data-fx="saturation">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSaturation"></use></svg></span>
+                            <strong class="source-tool-title">Saturation</strong>
+                            <span class="source-tool-desc">Subtle to hard distortion.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Noise Gate" aria-label="Add Noise Gate effect" data-action="canvas-source-option" data-source="fx" data-fx="gate">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGate"></use></svg></span>
+                            <strong class="source-tool-title">Noise Gate</strong>
+                            <span class="source-tool-desc">Basic threshold gate.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel" data-source-panel="modulators" aria-label="Modulators" hidden>
+                          <button class="source-tool-card" type="button" title="Mod Matrix" aria-label="Add Mod Matrix" data-action="canvas-source-option" data-source="modulator" data-modulator="mod_matrix">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMatrix"></use></svg></span>
+                            <strong class="source-tool-title">Mod Matrix</strong>
+                            <span class="source-tool-desc">Route source to destination amount.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Prompt Modulator" aria-label="Add Prompt Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="prompt_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPromptMod"></use></svg></span>
+                            <strong class="source-tool-title">Prompt Modulator</strong>
+                            <span class="source-tool-desc">Mutate prompt language at generation time.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Prompt Morph" aria-label="Add Prompt Morph" data-action="canvas-source-option" data-source="modulator" data-modulator="prompt_morph">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPromptMod"></use></svg></span>
+                            <strong class="source-tool-title">Prompt Morph</strong>
+                            <span class="source-tool-desc">Blend structured prompt states.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Mutation Modulator" aria-label="Add Mutation Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="mutation_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMutationMod"></use></svg></span>
+                            <strong class="source-tool-title">Mutation Modulator</strong>
+                            <span class="source-tool-desc">Randomize duration, seed, and mutation depth.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="LFO" aria-label="Add LFO" data-action="canvas-source-option" data-source="modulator" data-modulator="lfo_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconLfo"></use></svg></span>
+                            <strong class="source-tool-title">LFO</strong>
+                            <span class="source-tool-desc">Oscillate playback and clocked values.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Random" aria-label="Add Random Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="random_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconRandom"></use></svg></span>
+                            <strong class="source-tool-title">Random</strong>
+                            <span class="source-tool-desc">Seeded values for generation or events.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Random Walk" aria-label="Add Random Walk Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="random_walk_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconRandom"></use></svg></span>
+                            <strong class="source-tool-title">Random Walk</strong>
+                            <span class="source-tool-desc">Organic seed and value drift.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Brownian" aria-label="Add Brownian Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="brownian_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconRandom"></use></svg></span>
+                            <strong class="source-tool-title">Brownian</strong>
+                            <span class="source-tool-desc">Slow wandering identity.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Step Sequencer" aria-label="Add Step Sequencer Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="step_sequencer_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconHold"></use></svg></span>
+                            <strong class="source-tool-title">Step Sequencer</strong>
+                            <span class="source-tool-desc">Rhythmic generation curves.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Noise" aria-label="Add Noise Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="noise_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconRandom"></use></svg></span>
+                            <strong class="source-tool-title">Noise</strong>
+                            <span class="source-tool-desc">Smooth deterministic drift.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Sample & Hold" aria-label="Add Sample and Hold" data-action="canvas-source-option" data-source="modulator" data-modulator="sample_hold_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconHold"></use></svg></span>
+                            <strong class="source-tool-title">Sample & Hold</strong>
+                            <span class="source-tool-desc">Clocked stepped random modulation.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Probability" aria-label="Add Probability Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="probability_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMutationMod"></use></svg></span>
+                            <strong class="source-tool-title">Probability</strong>
+                            <span class="source-tool-desc">Gate event chance and variation counts.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Envelope" aria-label="Add Envelope Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="envelope_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEnvelope"></use></svg></span>
+                            <strong class="source-tool-title">Envelope</strong>
+                            <span class="source-tool-desc">Cyclic ADSR contour for values.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Spectral Follower" aria-label="Add Spectral Follower" data-action="canvas-source-option" data-source="modulator" data-modulator="spectral_follower">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEnvelope"></use></svg></span>
+                            <strong class="source-tool-title">Spectral Follower</strong>
+                            <span class="source-tool-desc">Brightness drives intent.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Envelope Follower" aria-label="Add Envelope Follower" data-action="canvas-source-option" data-source="modulator" data-modulator="envelope_follower">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEnvelope"></use></svg></span>
+                            <strong class="source-tool-title">Envelope Follower</strong>
+                            <span class="source-tool-desc">Dynamics steer generation.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Transient Detector" aria-label="Add Transient Detector" data-action="canvas-source-option" data-source="modulator" data-modulator="transient_detector">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconProbability"></use></svg></span>
+                            <strong class="source-tool-title">Transient Detector</strong>
+                            <span class="source-tool-desc">Onsets push masks and variation.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Audio-to-Control" aria-label="Add Audio-to-Control" data-action="canvas-source-option" data-source="modulator" data-modulator="audio_to_control">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconAudioControl"></use></svg></span>
+                            <strong class="source-tool-title">Audio-to-Control</strong>
+                            <span class="source-tool-desc">Envelopes and spectra become intent.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Semantic Follower" aria-label="Add Semantic Follower" data-action="canvas-source-option" data-source="modulator" data-modulator="semantic_follower">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPromptMod"></use></svg></span>
+                            <strong class="source-tool-title">Semantic Follower</strong>
+                            <span class="source-tool-desc">Tags and metadata steer routes.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Region Envelope" aria-label="Add Region Envelope" data-action="canvas-source-option" data-source="modulator" data-modulator="region_envelope">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMacro"></use></svg></span>
+                            <strong class="source-tool-title">Region Envelope</strong>
+                            <span class="source-tool-desc">Selections become automation.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Gesture Recorder" aria-label="Add Gesture Recorder" data-action="canvas-source-option" data-source="modulator" data-modulator="gesture_recorder">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGesture"></use></svg></span>
+                            <strong class="source-tool-title">Gesture Recorder</strong>
+                            <span class="source-tool-desc">Record generation parameter motion.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Macro" aria-label="Add Macro Modulator" data-action="canvas-source-option" data-source="modulator" data-modulator="macro_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMacro"></use></svg></span>
+                            <strong class="source-tool-title">Macro</strong>
+                            <span class="source-tool-desc">Manual knob routed to many targets.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel" data-source-panel="genetic" aria-label="Genetic modules" hidden>
+                          <button class="source-tool-card" type="button" title="Identity Extractor" aria-label="Add Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="timbre">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Identity Extractor</strong>
+                            <span class="source-tool-desc">Extract reusable sound DNA.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Rhythm Identity" aria-label="Add Rhythm Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="rhythm">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Rhythm Identity</strong>
+                            <span class="source-tool-desc">Extract groove and microtiming.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Timbre Identity" aria-label="Add Timbre Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="timbre">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Timbre Identity</strong>
+                            <span class="source-tool-desc">Transfer material character.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Space Identity" aria-label="Add Space Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="space">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Space Identity</strong>
+                            <span class="source-tool-desc">Recreate ambience behavior.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Density Identity" aria-label="Add Density Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="density">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Density Identity</strong>
+                            <span class="source-tool-desc">Match activity and rests.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Gesture Identity" aria-label="Add Gesture Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="gesture">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Gesture Identity</strong>
+                            <span class="source-tool-desc">Preserve attack and decay contour.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Spectral Identity" aria-label="Add Spectral Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="spectral">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Spectral Identity</strong>
+                            <span class="source-tool-desc">Extract brightness and noise profile.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Prompt Identity" aria-label="Add Prompt Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="prompt">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Prompt Identity</strong>
+                            <span class="source-tool-desc">Extract reusable textual DNA.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Latent Identity" aria-label="Add Latent Identity Extractor" data-action="canvas-source-option" data-source="genetic" data-genetic="identity_extractor" data-trait="latent">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconIdentity"></use></svg></span>
+                            <strong class="source-tool-title">Latent Identity</strong>
+                            <span class="source-tool-desc">Prepare SAME latent conditioning.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Generation Sequencer" aria-label="Add Generation Sequencer" data-action="canvas-source-option" data-source="genetic" data-genetic="generation_sequencer">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGenSequencer"></use></svg></span>
+                            <strong class="source-tool-title">Generation Sequencer</strong>
+                            <span class="source-tool-desc">Probabilistic procedural sampling chain.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Candidate Ecology" aria-label="Open Candidate Ecology" data-action="canvas-source-option" data-source="candidate_ecology">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg></span>
+                            <strong class="source-tool-title">Candidate Ecology</strong>
+                            <span class="source-tool-desc">Breed, cull, favorite, and compare.</span>
+                          </button>
+                        </section>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div id="canvasConnectMenu" class="canvas-connect-menu" hidden></div>
+
+                  <div id="canvasLibraryModal" class="canvas-library-modal" hidden>
+                    <div class="canvas-library-dialog canvas-library-picker">
+                      <div id="canvasLibraryList" class="canvas-library-list empty">No output sounds loaded yet.</div>
+                      <div class="canvas-library-pager">
+                        <button id="canvasLibraryPrev" class="canvas-library-page-btn" type="button" data-action="canvas-library-prev" aria-label="Previous page">&larr;</button>
+                        <span id="canvasLibraryPageReadout" class="canvas-library-page-readout">1 / 1</span>
+                        <button id="canvasLibraryNext" class="canvas-library-page-btn" type="button" data-action="canvas-library-next" aria-label="Next page">&rarr;</button>
+                      </div>
+                      <div class="canvas-library-footer">
+                        <div id="canvasLibrarySearchControl" class="canvas-library-search-control">
+                          <button id="canvasLibrarySearchToggle" class="canvas-library-icon" type="button" aria-label="Search Petri" title="Search">
+                            <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                          </button>
+                          <input id="canvasLibrarySearch" type="text" class="canvas-library-search-input" placeholder="Search Petri…" aria-label="Search sounds" hidden />
+                        </div>
+                        <button class="canvas-library-icon" type="button" data-action="canvas-close-library" aria-label="Close picker" title="Close">
+                          <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div id="canvasEmptyState" class="canvas-empty-state">
+                  <button class="canvas-empty-plus" type="button" data-action="canvas-open-source-menu" title="Add source">+</button>
+                  <strong>Add source</strong>
+                  <span>Use + or right-click empty space</span>
+                </div>
+
+                <div id="canvasCandidateModal" class="canvas-modal" role="dialog" aria-modal="true" aria-labelledby="canvasCandidateTitle" hidden>
+                  <section class="canvas-modal-dialog canvas-candidate-tray" aria-label="Candidate tray">
+                    <div class="canvas-mini-head">
+                      <div>
+                        <span class="eyebrow">Candidate tray</span>
+                        <strong id="canvasCandidateTitle">No generation candidates yet</strong>
+                      </div>
+                      <div class="modal-head-actions">
+                        <span id="canvasCandidateMeta" class="state-pill muted">waiting</span>
+                        <button class="secondary" type="button" data-action="canvas-close-modal" data-modal-id="canvasCandidateModal">Close</button>
+                      </div>
+                    </div>
+                    <div class="canvas-candidate-ecology-bar">
+                      <div id="canvasCandidateEcologyStats" class="canvas-candidate-eco-stats">population empty</div>
+                      <div class="canvas-candidate-eco-actions" aria-label="Candidate ecology actions">
+                        <button type="button" data-action="canvas-ecology-action" data-command="breed_selected">Breed selected</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="mutate_favorite">Mutate favorite</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="cull_similar">Cull similar</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="find_weirdest">Find weirdest</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="find_cleanest">Find cleanest</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="find_loopable">Find loopable</button>
+                        <button type="button" data-action="canvas-ecology-action" data-command="make_family">Make family</button>
+                      </div>
+                    </div>
+                    <div id="canvasCandidateList" class="canvas-candidate-list empty">Run Generate, Continue, Inpaint, or Mutate to create auditionable candidates.</div>
+                  </section>
+                </div>
+
+	                <div id="canvasCompilerModal" class="canvas-modal" role="dialog" aria-modal="true" aria-labelledby="canvasCompilerTitle" hidden>
+	                  <section class="canvas-modal-dialog canvas-compiler-section">
+	                    <div class="canvas-mini-head">
+	                      <div>
+	                        <span class="eyebrow">Operation compiler</span>
+                        <strong id="canvasCompilerTitle">Compiled request</strong>
+                      </div>
+                      <button class="secondary" type="button" data-action="canvas-close-modal" data-modal-id="canvasCompilerModal">Close</button>
+                    </div>
+	                    <pre id="canvasCompilerPreview" class="canvas-compiler-preview">No selected operation.</pre>
+	                  </section>
+	                </div>
+
+	                <div id="aboutAppModal" class="canvas-modal" role="dialog" aria-modal="true" aria-labelledby="aboutAppTitle" hidden>
+	                  <section class="canvas-modal-dialog about-dialog">
+	                    <header class="canvas-modal-head about-head">
+	                      <div>
+	                        <span class="eyebrow">About germ</span>
+	                        <h2 id="aboutAppTitle">A modular lab for generative microsound</h2>
+	                        <p>germ treats sound as living matter: something generated, granulated, mutated, routed, controlled, and traced through lineage.</p>
+	                      </div>
+	                      <button class="secondary" type="button" data-action="canvas-close-modal" data-modal-id="aboutAppModal">Close</button>
+	                    </header>
+	                    <div class="about-body">
+	                      <section class="about-core">
+	                        <span class="eyebrow">Deep simple idea</span>
+	                        <p>Take any sound, extract what matters from it, use that as modulation, grow new sounds from it, keep the best mutations, and build families of related material.</p>
+	                      </section>
+	                      <section class="about-layer-grid" aria-label="germ modular stack">
+	                        <article>
+	                          <span>01</span>
+	                          <strong>Sound matter</strong>
+	                          <p>Waveforms, regions, masks, loops, candidates, sources, and cultures.</p>
+	                        </article>
+	                        <article>
+	                          <span>02</span>
+	                          <strong>Micro layer</strong>
+	                          <p>Grains, cells, quanta, swarms, membranes, colonies, and spectral tissue.</p>
+	                        </article>
+	                        <article>
+	                          <span>03</span>
+	                          <strong>Generation layer</strong>
+	                          <p>Generate, mutate, continue, inpaint, graft, batch, LoRA strains, and model routing.</p>
+	                        </article>
+	                        <article>
+	                          <span>04</span>
+	                          <strong>Control + genetics</strong>
+	                          <p>Audio-to-control, CV/MIDI/OSC, identity extraction, candidate ecology, and culture maps.</p>
+	                        </article>
+	                      </section>
+	                      <section class="about-flow">
+	                        <strong>Every generated sound can become</strong>
+	                        <div>
+	                          <span>a source</span>
+	                          <span>a prompt</span>
+	                          <span>a modulator</span>
+	                          <span>a mask</span>
+	                          <span>a rhythm</span>
+	                          <span>a material identity</span>
+	                          <span>a parent</span>
+	                          <span>a candidate</span>
+	                          <span>a reusable memory</span>
+	                        </div>
+	                      </section>
+	                      <section class="about-manifest">
+	                        <p>Germinator remains the legacy engine name. germ is the public environment: micro-time grains, meso-scale colonies, and macro sound organisms in one graph.</p>
+	                      </section>
+	                    </div>
+	                  </section>
+	                </div>
+
+	                <div id="lineageModal" class="canvas-modal" role="dialog" aria-modal="true" aria-labelledby="lineageTitle" hidden>
+                  <section class="canvas-modal-dialog lineage-dialog">
+                    <div class="canvas-mini-head">
+                      <div>
+                        <span class="eyebrow">Genealogy</span>
+                        <strong id="lineageTitle">Sound lineage</strong>
+                      </div>
+                      <div class="modal-head-actions">
+                        <span id="lineageMeta" class="state-pill muted">ancestry</span>
+                        <button class="secondary" type="button" data-action="canvas-close-modal" data-modal-id="lineageModal">Close</button>
+                      </div>
+                    </div>
+                    <div id="lineageBody" class="lineage-body empty">No lineage selected.</div>
+                  </section>
+                </div>
+              </section>
+            </div>
+
+            <div id="soundInfoModal" class="canvas-modal" role="dialog" aria-modal="true" aria-labelledby="soundInfoTitle" hidden>
+              <section class="canvas-modal-dialog sound-info-dialog">
+                <header class="canvas-modal-head">
+                  <div>
+                    <span class="eyebrow">Source info</span>
+                    <h2 id="soundInfoTitle">Sound Metadata</h2>
+                  </div>
+                  <button class="secondary" type="button" data-action="canvas-close-modal" data-modal-id="soundInfoModal">Close</button>
+                </header>
+                <div id="soundInfoBody" class="sound-info-body empty">No sound selected.</div>
+              </section>
+            </div>
+
+            <input id="canvasUploadInput" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.aif,.aiff,.webm" multiple style="display:none" />
+            <input id="canvasImageInput" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" />
+          </section>
+
+          <!-- MICROCOSMOS -->
+          <section class="tab-panel canvas-panel onebit-panel" id="tab-onebit">
+            <canvas id="dishCanvas" class="dish-canvas" tabindex="0" aria-label="Microcosmos - a playable scope world of sound germs"></canvas>
+
+            <div class="dish-screen" aria-hidden="false">
+              <aside class="dish-side dish-side-right" aria-label="Microcosmos status">
+                <div class="dish-status-card">
+                  <span class="dish-rail-title">Scope Status</span>
+                  <dl>
+                    <div><dt>Depth</dt><dd id="dishTemperature">Scope</dd></div>
+                    <div><dt>Listening</dt><dd id="dishNutrients">240u</dd></div>
+                    <div><dt>Population</dt><dd id="dishPopulation">0 / 32</dd></div>
+                    <div><dt>Vitality</dt><dd id="dishVitality">0%</dd></div>
+                  </dl>
+                  <div style="border-top: 1px dashed var(--dish-line); margin: 12px 0 8px 0; opacity: 0.5;"></div>
+                  <span class="dish-rail-title" style="margin-top: 0;">Modules</span>
+                  <div class="dish-modules-compact-grid">
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="crystal" title="Crystal - harmonic resonator"><span data-icon="crystal"></span><strong>Crystal</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="membrane" title="Membrane - filters and boundaries"><span data-icon="membrane"></span><strong>Membrane</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="mutagen" title="Mutagen Pod - introduces variation"><span data-icon="mutagen"></span><strong>Mutagen</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="incubator" title="Incubator - spawns lifeforms"><span data-icon="incubator"></span><strong>Incubator</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="harvester" title="Harvester - captures essence"><span data-icon="harvester"></span><strong>Harvester</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="magnet" title="Magnet - attracts clusters"><span data-icon="magnet"></span><strong>Magnet</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="lens" title="Lens - focuses interaction"><span data-icon="lens"></span><strong>Lens</strong></button>
+                    <button type="button" class="dish-module-compact-btn" data-dish-module="pipe" title="Pipe Port - sends to canvas"><span data-icon="pipe"></span><strong>Pipe Port</strong></button>
+                  </div>
+                </div>
+
+                <div class="dish-mode-card" aria-label="Microcosmos interaction logic">
+                  <span class="dish-rail-title">Interaction</span>
+                  <div class="dish-segment" role="group" aria-label="Interaction logic">
+                    <button type="button" data-dish-chemistry="bounce" class="is-active">Ripple</button>
+                    <button type="button" data-dish-chemistry="infect">Infect</button>
+                    <button type="button" data-dish-chemistry="breed">Breed</button>
+                  </div>
+                  <span id="dishModeLabel" class="dish-mini-readout">germs bounce and ripple</span>
+                </div>
+
+                <div class="dish-mode-card" aria-label="Microcosmos movement">
+                  <span class="dish-rail-title">Movement</span>
+                  <div class="dish-segment dish-segment-compact" role="group" aria-label="Microcosmos energy">
+                    <button type="button" data-dish-energy="still">0</button>
+                    <button type="button" data-dish-energy="slow">1</button>
+                    <button type="button" data-dish-energy="living" class="is-active">2</button>
+                    <button type="button" data-dish-energy="chaotic">3</button>
+                  </div>
+                </div>
+
+                <div class="dish-zoom-card" aria-label="Scope zoom status">
+                  <span>Scope</span>
+                  <strong id="dishZoom">100%</strong>
+                  <i></i><i></i><i></i><i></i><b></b><i></i><i></i>
+                </div>
+              </aside>
+
+              <div class="dish-action-strip" aria-label="Microcosmos actions">
+                <div class="dish-action-strip-bar">
+                  <button id="dishAddBtn" class="dish-action-btn" type="button" aria-label="Spawn a germ" title="Spawn a germ" data-name="Spawn">
+                    <span data-icon="spawn"></span>
+                  </button>
+                  <button id="dishLibraryBtn" class="dish-action-btn" type="button" aria-label="Open germ library" title="Open germ library" data-name="Library">
+                    <span data-icon="library"></span>
+                  </button>
+                  <button id="dishModuleBtn" class="dish-action-btn" type="button" aria-label="Open module tray" title="Open module tray" data-name="Modules">
+                    <span data-icon="module"></span>
+                  </button>
+                  <button id="dishHarvestBtn" class="dish-action-btn" type="button" aria-label="Harvest visible scope" title="Harvest visible scope" data-name="Harvest">
+                    <span data-icon="harvest"></span>
+                  </button>
+                  <button id="dishPipeBtn" class="dish-action-btn" type="button" aria-label="Pipe selected germ to canvas" title="Pipe selected germ to canvas" data-name="Pipe">
+                    <span data-icon="pipe"></span>
+                  </button>
+                  <button id="dishResetBtn" class="dish-action-btn" type="button" aria-label="Clear Microcosmos" title="Clear Microcosmos" data-name="Clear">
+                    <span data-icon="clear"></span>
+                  </button>
+                  <button id="dishSettingsBtn" class="dish-action-btn" type="button" aria-label="Open generation settings" title="Open generation settings" data-name="Settings">
+                    <span data-icon="settings"></span>
+                  </button>
+                  <button id="dishHelpBtn" class="dish-action-btn" type="button" aria-label="Microcosmos help" title="Microcosmos help" data-name="Help">
+                    <span data-icon="help"></span>
+                  </button>
+                  <button id="dishExitBtn" class="dish-action-btn" type="button" aria-label="Back to canvas" title="Back to canvas" data-name="Exit">
+                    <span data-icon="back"></span>
+                  </button>
+                </div>
+                <div id="dishActionLabel" class="dish-action-label"></div>
+              </div>
+            </div>
+
+            <input id="dishGravity" type="hidden" value="0.04" />
+            <input id="dishViscosity" type="hidden" value="0.992" />
+            <input id="dishHarvestScope" type="hidden" value="scope" />
+            <div id="dishCards" class="dish-cards" hidden></div>
+            <div id="dishHelp" class="dish-help" hidden>
+              <div class="dish-help-inner">
+                <button id="dishHelpClose" type="button" aria-label="Close help">esc</button>
+                <span>Pick word cards to spawn sound germs. Drag germs and modules. What sits near the scope is what you hear. Enter World to navigate deeper, or pipe selected life into full mode when it needs advanced control.</span>
+              </div>
+            </div>
+
+            <div id="dishEmpty" class="dish-empty-hint" aria-hidden="true">
+              <strong>Empty scope</strong>
+              <span>No germs visible</span>
+            </div>
+            <span id="dishCount" class="dish-count dish-a11y-count" aria-live="polite">0 germs</span>
+          </section>
+
+
+          <!-- CONTROLLERS -->
+          <section class="tab-panel" id="tab-controllers">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Control Layer</span>
+                <h2>Controllers</h2>
+              </div>
+              <div class="button-row">
+                <button id="controlRefreshBtn" class="secondary" type="button" data-action="control-refresh" data-help="Refresh ports, routes, and monitor events.">Refresh</button>
+                <button id="controlSnapshotBtn" class="secondary" type="button" data-action="control-snapshot" data-help="Capture the current canvas modulation state into the monitor.">Snapshot</button>
+                <button id="controlPanicBtn" type="button" data-action="control-panic" data-help="Post a local panic-zero event. No hardware output is enabled.">Panic</button>
+                <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Controllers" data-help="Close the Controllers panel.">Close</button>
+              </div>
+            </div>
+            <div class="controllers-disclaimer">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>This is an experimental feature that is still being tested. Many things may not work as expected. Your feedback and pull requests to expand this layer are welcome.</span>
+            </div>
+            <span id="controlHint" class="module-hint floating-hint">Hover a Controllers action for details.</span>
+            <div id="controlPanelBody" class="control-layer-body"></div>
+          </section>
+
+          <!-- PETRI LIBRARY -->
+          <section class="tab-panel" id="tab-petri">
+            <div class="petri-toolbar-module">
+              <div class="petri-toolbar-row-top">
+                <div class="petri-toolbar-cluster petri-toolbar-stats">
+                  <div class="library-stats">
+                    <span class="lib-stat"><strong id="libTotal">0</strong> sounds</span>
+                    <span class="lib-stat"><strong id="libDone">0</strong> done</span>
+                    <span class="lib-stat"><strong id="libError">0</strong> errors</span>
+                    <span class="lib-stat"><strong id="libFavorites">0</strong> favorites</span>
+                  </div>
+                </div>
+                <div class="petri-toolbar-cluster petri-toolbar-views">
+                  <div class="petri-tabs" role="tablist" aria-label="Petri views">
+                    <button id="petriSoundsTab" class="petri-tab active" type="button" data-action="petri-view" data-view="sounds">Sounds</button>
+                    <button id="petriGroupsTab" class="petri-tab" type="button" data-action="petri-view" data-view="groups">Groups</button>
+                  </div>
+                  <button id="petriVizToggle" class="petri-toolbar-icon" type="button" aria-label="Toggle waveform / spectrogram" title="Waveform / Spectrogram" data-help="Switch disc view between waveform and spectrogram.">
+                    <svg id="petriVizIconWave" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h2l3-7 4 14 4-14 3 7h2"/></svg>
+                    <svg id="petriVizIconSpec" class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><rect x="3" y="3" width="4" height="18" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="5" width="4" height="16" rx="1"/></svg>
+                  </button>
+                  <select id="petriViz" style="display:none"><option value="waveform">waveform</option><option value="spectrogram">spectrogram</option></select>
+                  <div class="petri-search-control">
+                    <button id="petriSearchToggle" class="petri-toolbar-icon" type="button" aria-label="Search sounds" title="Search" data-help="Search by prompt, filename, seed or model.">
+                      <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    </button>
+                    <div id="petriSearchPopover" class="petri-search-popover" hidden>
+                      <input id="libSearch" placeholder="prompt, filename, seed, model..." aria-label="Search sounds" />
+                    </div>
+                  </div>
+                </div>
+                <button class="petri-toolbar-icon petri-close-x" data-action="floating-panel-close" type="button" aria-label="Close Petri" title="Close">
+                  <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="petri-toolbar-row-bottom">
+                <div class="petri-toolbar-cluster petri-toolbar-filters">
+                  <select id="libMode" class="petri-compact-select" aria-label="Mode" title="Filter by mode" data-help="Filter sounds by generation mode.">
+                    <option value="">all modes</option>
+                    <option value="germinate">germinate</option>
+                    <option value="text-to-audio">text-to-audio</option>
+                    <option value="audio-to-audio">audio-to-audio</option>
+                    <option value="inpainting">inpainting</option>
+                    <option value="continuation">continuation</option>
+                    <option value="time-render">time-render</option>
+                    <option value="harvest">harvest</option>
+                    <option value="audio-time-pitch">time-pitch</option>
+                  </select>
+                  <select id="libSort" class="petri-compact-select" aria-label="Sort" title="Sort order" data-help="Sort sounds by date, duration, model or seed.">
+                    <option value="date">newest</option>
+                    <option value="duration">duration</option>
+                    <option value="model">model</option>
+                    <option value="seed">seed</option>
+                  </select>
+                  <select id="libModel" class="petri-compact-select petri-extra-filter" aria-label="Model" title="Filter by model" data-help="Filter sounds by model."><option value="">all models</option></select>
+                  <select id="libSourceType" class="petri-compact-select petri-extra-filter" aria-label="Source type" title="Filter by source" data-help="Filter by source type."><option value="">all sources</option></select>
+                  <select id="libStrain" class="petri-compact-select petri-extra-filter" aria-label="Strain" title="Filter by strain" data-help="Filter by LoRA strain."><option value="">all strains</option></select>
+                  <select id="libDuration" class="petri-compact-select petri-extra-filter" aria-label="Duration" title="Filter by duration" data-help="Filter by sound duration.">
+                    <option value="">any duration</option>
+                    <option value="short">short &lt; 5s</option>
+                    <option value="medium">medium 5-20s</option>
+                    <option value="long">long &gt; 20s</option>
+                  </select>
+                  <select id="libRating" class="petri-compact-select petri-extra-filter" aria-label="Rating" title="Filter by rating" data-help="Filter by favorite or rating.">
+                    <option value="">any rating</option>
+                    <option value="favorite">favorites</option>
+                    <option value="rated">rated</option>
+                  </select>
+                  <select id="libTag" class="petri-compact-select petri-extra-filter" aria-label="Tag" title="Filter by tag" data-help="Filter by tag."><option value="">all tags</option></select>
+                </div>
+              </div>
+            </div>
+
+            <div class="petri-grid-module">
+              <div id="herbariumList" class="petri-disc-grid empty">No sounds found. Generate audio to populate the library.</div>
+              <div id="petriPagination" class="petri-pagination" hidden>
+                <button id="petriPrevBtn" class="petri-page-btn" type="button" disabled aria-label="Previous page">&larr;</button>
+                <span id="petriPageReadout" class="petri-page-readout">1 / 1</span>
+                <button id="petriNextBtn" class="petri-page-btn" type="button" disabled aria-label="Next page">&rarr;</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- RACK ORGANIZER -->
+          <!-- GERM LIBRARIAN -->
+          <section class="tab-panel" id="tab-rack">
+            <div class="rack-module">
+              <div class="panel-head">
+                <div>
+                  <span class="eyebrow">Dashboard · Library</span>
+                  <h2>Germ Librarian</h2>
+                </div>
+                <div class="button-row">
+                  <span id="rackStats" class="rack-stats-label">Total: 0 sounds · Selected: 0</span>
+                  <button id="rackBulkDeleteBtn" class="secondary" type="button" data-help="Delete all selected sounds from disk." disabled>Bulk Delete</button>
+                  <button id="rackExportCsvBtn" class="secondary" type="button" data-help="Export selected items as CSV.">Export CSV</button>
+                  <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Librarian" data-help="Close this floating module.">Close</button>
+                </div>
+              </div>
+              <span id="rackHint" class="module-hint floating-hint">Hover a librarian action for details.</span>
+
+              <div class="rack-toolbar">
+                <div class="rack-toolbar-filters">
+                  <div class="rack-search" data-help="Search across prompt text, notes, filename, tags, etc.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input id="rackSearch" type="search" placeholder="Search prompts, tags, files..." aria-label="Search rack" />
+                  </div>
+                  <select id="rackGroup" class="rack-select" aria-label="Group by" title="Group by" data-help="Group list items by category.">
+                    <option value="date">group: date</option>
+                    <option value="mode">group: mode</option>
+                    <option value="model">group: model</option>
+                    <option value="tag">group: tag</option>
+                    <option value="none">group: none</option>
+                  </select>
+                  <select id="rackFilterMode" class="rack-select" aria-label="Filter by mode" title="Filter by mode" data-help="Filter list items by mode.">
+                    <option value="">all modes</option>
+                    <option value="generate">generate</option>
+                    <option value="inpaint">inpaint</option>
+                    <option value="audio-to-audio">audio-to-audio</option>
+                    <option value="time-render">time-render</option>
+                    <option value="time-pitch">time-pitch</option>
+                    <option value="archive">archive</option>
+                  </select>
+                  <select id="rackFilterFav" class="rack-select" aria-label="Filter by favorite" title="Filter by favorite" data-help="Filter items by rating/favorite.">
+                    <option value="">all sounds</option>
+                    <option value="favorite">favorites only</option>
+                  </select>
+                  <select id="rackSort" class="rack-select" aria-label="Sort order" title="Sort order" data-help="Sort items by property.">
+                    <option value="date_desc">sort: newest</option>
+                    <option value="date_asc">sort: oldest</option>
+                    <option value="name_asc">sort: name (A-Z)</option>
+                    <option value="duration_desc">sort: longest</option>
+                    <option value="size_desc">sort: largest size</option>
+                  </select>
+                </div>
+                
+                <div class="rack-toolbar-batch">
+                  <div class="rack-batch-inputs">
+                    <input id="rackBatchTags" class="rack-batch-input" type="text" placeholder="batch tags (comma sep)" aria-label="Batch tags" data-help="Enter tags to apply to selected items." />
+                    <input id="rackBatchNotes" class="rack-batch-input" type="text" placeholder="batch notes" aria-label="Batch notes" data-help="Enter notes to apply to selected items." />
+                  </div>
+                  <div class="rack-batch-buttons">
+                    <button id="rackBatchTagBtn" class="rack-button" type="button" data-help="Append tags to selected items.">Append Tag</button>
+                    <button id="rackBatchNotesBtn" class="rack-button" type="button" data-help="Apply notes to selected items.">Apply Note</button>
+                    <button id="rackBatchClearTagsBtn" class="rack-button" type="button" data-help="Remove all tags from selected items.">Clear Tags</button>
+                    <button id="rackClearSelectionBtn" class="rack-icon-button" type="button" aria-label="Clear Rack selection" title="Clear selection" data-help="Deselect all librarian rows.">
+                      <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rack-table-shell">
+                <table class="rack-table">
+                  <thead>
+                    <tr>
+                      <th scope="col" class="col-select"><input type="checkbox" id="rackSelectAll" title="Select / deselect all filtered items" /></th>
+                      <th scope="col" class="col-filename">Filename</th>
+                      <th scope="col" class="col-prompt">Prompt / Text description</th>
+                      <th scope="col" class="col-tags">Tags</th>
+                      <th scope="col" class="col-mode">Mode</th>
+                      <th scope="col" class="col-model">Model</th>
+                      <th scope="col" class="col-stats">Stats</th>
+                      <th scope="col" class="col-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rackTableBody">
+                    <tr><td colspan="8" class="rack-empty">No sounds found.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- THERMOSTAT -->
+          <section class="tab-panel" id="tab-thermostat">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Thermostat · LoRA Stack</span>
+                <h2>Model Temperature</h2>
+              </div>
+              <div class="button-row">
+                <button id="loadLoraBtn" class="secondary" type="button" data-help="Load the adapter paths listed below.">Load</button>
+                <button id="setLoraBtn" type="button" data-help="Apply the selected adapter strength.">Set Strength</button>
+                <button class="secondary" type="button" data-action="strain-refresh" data-help="Refresh saved strain cards.">Strains</button>
+                <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Thermostat" data-help="Close this floating module and keep working on the canvas.">Close</button>
+              </div>
+            </div>
+            <span id="thermostatHint" class="module-hint floating-hint">Hover a Thermostat action for details.</span>
+            <label>
+              Adapter Paths
+              <textarea id="loraPaths" rows="5" placeholder="/path/to/momoto_signature.safetensors"></textarea>
+            </label>
+            <div class="control-grid compact thermostat-controls">
+              <label>Strength <small>(lora_strength)</small> <input id="loraStrength" type="number" min="0" max="10" step="0.05" value="0.7" /></label>
+              <label>Index <input id="loraIndex" type="number" step="1" value="-1" /></label>
+            </div>
+            <section class="strain-registry-panel" aria-label="Strain registry">
+              <div class="strain-form-grid">
+                <label>Name <input id="strainName" type="text" placeholder="dust colony" /></label>
+                <label>Adapter path <input id="strainPath" type="text" placeholder="output/strains/dust.safetensors" /></label>
+                <label>Tags <input id="strainTags" type="text" placeholder="granular, brittle" /></label>
+                <label>Vocabulary <input id="strainVocabulary" type="text" placeholder="dust, grain, cell" /></label>
+                <label>Modules <input id="strainModules" type="text" placeholder="grain_culture, microscope" /></label>
+                <label>Dataset <input id="strainDataset" type="text" placeholder="source corpus" /></label>
+                <label>Author <input id="strainAuthor" type="text" placeholder="studio / person" /></label>
+                <label>License <input id="strainLicense" type="text" placeholder="license or usage note" /></label>
+                <label>Min <input id="strainMinStrength" type="number" min="0" max="10" step="0.05" value="0" /></label>
+                <label>Default <input id="strainDefaultStrength" type="number" min="0" max="10" step="0.05" value="0.7" /></label>
+                <label>Max <input id="strainMaxStrength" type="number" min="0" max="10" step="0.05" value="1.5" /></label>
+                <label class="span-2">Description <textarea id="strainDescription" rows="2" placeholder="What this strain contributes to the sound."></textarea></label>
+                <label class="span-2">Provenance <textarea id="strainProvenance" rows="2" placeholder="Training notes, source lineage, usage caveats."></textarea></label>
+              </div>
+              <div class="button-row">
+                <button class="secondary" type="button" data-action="strain-save" data-help="Save the form as a reusable strain card.">Save Strain</button>
+              </div>
+              <div id="strainRegistryList" class="strain-card-grid"></div>
+            </section>
+            <pre id="loraResult" class="log"></pre>
+          </section>
+
+          <!-- DIAGNOSTICS -->
+          <section class="tab-panel" id="tab-diagnostics">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Readiness</span>
+                <h2>Provider Status</h2>
+              </div>
+              <div class="button-row">
+                <button id="diagnosticsBtn" class="secondary" type="button" data-help="Refresh provider readiness and server diagnostics.">Diagnostics</button>
+                <button id="hfCheckBtn" class="secondary" type="button" data-help="Check local Hugging Face access for model files.">HF Check</button>
+                <button id="testBtn" type="button" data-help="Run a short generation test with the current provider.">Run Model Test</button>
+                <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Status" data-help="Close this floating status module.">Close</button>
+              </div>
+            </div>
+            <span id="statusHint" class="module-hint floating-hint">Hover a Status action for details.</span>
+            <textarea id="testPrompt" rows="3">TrackType: SFX, short dry wood impact, close microphone, no music, no voice</textarea>
+            <div class="status-grid" id="readinessCards"></div>
+            <pre id="diagnosticsText" class="log"></pre>
+            <pre id="statusJson" class="log slim"></pre>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <!-- Hidden audio preview compatibility host -->
+    <div class="player-compat" id="bottomPlayer" hidden>
+      <canvas id="waveform" width="900" height="48" class="player-wave"></canvas>
+      <audio id="audioPlayer" preload="metadata"></audio>
+      <div class="player-bar">
+        <div class="player-transport">
+          <button id="playPauseBtn" class="transport-btn" type="button" disabled aria-label="Play selected sound">
+            <svg class="button-icon" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="7,4 19,12 7,20"/></svg>
+          </button>
+          <input id="playhead" type="range" min="0" max="1000" value="0" disabled />
+          <span id="timeReadout">0:00 / 0:00</span>
+        </div>
+        <div class="player-info">
+          <h3 id="trackTitle">No output selected</h3>
+          <div class="track-meta" id="trackMeta">
+            <span>provider -</span>
+            <span>model -</span>
+            <span>seed -</span>
+          </div>
+        </div>
+        <div class="player-actions">
+          <button id="loopToggle" class="secondary" type="button" title="Loop" aria-label="Loop selected sound">&#x21BB;</button>
+          <button id="downloadBtn" class="secondary" type="button" title="Download" aria-label="Download selected sound">&#x2193;</button>
+          <button id="sendToMenu" class="secondary" type="button" title="Send to..." aria-label="Send selected sound">&#x2934;</button>
+          <button id="metadataToggle" class="secondary" type="button" title="Details" aria-label="Show selected sound details">&#x22EF;</button>
+        </div>
+      </div>
+      <div id="sendToDropdown" class="send-menu" style="display:none">
+        <button type="button" data-send="chamber">&#x2192; Add to Canvas</button>
+        <button type="button" data-send="petri">&#x2192; Open Library</button>
+      </div>
+      <div id="metadataPanel" class="metadata-drawer" style="display:none">
+        <div class="paths">
+          <label>Audio <input id="audioPath" readonly /></label>
+          <label>Metadata <input id="metadataPath" readonly /></label>
+        </div>
+        <div class="button-row">
+          <button id="copyAudioPathBtn" class="secondary" type="button">Copy Path</button>
+          <button id="revealAudioBtn" class="secondary" type="button">Reveal</button>
+          <button id="openAudioBtn" class="secondary" type="button">Open</button>
+          <button id="copyResultBtn" class="secondary" type="button">Copy JSON</button>
+        </div>
+        <pre id="metadataJson" class="log metadata-log"></pre>
+      </div>
+    </div>
+
+    <!-- Hidden compat elements -->
+    <div id="layerStackCompact" style="display:none"></div>
+    <span id="layerCount" style="display:none">0 layers</span>
+    <div id="generationState" style="display:none"></div>
+    <div id="libraryList" style="display:none"></div>
+    <button id="refreshLibraryBtn" type="button" style="display:none"></button>
+    <div id="layerStackLarge" style="display:none"></div>
+    <pre id="cultureJson" style="display:none"></pre>
+    <span id="cultureId" style="display:none"></span>
+    <span id="cultureCandidateCount" style="display:none">0</span>
+    <span id="cultureLayerCount" style="display:none">0</span>
+    <span id="cultureStrainCount" style="display:none">0</span>
+    <div id="seedCompatFields" hidden>
+      <textarea id="prompt">TrackType: SFX, short dry ceramic tap, close microphone, no music, no voice</textarea>
+      <textarea id="negativePrompt">music, vocals, speech, melody</textarea>
+      <input id="duration" type="number" value="2" />
+      <input id="steps" type="number" value="8" />
+      <input id="cfgScale" type="number" value="1.0" />
+      <input id="seed" type="number" value="-1" />
+      <input id="batchSize" type="number" value="1" />
+      <input id="outputName" value="germ" />
+      <input id="chunkedDecode" type="checkbox" checked />
+      <textarea id="seedPrompt">TrackType: SFX, dry close-microphone loop of metallic friction with slow breathing movement</textarea>
+      <textarea id="seedNegative">speech, vocals, melody, long reverb, digital artifact</textarea>
+      <select id="seedType"><option value="prompt">prompt</option></select>
+      <input id="seedRandom" type="number" value="-1" />
+      <input id="seedSourcePath" />
+      <input id="seedTags" value="SFX, loop, texture" />
+      <input id="seedLockModel" type="checkbox" checked />
+      <div id="seedCards"></div>
+    </div>
+
+    <!-- Snapshot Library Modal -->
+    <div id="snapshotLibraryModal" class="snapshot-library-overlay" hidden>
+      <div class="snapshot-library-dialog">
+        <div class="snapshot-library-head">
+          <strong>Snapshot Library</strong>
+          <button type="button" data-action="close-snapshot-library" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div id="snapshotLibraryList" class="snapshot-library-list"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/dashboard/assets/app.js?v=20260610-review-p2"></script>
+  </body>
+</html>

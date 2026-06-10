@@ -1,0 +1,30 @@
+[project]
+name = "germ"
+version = "0.1.0"
+description = "Local Stable Audio 3 server and dashboard for germ."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.111.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.7.0",
+    "python-dotenv>=1.0.1",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+python-provider = [
+    "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git",
+]
+dev = [
+    "pytest>=8.2.0",
+    "ruff>=0.6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
