@@ -296,6 +296,28 @@ def test_control_bridges_profiles_events_and_graph() -> None:
         packet, _ = udp.recvfrom(1024)
         assert b"/germinator/pytest" in packet
 
+    norns_profile = client.get("/control/osc/norns/profile")
+    assert norns_profile.status_code == 200
+    mappings = norns_profile.json()["mappings"]
+    assert any(mapping["target"] == "dish.gravity" for mapping in mappings)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.bind(("127.0.0.1", 0))
+        udp.settimeout(1.0)
+        port = udp.getsockname()[1]
+        norns_response = client.post(
+            "/control/osc/norns/send",
+            json={"host": "127.0.0.1", "port": port, "gravity": 0.25, "energy": 0.8, "spawn": True},
+        )
+        assert norns_response.status_code == 200
+        norns = norns_response.json()
+        assert norns["status"] == "sent"
+        assert norns["sent"] is True
+        packets = [udp.recvfrom(1024)[0] for _ in range(3)]
+        assert any(b"/germ/dish/gravity" in packet for packet in packets)
+        assert any(b"/germ/dish/energy" in packet for packet in packets)
+        assert any(b"/germ/dish/spawn" in packet for packet in packets)
+
     osc_receive = client.post(
         "/control/osc/receive",
         json={"address": "/germinator/in", "values": [1]},
@@ -588,6 +610,35 @@ def test_micro_matter_profile_reuses_cached_analysis(monkeypatch: pytest.MonkeyP
     assert second.status_code == 200
     assert first.json()["descriptors"] == second.json()["descriptors"]
     assert calls == 1
+
+
+def test_micro_biomes_save_list_load_delete() -> None:
+    payload = {
+        "name": "pytest mist biome",
+        "state": {
+            "version": 2,
+            "germs": [{"id": "germ_a", "assetId": "asset_a"}],
+            "modules": [{"id": "module_a", "type": "crystal"}],
+        },
+    }
+    saved = client.post("/micro/biomes", json=payload)
+    assert saved.status_code == 200
+    body = saved.json()
+    biome_id = body["biome"]["id"]
+    assert body["biome"]["germ_count"] == 1
+    assert body["biome"]["module_count"] == 1
+
+    listed = client.get("/micro/biomes")
+    assert listed.status_code == 200
+    assert any(item["id"] == biome_id for item in listed.json())
+
+    loaded = client.get(f"/micro/biomes/{biome_id}")
+    assert loaded.status_code == 200
+    assert loaded.json()["state"]["germs"][0]["id"] == "germ_a"
+
+    deleted = client.delete(f"/micro/biomes/{biome_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "deleted"
 
 
 def test_huggingface_status_reports_cli_auth_without_model_check() -> None:
@@ -1263,6 +1314,7 @@ def test_time_render_request_accepts_next_phase_modules() -> None:
         "clock_divider",
         "humanizer",
         "polymeter",
+        "incubation_timeline",
         "render_bus",
         "render_macros",
     ]:
@@ -1273,6 +1325,90 @@ def test_time_render_request_accepts_next_phase_modules() -> None:
             events=[{"tick": 0, "source_id": "source_1"}],
         )
         assert request.module_type == module_type
+
+
+def test_listener_enhances_prompt_with_contract_language() -> None:
+    response = client.post(
+        "/listener/enhance",
+        json={
+            "provider": "mock",
+            "prompt": "wet glass insects",
+            "negative_prompt": "traffic",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "mock"
+    assert "wet glass insects" in body["enhanced_prompt"]
+    assert "TrackType: SFX" in body["enhanced_prompt"]
+    assert "traffic" in body["negative_prompt"]
+    assert "speech" in body["negative_prompt"]
+
+
+def test_listener_scores_wav_and_rejects_external_path(tmp_path: Path) -> None:
+    audio_path = settings.audio_dir / "pytest_listener_score.wav"
+    write_sine_wav(audio_path, duration=0.25, amplitude=0.2)
+    response = client.post(
+        "/listener/score",
+        json={
+            "provider": "mock",
+            "prompt": "clean glass tone",
+            "audio_path": storage.relative_path(audio_path),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rating"] in {"excellent", "good", "fair", "weak"}
+    assert 0 <= body["score"] <= 1
+    assert body["features"]["duration"] > 0
+
+    external = tmp_path / "external_listener.wav"
+    write_sine_wav(external, duration=0.1)
+    rejected = client.post(
+        "/listener/score",
+        json={
+            "provider": "mock",
+            "prompt": "external",
+            "audio_path": str(external),
+        },
+    )
+    assert rejected.status_code == 422
+
+
+def test_audio_metadata_update_persists_petri_ratings() -> None:
+    audio_path = settings.audio_dir / "pytest_petri_ratings.wav"
+    write_sine_wav(audio_path, duration=0.2, amplitude=0.2)
+    metadata_path = settings.metadata_dir / "pytest_petri_ratings.json"
+    storage.write_json_atomic(
+        metadata_path,
+        {
+            "output_audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "prompt": "petri rating source",
+            "ratings": {"rating": 1},
+        },
+    )
+    response = client.post(
+        "/audio-tools/operate",
+        json={
+            "input_audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "operation": "metadata",
+            "prompt": "petri rating source",
+            "ratings": {
+                "favorite": True,
+                "rating": 5,
+                "play_count": 2,
+                "fitness": 8.5,
+            },
+        },
+    )
+    assert response.status_code == 200
+    saved = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert saved["ratings"]["favorite"] is True
+    assert saved["ratings"]["rating"] == 5
+    assert saved["ratings"]["play_count"] == 2
+    assert saved["ratings"]["fitness"] == 8.5
 
 
 def test_time_render_event_rejects_invalid_source_window() -> None:

@@ -57,6 +57,7 @@ class StorageManager:
         self.wavetable_metadata_dir = settings.wavetable_metadata_dir
         self.wavetable_data_dir = settings.wavetable_data_dir
         self.wavetable_preview_dir = settings.wavetable_preview_dir
+        self.micro_biome_dir = settings.micro_biome_dir
         self.jobs: dict[str, dict[str, Any]] = {}
         self.job_listeners: dict[str, int] = {}
         self._lock = RLock()
@@ -108,6 +109,7 @@ class StorageManager:
         self.wavetable_metadata_dir.mkdir(parents=True, exist_ok=True)
         self.wavetable_data_dir.mkdir(parents=True, exist_ok=True)
         self.wavetable_preview_dir.mkdir(parents=True, exist_ok=True)
+        self.micro_biome_dir.mkdir(parents=True, exist_ok=True)
 
     def touch_library(self) -> None:
         with self._lock:

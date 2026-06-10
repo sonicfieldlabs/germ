@@ -23,6 +23,7 @@ from server.routes import (
     inpaint,
     jobs,
     library,
+    listener,
     lora,
     micro,
     models,
@@ -82,6 +83,7 @@ app.include_router(strains.router)
 app.include_router(micro.router)
 app.include_router(jobs.router)
 app.include_router(library.router)
+app.include_router(listener.router)
 app.include_router(files.router)
 app.include_router(time_render.router)
 app.include_router(wavetables.router)

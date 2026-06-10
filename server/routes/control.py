@@ -35,6 +35,8 @@ from server.schemas import (
     ControlGeneticGraphResponse,
     ControlMIDIMessage,
     ControlMIDIResult,
+    ControlNornsBridgeRequest,
+    ControlNornsBridgeResult,
     ControlOSCMessage,
     ControlOSCResult,
     ControlPortsResponse,
@@ -232,6 +234,75 @@ def receive_osc(message: ControlOSCMessage) -> ControlOSCResult:
         address=message.address,
         byte_count=0,
         sent=False,
+    )
+
+
+@router.get("/osc/norns/profile")
+def norns_profile() -> dict[str, Any]:
+    return {
+        "id": "fates",
+        "label": "norns/Fates OSC",
+        "default_host": "127.0.0.1",
+        "default_port": 10111,
+        "mappings": [
+            {"address": "/germ/dish/gravity", "range": [0, 1], "target": "dish.gravity"},
+            {"address": "/germ/dish/viscosity", "range": [0, 1], "target": "dish.viscosity"},
+            {"address": "/germ/dish/energy", "range": [0, 1], "target": "dish.energy"},
+            {"address": "/germ/dish/spawn", "range": [0, 1], "target": "dish.spawn"},
+        ],
+    }
+
+
+@router.post("/osc/norns/send", response_model=ControlNornsBridgeResult)
+def send_norns_bridge(request: ControlNornsBridgeRequest) -> ControlNornsBridgeResult:
+    messages: list[ControlOSCResult] = []
+    values: list[tuple[str, float | int]] = []
+    if request.gravity is not None:
+        values.append(("/germ/dish/gravity", request.gravity))
+    if request.viscosity is not None:
+        values.append(("/germ/dish/viscosity", request.viscosity))
+    if request.energy is not None:
+        values.append(("/germ/dish/energy", request.energy))
+    if request.spawn:
+        values.append(("/germ/dish/spawn", 1))
+    if not values:
+        values.append(("/germ/dish/ping", 1))
+    try:
+        for address, value in values:
+            messages.append(
+                send_osc(
+                    ControlOSCMessage(
+                        host=request.host,
+                        port=request.port,
+                        address=address,
+                        values=[value],
+                        metadata={
+                            **request.metadata,
+                            "bridge_profile": request.profile,
+                            "bridge": "norns",
+                        },
+                    )
+                )
+            )
+    except HTTPException as exc:
+        return ControlNornsBridgeResult(
+            status="error",
+            host=request.host,
+            port=request.port,
+            profile=request.profile,
+            sent=False,
+            messages=messages,
+            error=str(exc.detail),
+        )
+    sent = all(message.sent for message in messages)
+    return ControlNornsBridgeResult(
+        status="sent" if sent else "error",
+        host=request.host,
+        port=request.port,
+        profile=request.profile,
+        sent=sent,
+        messages=messages,
+        error=None if sent else "one or more OSC messages failed",
     )
 
 

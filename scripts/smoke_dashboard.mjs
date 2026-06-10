@@ -118,9 +118,48 @@ function checkWavetableContracts() {
   assert.match(synth, /createPeriodicWave/, "Preview synth should build PeriodicWave frames");
 }
 
+function checkTimelineContracts() {
+  const html = read("dashboard/static/index.html");
+  const app = read("dashboard/static/app.js");
+  assert.match(html, /data-time="incubation_timeline"/, "Incubation Timeline card should be present");
+  assert.match(app, /incubation_timeline/, "Incubation Timeline node type should be registered");
+  assert.match(app, /canvasIncubationTimelineMarkup/, "Incubation Timeline markup should exist");
+  assert.match(app, /time-incubation-add-selected/, "Timeline should place selected sources");
+  assert.match(app, /timeline_event_id/, "Timeline events should carry lineage metadata");
+}
+
+function checkListenerContracts() {
+  const html = read("dashboard/static/index.html");
+  const app = read("dashboard/static/app.js");
+  assert.match(html, /id="tab-listener"/, "Listener tab should be present");
+  assert.match(html, /id="listenerEnhanceBtn"/, "Listener enhance action should be present");
+  assert.match(app, /\/listener\/enhance/, "Listener enhance route should be wired");
+  assert.match(app, /\/listener\/score/, "Listener score route should be wired");
+}
+
+function checkMicrocosmosContracts() {
+  const html = read("dashboard/static/index.html");
+  const dish = read("dashboard/static/dish.js");
+  assert.match(html, /id="dishBiomeBtn"/, "Microcosmos biome action should be present");
+  assert.match(html, /id="dishSpectatorBtn"/, "Microcosmos spectator action should be present");
+  assert.match(dish, /\/micro\/biomes/, "Microcosmos should call biome routes");
+  assert.match(dish, /toggleSpectatorMode/, "Spectator mode should be wired");
+}
+
+function checkControlBridgeContracts() {
+  const app = read("dashboard/static/app.js");
+  assert.match(app, /control-norns-send/, "norns/Fates send action should be present");
+  assert.match(app, /\/control\/osc\/norns\/send/, "norns/Fates route should be wired");
+  assert.match(app, /sendNornsBridge/, "norns/Fates sender should be implemented");
+}
+
 checkJsSyntax();
 checkDuplicateIds();
 checkCssVars();
 checkMicroRenderer();
 checkWavetableContracts();
+checkTimelineContracts();
+checkListenerContracts();
+checkMicrocosmosContracts();
+checkControlBridgeContracts();
 console.log("dashboard smoke passed");

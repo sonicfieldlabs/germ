@@ -8,7 +8,7 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_NAME, SOUND_MATTER_CONCEPT, SOUND_MATTER_SCALES
 from server.registry import storage
@@ -16,6 +16,9 @@ from server.routes.control import _analyze_features, _read_pcm16_wav, _resolve_o
 from server.schemas import (
     ControlAudioAnalysisRequest,
     ControlFeatureSummary,
+    MicroBiomeResult,
+    MicroBiomeSaveRequest,
+    MicroBiomeSummary,
     MicroMatterProfileResult,
     MicroMatterRequest,
 )
@@ -130,6 +133,83 @@ def _micro_profile_items(limit: int = 100) -> list[dict[str, Any]]:
             data["_profile_file"] = storage.relative_path(path)
             items.append(data)
     return items
+
+
+def _biome_dir() -> Path:
+    path = storage.settings.micro_biome_dir
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _biome_summary(path: Path, data: dict[str, Any]) -> MicroBiomeSummary:
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    return MicroBiomeSummary(
+        id=str(data.get("id") or path.stem),
+        name=str(data.get("name") or path.stem),
+        biome_file=storage.relative_path(path),
+        created_at=data.get("created_at"),
+        updated_at=data.get("updated_at"),
+        germ_count=len(state.get("germs") if isinstance(state.get("germs"), list) else []),
+        module_count=len(state.get("modules") if isinstance(state.get("modules"), list) else []),
+    )
+
+
+def _read_biome(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=404, detail=f"Biome not found: {path.stem}") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="Biome file must contain a JSON object")
+    return data
+
+
+@router.get("/biomes", response_model=list[MicroBiomeSummary])
+def list_biomes() -> list[MicroBiomeSummary]:
+    items: list[MicroBiomeSummary] = []
+    for path in sorted(_biome_dir().glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        data = _read_biome(path)
+        items.append(_biome_summary(path, data))
+    return items
+
+
+@router.post("/biomes", response_model=MicroBiomeResult)
+def save_biome(request: MicroBiomeSaveRequest) -> MicroBiomeResult:
+    biome_id = safe_stem(request.name, fallback="biome")
+    path = _biome_dir() / f"{biome_id}.json"
+    existing = _read_biome(path) if path.exists() else {}
+    now = utc_now_iso()
+    artifact = {
+        "type": "micro_biome",
+        "id": biome_id,
+        "name": request.name,
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+        "state": request.state,
+    }
+    storage.write_json_atomic(path, artifact, touch_library=False)
+    return MicroBiomeResult(status="done", biome=_biome_summary(path, artifact), state=request.state)
+
+
+@router.get("/biomes/{biome_id}", response_model=MicroBiomeResult)
+def get_biome(biome_id: str) -> MicroBiomeResult:
+    path = _biome_dir() / f"{safe_stem(biome_id, fallback='biome')}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
+    data = _read_biome(path)
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    return MicroBiomeResult(status="done", biome=_biome_summary(path, data), state=state)
+
+
+@router.delete("/biomes/{biome_id}", response_model=MicroBiomeResult)
+def delete_biome(biome_id: str) -> MicroBiomeResult:
+    path = _biome_dir() / f"{safe_stem(biome_id, fallback='biome')}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
+    data = _read_biome(path)
+    summary = _biome_summary(path, data)
+    path.unlink()
+    return MicroBiomeResult(status="deleted", biome=summary, state={})
 
 
 @router.get("/matter-profiles")

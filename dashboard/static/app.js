@@ -1,5 +1,5 @@
 import { escapeHtml, iconSvg } from "./ui_utils.js";
-import { initOneBitDish } from "./dish.js?v=20260610-review-p3";
+import { initOneBitDish } from "./dish.js?v=20260610-ecosystem-p2";
 import { createGermSynthEngine } from "./wavetable_synth.js?v=20260610-wt-p1";
 
 /* Theme toggle */
@@ -959,6 +959,8 @@ function setBusy(isBusy) {
     "refreshBtn",
     "refreshLibraryBtn",
     "seedGerminateBtn",
+    "listenerEnhanceBtn",
+    "listenerScoreBtn",
 
   ].forEach((id) => {
     if ($(id)) $(id).disabled = isBusy;
@@ -1487,6 +1489,20 @@ function controlOscMarkup() {
         <p class="control-readout">UDP send is restricted to loopback, private, or link-local targets. Receive is explicit bridge ingestion; the server does not open a background UDP listener.</p>
         <pre class="log slim">${escapeHtml(JSON.stringify(controlState.bridgeStatus || {}, null, 2))}</pre>
       </section>
+      <section class="control-panel-card">
+        <h3>norns / Fates</h3>
+        <div class="control-form-grid compact">
+          <label>Host <input id="controlNornsHost" value="127.0.0.1" /></label>
+          <label>Port <input id="controlNornsPort" type="number" min="1" max="65535" value="10111" /></label>
+          <label>Gravity <input id="controlNornsGravity" type="range" min="0" max="1" step="0.01" value="0.04" /></label>
+          <label>Viscosity <input id="controlNornsViscosity" type="range" min="0" max="1" step="0.01" value="0.92" /></label>
+          <label>Energy <input id="controlNornsEnergy" type="range" min="0" max="1" step="0.01" value="0.5" /></label>
+        </div>
+        <div class="button-row">
+          <button type="button" data-action="control-norns-send">Send Fates State</button>
+          <button class="secondary" type="button" data-action="control-norns-spawn">Spawn Pulse</button>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -1792,6 +1808,24 @@ async function receiveOscMessage() {
   });
   await refreshControlLayer({ render: true });
   setState("OSC Receive", "ok", result.address || "");
+}
+
+async function sendNornsBridge(spawn = false) {
+  const result = await api("/control/osc/norns/send", {
+    method: "POST",
+    body: JSON.stringify({
+      host: $("controlNornsHost")?.value || $("controlOscHost")?.value || "127.0.0.1",
+      port: Number($("controlNornsPort")?.value || 10111),
+      profile: "fates",
+      gravity: Number($("controlNornsGravity")?.value || 0),
+      viscosity: Number($("controlNornsViscosity")?.value || 0),
+      energy: Number($("controlNornsEnergy")?.value || 0),
+      spawn,
+      metadata: { source: "dashboard" },
+    }),
+  });
+  await refreshControlLayer({ render: true });
+  setState("Fates Bridge", result.sent ? "ok" : "bad", `${result.messages?.length || 0} OSC message(s)`);
 }
 
 async function saveCvProfile() {
@@ -2382,7 +2416,39 @@ function savePetriState() {
   }
 }
 
+function petriStateTime(value) {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function syncPetriStateFromMetadata(items = libraryItems) {
+  let changed = false;
+  items.forEach((item) => {
+    const key = petriItemKey(item);
+    const ratings = item?.ratings && typeof item.ratings === "object" ? item.ratings : null;
+    if (!key || !ratings) return;
+    const state = petriState[key] || {};
+    const metadataTime = petriStateTime(ratings.updated_at || ratings.updatedAt);
+    const localTime = petriStateTime(state.updatedAt);
+    if (metadataTime < localTime) return;
+    const next = { ...state };
+    if (typeof ratings.favorite === "boolean") next.favorite = ratings.favorite;
+    if (ratings.rating !== undefined) next.rating = Number(ratings.rating) || 0;
+    if (ratings.play_count !== undefined) next.playCount = Number(ratings.play_count) || 0;
+    if (ratings.use_count !== undefined) next.useCount = Number(ratings.use_count) || 0;
+    if (ratings.harvest_count !== undefined) next.harvestCount = Number(ratings.harvest_count) || 0;
+    if (ratings.listener_score !== undefined) next.listenerScore = Number(ratings.listener_score) || 0;
+    if (ratings.updated_at || ratings.updatedAt) next.updatedAt = ratings.updated_at || ratings.updatedAt;
+    if (JSON.stringify(next) !== JSON.stringify(state)) {
+      petriState[key] = next;
+      changed = true;
+    }
+  });
+  if (changed) savePetriState();
+}
+
 function prunePetriState(items = libraryItems) {
+  syncPetriStateFromMetadata(items);
   const liveKeys = new Set(items.map(petriItemKey).filter(Boolean));
   let changed = false;
   for (const key of Object.keys(petriState)) {
@@ -2399,12 +2465,58 @@ function updatePetriState(key, nextState) {
   petriState[key] = {
     ...(petriState[key] || {}),
     ...nextState,
+    updatedAt: nextState.updatedAt || new Date().toISOString(),
   };
   savePetriState();
+  return petriState[key];
 }
 
 function petriItemKey(item) {
   return item.metadata_file || item.audio_file || item.id;
+}
+
+function petriFitnessForItem(item) {
+  const state = petriState[petriItemKey(item)] || {};
+  let score = 1;
+  if (state.favorite) score += 4;
+  score += Math.min(5, Number(state.rating || 0));
+  score += Math.min(3, Number(state.playCount || 0) * 0.35);
+  score += Math.min(3, Number(state.useCount || 0) * 0.75);
+  score += Math.min(2, Number(state.harvestCount || 0));
+  score += Math.min(2, Number(state.listenerScore || 0) * 2);
+  if (state.rejected) score -= 4;
+  return Math.max(0, score);
+}
+
+function petriRatingsPayload(key) {
+  const state = petriState[key] || {};
+  return {
+    favorite: Boolean(state.favorite),
+    rating: Number(state.rating || 0),
+    play_count: Number(state.playCount || 0),
+    use_count: Number(state.useCount || 0),
+    harvest_count: Number(state.harvestCount || 0),
+    listener_score: Number(state.listenerScore || 0),
+    fitness: Number(petriFitnessForItem(rackItemByKey(key) || {}).toFixed(3)),
+    updated_at: state.updatedAt || new Date().toISOString(),
+    source: "petri",
+  };
+}
+
+async function persistPetriRatings(key) {
+  const item = rackItemByKey(key);
+  if (!item?.audio_file) return;
+  await rackUpdateItemMetadata(item, { ratings: petriRatingsPayload(key) });
+}
+
+function recordPetriSignal(key, signal) {
+  const current = petriState[key] || {};
+  const countField = `${signal}Count`;
+  updatePetriState(key, {
+    [countField]: Number(current[countField] || 0) + 1,
+    [`last${signal[0].toUpperCase()}${signal.slice(1)}At`]: new Date().toISOString(),
+  });
+  persistPetriRatings(key).catch((error) => setState("Petri Sync", "muted", error.message));
 }
 
 function modeValuesForItem(item) {
@@ -2539,6 +2651,7 @@ function sortedPetriItems() {
   const sort = $("libSort")?.value || "date";
   const items = libraryItems.filter(petriMatches);
   return items.sort((a, b) => {
+    if (sort === "fitness") return petriFitnessForItem(b) - petriFitnessForItem(a);
     if (sort === "model") return String(a.model || "").localeCompare(String(b.model || ""));
     if (sort === "seed") return (Number(b.seed) || 0) - (Number(a.seed) || 0);
     if (sort === "duration") return (b.duration || 0) - (a.duration || 0);
@@ -3031,6 +3144,7 @@ async function rackUpdateItemMetadata(item, edits) {
         ? [...new Set([...(item.tags || []), ...edits.appendTags])]
         : (edits.tags ?? item.tags ?? metadata.tags ?? []),
       notes: edits.notes ?? item.notes ?? metadata.notes ?? "",
+      ratings: edits.ratings ?? item.ratings ?? metadata.ratings ?? {},
     }),
   });
   return result;
@@ -6506,6 +6620,7 @@ function timeModuleLabel(timeType) {
     clock_divider: "Clock Divider",
     humanizer: "Humanizer",
     polymeter: "Polymeter",
+    incubation_timeline: "Incubation Timeline",
     render_bus: "Render Bus",
     render_macros: "Render Macros",
   }[timeType] || "Time Module";
@@ -6580,6 +6695,73 @@ function canvasDefaultTimeSource(id = "source_1") {
   };
 }
 
+function canvasDefaultIncubationSource(asset = null, index = 0) {
+  return {
+    id: canvasId("timeline_src"),
+    label: asset ? timeAssetLabel(asset) : `Source ${index + 1}`,
+    prompt: "",
+    assetId: asset?.id || "",
+    volume: 1,
+    pan: 0,
+  };
+}
+
+function canvasDefaultIncubationEvent(sourceId = "", index = 0) {
+  return {
+    id: canvasId("timeline_evt"),
+    label: `Event ${index + 1}`,
+    sourceId,
+    startBeat: index,
+    durationBeats: 1,
+    gain: 1,
+    pan: 0,
+    pitchSemitones: 0,
+    reverse: false,
+    sourceStartSec: null,
+    sourceEndSec: null,
+  };
+}
+
+function normalizeIncubationSource(source = {}, index = 0) {
+  const fallback = canvasDefaultIncubationSource(null, index);
+  return {
+    ...fallback,
+    ...source,
+    id: source.id || fallback.id,
+    label: String(source.label || fallback.label),
+    assetId: source.assetId || "",
+    volume: Math.min(2, Math.max(0, Number(source.volume ?? fallback.volume))),
+    pan: Math.min(1, Math.max(-1, Number(source.pan ?? fallback.pan))),
+  };
+}
+
+function nullableSeconds(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : null;
+}
+
+function normalizeIncubationEvent(event = {}, index = 0, sourceIds = []) {
+  const totalBeats = Math.max(1, timeClockDerived().totalBeats || 16);
+  const fallback = canvasDefaultIncubationEvent(sourceIds[0] || "", index);
+  const sourceId = sourceIds.includes(event.sourceId) ? event.sourceId : fallback.sourceId;
+  return {
+    ...fallback,
+    ...event,
+    id: event.id || fallback.id,
+    label: String(event.label || fallback.label),
+    sourceId,
+    startBeat: Math.min(totalBeats, Math.max(0, Number(event.startBeat ?? fallback.startBeat) || 0)),
+    durationBeats: Math.min(totalBeats, Math.max(0.0625, Number(event.durationBeats ?? fallback.durationBeats) || 1)),
+    gain: Math.min(2, Math.max(0, Number(event.gain ?? fallback.gain))),
+    pan: Math.min(1, Math.max(-1, Number(event.pan ?? fallback.pan))),
+    pitchSemitones: Math.min(48, Math.max(-48, Number(event.pitchSemitones ?? fallback.pitchSemitones) || 0)),
+    reverse: Boolean(event.reverse),
+    sourceStartSec: nullableSeconds(event.sourceStartSec),
+    sourceEndSec: nullableSeconds(event.sourceEndSec),
+  };
+}
+
 function canvasDefaultPolymeterLanes() {
   return [
     { ...canvasDefaultTimeSource("poly_lane_a"), label: "Lane A", steps: 5, pulses: 3, rotation: 0, velocity: 1, prompt: "" },
@@ -6599,6 +6781,7 @@ function normalizedTimeType(timeType) {
     "clock_divider",
     "humanizer",
     "polymeter",
+    "incubation_timeline",
     "render_bus",
     "render_macros",
   ].includes(timeType) ? timeType : "colony_sequencer";
@@ -6699,6 +6882,20 @@ function normalizeTimeNode(node) {
         pan: Math.min(1, Math.max(-1, Number(lane.pan ?? fallback.pan))),
       };
     });
+  } else if (normalized.timeType === "incubation_timeline") {
+    normalized.label = normalized.label || "Incubation Timeline";
+    normalized.timelineSources = (Array.isArray(normalized.timelineSources) ? normalized.timelineSources : [])
+      .slice(0, 16)
+      .map(normalizeIncubationSource);
+    const sourceIds = normalized.timelineSources.map((source) => source.id);
+    normalized.timelineEvents = (Array.isArray(normalized.timelineEvents) ? normalized.timelineEvents : [])
+      .slice(0, 128)
+      .map((event, index) => normalizeIncubationEvent(event, index, sourceIds))
+      .filter((event) => !sourceIds.length || sourceIds.includes(event.sourceId));
+    normalized.selectedEventId = normalized.timelineEvents.some((event) => event.id === normalized.selectedEventId)
+      ? normalized.selectedEventId
+      : normalized.timelineEvents[0]?.id || "";
+    normalized.timelineZoom = Math.min(3, Math.max(0.5, Number(normalized.timelineZoom) || 1));
   } else if (normalized.timeType === "render_bus") {
     normalized.includeMode = normalized.includeMode === "selected" ? "selected" : "all";
     normalized.moduleIds = Array.isArray(normalized.moduleIds) ? normalized.moduleIds : [];
@@ -6750,6 +6947,7 @@ function canvasCreateTimeNode(timeType = "colony_sequencer", { x = null, y = nul
       clock_divider: 430,
       humanizer: 430,
       polymeter: 520,
+      incubation_timeline: 720,
       render_bus: 420,
       render_macros: 420,
     }[normalizedType] || 520,
@@ -6763,6 +6961,7 @@ function canvasCreateTimeNode(timeType = "colony_sequencer", { x = null, y = nul
       clock_divider: 260,
       humanizer: 280,
       polymeter: 360,
+      incubation_timeline: 430,
       render_bus: 220,
       render_macros: 260,
     }[normalizedType] || 470,
@@ -8269,6 +8468,87 @@ function canvasPolymeterMarkup(node, selected, style) {
   `;
 }
 
+function canvasIncubationTimelineMarkup(node, selected, style) {
+  node = normalizeTimeNode(node);
+  const derived = timeClockDerived();
+  const totalBeats = Math.max(1, derived.totalBeats || 16);
+  const sources = node.timelineSources || [];
+  const events = node.timelineEvents || [];
+  const sourceOptions = sources.map((source) => {
+    const asset = canvasAssetById(source.assetId);
+    const label = source.label || timeAssetLabel(asset);
+    return `<option value="${escapeHtml(source.id)}">${escapeHtml(label)}</option>`;
+  }).join("");
+  const beatMarkers = Array.from({ length: Math.min(33, Math.round(totalBeats) + 1) }, (_, index) => {
+    const beat = index * Math.max(1, Math.ceil(totalBeats / 32));
+    if (beat > totalBeats) return "";
+    return `<span style="left:${(beat / totalBeats) * 100}%">${beat + 1}</span>`;
+  }).join("");
+  const bars = events.map((event, index) => {
+    const source = sources.find((item) => item.id === event.sourceId);
+    const left = Math.max(0, Math.min(100, (event.startBeat / totalBeats) * 100));
+    const width = Math.max(3, Math.min(100 - left, (event.durationBeats / totalBeats) * 100));
+    const top = 12 + (index % 4) * 28;
+    const active = event.id === node.selectedEventId ? " active" : "";
+    return `<button class="incubation-event-bar${active}" type="button" data-action="time-incubation-select-event" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" style="left:${left}%;width:${width}%;top:${top}px" title="${escapeHtml(event.label)}">${escapeHtml(source?.label || event.label)}</button>`;
+  }).join("");
+  return `
+    <article class="canvas-node time-node incubation-node${selected}" data-node-id="${escapeHtml(node.id)}" style="${style}">
+      <div class="time-head">
+        <div>
+          <span>Timeline</span>
+          <strong>${escapeHtml(node.label || "Incubation Timeline")}</strong>
+          <small class="time-clock-readout">${escapeHtml(canvasTimeClockReadout())} | ${events.length} event(s)</small>
+        </div>
+        <div class="time-node-actions">
+          <button class="time-action" type="button" data-action="time-incubation-add-selected" data-node-id="${escapeHtml(node.id)}">Place Selected</button>
+          <button class="time-action" type="button" data-action="time-incubation-add-event" data-node-id="${escapeHtml(node.id)}">Add Event</button>
+          <button class="time-action primary" type="button" data-action="time-render-node" data-node-id="${escapeHtml(node.id)}">Render</button>
+          <button class="prompt-node-icon delete" type="button" data-action="canvas-delete-node" data-node-id="${escapeHtml(node.id)}" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
+        </div>
+      </div>
+      <div class="time-node-body incubation-body">
+        <div class="incubation-timeline-strip" style="min-height:${Math.max(132, 36 + Math.min(4, Math.max(1, events.length)) * 28)}px">
+          <div class="incubation-beat-markers">${beatMarkers}</div>
+          ${bars || `<span class="incubation-empty">No events</span>`}
+        </div>
+        <div class="incubation-source-list">
+          ${sources.map((source, index) => {
+            const asset = canvasAssetById(source.assetId);
+            return `
+              <div class="incubation-source-row">
+                <strong>${escapeHtml(source.label || timeAssetLabel(asset))}</strong>
+                <label>Gain <input class="time-incubation-source-param" data-node-id="${escapeHtml(node.id)}" data-source-id="${escapeHtml(source.id)}" data-param="volume" type="range" min="0" max="2" step="0.01" value="${escapeHtml(source.volume)}" /></label>
+                <label>Pan <input class="time-incubation-source-param" data-node-id="${escapeHtml(node.id)}" data-source-id="${escapeHtml(source.id)}" data-param="pan" type="range" min="-1" max="1" step="0.01" value="${escapeHtml(source.pan)}" /></label>
+                <button class="time-mini-toggle" type="button" data-action="time-incubation-remove-source" data-node-id="${escapeHtml(node.id)}" data-source-id="${escapeHtml(source.id)}">Remove</button>
+                <small>${escapeHtml(asset?.audioPath || "unassigned")}</small>
+              </div>
+            `;
+          }).join("") || `<span class="incubation-empty">Select a sound and place it.</span>`}
+        </div>
+        <div class="incubation-event-list">
+          ${events.map((event) => `
+            <div class="incubation-event-row${event.id === node.selectedEventId ? " active" : ""}">
+              <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="label" value="${escapeHtml(event.label)}" />
+              <select class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="sourceId">${sourceOptions.replace(`value="${escapeHtml(event.sourceId)}"`, `value="${escapeHtml(event.sourceId)}" selected`)}</select>
+              <label>Beat <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="startBeat" type="number" min="0" max="${escapeHtml(totalBeats)}" step="0.25" value="${escapeHtml(event.startBeat)}" /></label>
+              <label>Len <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="durationBeats" type="number" min="0.25" max="${escapeHtml(totalBeats)}" step="0.25" value="${escapeHtml(event.durationBeats)}" /></label>
+              <label>Gain <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="gain" type="range" min="0" max="2" step="0.01" value="${escapeHtml(event.gain)}" /></label>
+              <label>Pan <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="pan" type="range" min="-1" max="1" step="0.01" value="${escapeHtml(event.pan)}" /></label>
+              <label>Pitch <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="pitchSemitones" type="number" min="-48" max="48" step="0.1" value="${escapeHtml(event.pitchSemitones)}" /></label>
+              <label>In <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="sourceStartSec" type="number" min="0" step="0.01" value="${escapeHtml(event.sourceStartSec ?? "")}" /></label>
+              <label>Out <input class="time-incubation-event-param" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}" data-param="sourceEndSec" type="number" min="0" step="0.01" value="${escapeHtml(event.sourceEndSec ?? "")}" /></label>
+              <button class="time-mini-toggle${event.reverse ? " active" : ""}" type="button" data-action="time-incubation-toggle-reverse" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}">Rev</button>
+              <button class="time-mini-toggle" type="button" data-action="time-incubation-duplicate-event" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}">Dup</button>
+              <button class="time-mini-toggle" type="button" data-action="time-incubation-delete-event" data-node-id="${escapeHtml(node.id)}" data-event-id="${escapeHtml(event.id)}">Del</button>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 function canvasRenderBusMarkup(node, selected, style) {
   node = normalizeTimeNode(node);
   const modules = renderBusTargetNodes(node);
@@ -8360,6 +8640,7 @@ function canvasTimeNodeMarkup(node, selected, style) {
   else if (node.timeType === "clock_divider") markup = canvasClockDividerMarkup(node, selected, style);
   else if (node.timeType === "humanizer") markup = canvasHumanizerMarkup(node, selected, style);
   else if (node.timeType === "polymeter") markup = canvasPolymeterMarkup(node, selected, style);
+  else if (node.timeType === "incubation_timeline") markup = canvasIncubationTimelineMarkup(node, selected, style);
   else if (node.timeType === "render_bus") markup = canvasRenderBusMarkup(node, selected, style);
   else if (node.timeType === "render_macros") markup = canvasRenderMacrosMarkup(node, selected, style);
   else markup = canvasColonySequencerMarkup(node, selected, style);
@@ -12768,6 +13049,7 @@ function timeNodeSourceSlots(node) {
   if (node.timeType === "clock_divider") return node.source?.assetId ? [node.source] : [];
   if (node.timeType === "humanizer") return node.source?.assetId ? [node.source] : [];
   if (node.timeType === "polymeter") return (node.lanes || []).filter((lane) => lane.assetId);
+  if (node.timeType === "incubation_timeline") return (node.timelineSources || []).filter((source) => source.assetId);
   if (node.timeType === "render_bus") {
     return renderBusTargetNodes(node).flatMap((target) =>
       timeNodeSources(target).map((source) => ({
@@ -13011,6 +13293,32 @@ function timeBaseNodeEvents(node) {
         };
       }).filter(Boolean);
     });
+  }
+  if (node.timeType === "incubation_timeline") {
+    const sources = new Set((node.timelineSources || []).filter((source) => source.assetId).map((source) => source.id));
+    return (node.timelineEvents || [])
+      .filter((event) => sources.has(event.sourceId))
+      .map((event, index) => ({
+        tick: timeQuantizeTick(Number(event.startBeat || 0) * timeState.ppq),
+        source_id: event.sourceId,
+        lane: index,
+        velocity: 1,
+        gain: Math.min(2, Math.max(0, Number(event.gain ?? 1))),
+        pan: Math.min(1, Math.max(-1, Number(event.pan ?? 0))),
+        pitch_semitones: Math.min(48, Math.max(-48, Number(event.pitchSemitones ?? 0))),
+        source_start_sec: event.sourceStartSec,
+        source_end_sec: event.sourceEndSec,
+        duration_ticks: Math.max(1, Math.round(Number(event.durationBeats || 1) * timeState.ppq)),
+        reverse: Boolean(event.reverse),
+        fade_in_ms: 3,
+        fade_out_ms: 8,
+        metadata: {
+          timeline_event_id: event.id,
+          label: event.label,
+          start_beat: event.startBeat,
+          duration_beats: event.durationBeats,
+        },
+      }));
   }
   if (node.timeType === "render_bus") {
     return renderBusTargetNodes(node).flatMap((target) =>
@@ -13344,6 +13652,170 @@ function assignSelectedSoundToTimeSlot(nodeId, kind, index) {
   selectedCanvasNodeId = node.id;
   renderCanvas();
   setState("Source Assigned", "ok", timeAssetLabel(asset));
+}
+
+function selectedAudioAssetForTimeline() {
+  const selectedSound = canvasSelectedSoundNode() || canvasNodes.find((item) => item.id === canvasLastSelectedSoundNodeId && item.type === "sound");
+  const nodeAsset = selectedSound ? canvasAssetById(selectedSound.assetId) : null;
+  if (nodeAsset) return nodeAsset;
+  if (currentTrack?.audioPath) {
+    return canvasCreateAsset({
+      audioPath: currentTrack.audioPath,
+      metadataPath: currentTrack.metadataPath || currentTrack.metadata?.metadata_path || "",
+      metadata: currentTrack.metadata || {},
+      origin: "library",
+    });
+  }
+  return null;
+}
+
+function listenerPromptValue() {
+  return $("listenerPrompt")?.value || $("prompt")?.value || $("seedPrompt")?.value || "";
+}
+
+function listenerNegativeValue() {
+  return $("listenerNegative")?.value || $("negativePrompt")?.value || "";
+}
+
+function renderListenerSummary(result) {
+  const host = $("listenerSummary");
+  if (!host) return;
+  const chips = [];
+  if (result.rating) chips.push(`rating ${result.rating}`);
+  if (typeof result.score === "number") chips.push(`score ${Math.round(result.score * 100)}%`);
+  if (result.provider) chips.push(`provider ${result.provider}`);
+  (result.warnings || []).slice(0, 4).forEach((warning) => chips.push(warning));
+  host.innerHTML = chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("");
+}
+
+async function runListenerEnhance() {
+  beginWork("Listener", "Enhancing prompt");
+  const result = await api("/listener/enhance", {
+    method: "POST",
+    body: JSON.stringify({
+      provider: $("listenerProvider")?.value || "mock",
+      model: $("listenerModel")?.value || "heuristic-listener",
+      prompt: listenerPromptValue(),
+      negative_prompt: listenerNegativeValue(),
+    }),
+  });
+  if ($("listenerPrompt")) $("listenerPrompt").value = result.enhanced_prompt || result.prompt || "";
+  if ($("listenerNegative")) $("listenerNegative").value = result.negative_prompt || "";
+  if ($("prompt")) $("prompt").value = result.enhanced_prompt || result.prompt || "";
+  if ($("negativePrompt")) $("negativePrompt").value = result.negative_prompt || "";
+  renderListenerSummary(result);
+  if ($("listenerResult")) showJson($("listenerResult"), result);
+  finishWork("Listener Ready", "ok", `${result.suggestions?.length || 0} suggestion(s)`);
+}
+
+async function runListenerScoreSelected() {
+  const asset = selectedAudioAssetForTimeline();
+  if (!asset?.audioPath) throw new Error("Select a saved WAV source first.");
+  timeEnsureWavAsset(asset);
+  beginWork("Listener", timeAssetLabel(asset));
+  const result = await api("/listener/score", {
+    method: "POST",
+    body: JSON.stringify({
+      provider: $("listenerProvider")?.value || "mock",
+      model: $("listenerModel")?.value || "heuristic-listener",
+      prompt: listenerPromptValue(),
+      audio_path: asset.audioPath,
+      metadata_path: asset.metadataPath || "",
+    }),
+  });
+  renderListenerSummary(result);
+  if ($("listenerResult")) showJson($("listenerResult"), result);
+  const key = asset.metadataPath || asset.audioPath || asset.id;
+  if (key) {
+    updatePetriState(key, { listenerScore: Number(result.score || 0) });
+    persistPetriRatings(key).catch((error) => setState("Petri Sync", "muted", error.message));
+    renderHerbarium();
+  }
+  finishWork("Listener Score", result.score >= 0.42 ? "ok" : "muted", result.rating);
+}
+
+function saveIncubationTimelineNode(node) {
+  const index = canvasNodes.findIndex((item) => item.id === node?.id);
+  if (index === -1) return null;
+  canvasNodes[index] = normalizeTimeNode(node);
+  selectedCanvasNodeId = canvasNodes[index].id;
+  canvasSaveState();
+  updateTimeTransportUi();
+  renderCanvas();
+  return canvasNodes[index];
+}
+
+function addSelectedSoundToIncubationTimeline(nodeId) {
+  const node = canvasNodes.find((item) => item.id === nodeId);
+  if (!node || node.type !== "time" || node.timeType !== "incubation_timeline") return;
+  const asset = selectedAudioAssetForTimeline();
+  if (!asset) {
+    setState("Select Source", "muted", "Select a saved WAV source first.");
+    return;
+  }
+  try {
+    timeEnsureWavAsset(asset);
+  } catch (error) {
+    setState("Timeline Source", "bad", error.message);
+    return;
+  }
+  let source = (node.timelineSources || []).find((item) => item.assetId === asset.id);
+  if (!source) {
+    source = canvasDefaultIncubationSource(asset, (node.timelineSources || []).length);
+    node.timelineSources = [...(node.timelineSources || []), source];
+  }
+  const derived = timeClockDerived();
+  const lastEvent = [...(node.timelineEvents || [])].sort((a, b) => (a.startBeat || 0) - (b.startBeat || 0)).at(-1);
+  const startBeat = Math.min(Math.max(0, derived.totalBeats - 0.25), Number(lastEvent?.startBeat || 0) + Number(lastEvent?.durationBeats || 0));
+  const sourceBeats = asset.durationSec ? Math.max(0.25, Math.min(derived.totalBeats, asset.durationSec / derived.secondsPerBeat)) : 1;
+  const event = {
+    ...canvasDefaultIncubationEvent(source.id, (node.timelineEvents || []).length),
+    label: timeAssetLabel(asset),
+    startBeat,
+    durationBeats: Math.min(derived.totalBeats, Math.max(0.25, Math.min(sourceBeats, 4))),
+  };
+  node.timelineEvents = [...(node.timelineEvents || []), event];
+  node.selectedEventId = event.id;
+  saveIncubationTimelineNode(node);
+  setState("Placed On Timeline", "ok", timeAssetLabel(asset));
+}
+
+function addIncubationTimelineEvent(nodeId) {
+  const node = canvasNodes.find((item) => item.id === nodeId);
+  if (!node || node.type !== "time" || node.timeType !== "incubation_timeline") return;
+  const source = node.timelineSources?.[0];
+  if (!source) {
+    addSelectedSoundToIncubationTimeline(nodeId);
+    return;
+  }
+  const event = canvasDefaultIncubationEvent(source.id, (node.timelineEvents || []).length);
+  node.timelineEvents = [...(node.timelineEvents || []), event];
+  node.selectedEventId = event.id;
+  saveIncubationTimelineNode(node);
+}
+
+function updateIncubationTimelineParam(target) {
+  const node = canvasNodes.find((item) => item.id === target.dataset.nodeId);
+  if (!node || node.type !== "time" || node.timeType !== "incubation_timeline") return false;
+  const event = (node.timelineEvents || []).find((item) => item.id === target.dataset.eventId);
+  if (!event) return false;
+  const param = target.dataset.param;
+  if (param === "label" || param === "sourceId") event[param] = target.value;
+  else if (param === "sourceStartSec" || param === "sourceEndSec") event[param] = nullableSeconds(target.value);
+  else event[param] = Number(target.value);
+  node.selectedEventId = event.id;
+  saveIncubationTimelineNode(node);
+  return true;
+}
+
+function updateIncubationSourceParam(target) {
+  const node = canvasNodes.find((item) => item.id === target.dataset.nodeId);
+  if (!node || node.type !== "time" || node.timeType !== "incubation_timeline") return false;
+  const source = (node.timelineSources || []).find((item) => item.id === target.dataset.sourceId);
+  if (!source) return false;
+  source[target.dataset.param] = Number(target.value);
+  saveIncubationTimelineNode(node);
+  return true;
 }
 
 async function triggerTimePad(nodeId, padIndex, { fromKeyboard = false } = {}) {
@@ -16039,7 +16511,7 @@ function normalizeTabName(tabName) {
   if (tabName === "herbarium") return "petri";
   if (tabName === "lora") return "thermostat";
   if (tabName === "microcosmos" || tabName === "scope") return "onebit";
-  if (["seeds", "mutations", "pruning", "propagation", "strains", "variations", "listener", "lab"].includes(tabName)) return "chamber";
+  if (["seeds", "mutations", "pruning", "propagation", "strains", "variations", "lab"].includes(tabName)) return "chamber";
   return tabName;
 }
 
@@ -16247,6 +16719,14 @@ document.addEventListener("click", async (event) => {
       }
       if (action === "control-osc-receive") {
         await receiveOscMessage();
+        return;
+      }
+      if (action === "control-norns-send") {
+        await sendNornsBridge(false);
+        return;
+      }
+      if (action === "control-norns-spawn") {
+        await sendNornsBridge(true);
         return;
       }
       if (action === "control-cv-save-profile") {
@@ -16618,6 +17098,60 @@ document.addEventListener("click", async (event) => {
           renderCanvas();
         }
       }
+      if (action === "time-incubation-add-selected") {
+        addSelectedSoundToIncubationTimeline(button.dataset.nodeId);
+      }
+      if (action === "time-incubation-add-event") {
+        addIncubationTimelineEvent(button.dataset.nodeId);
+      }
+      if (action === "time-incubation-select-event") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        if (node?.type === "time" && node.timeType === "incubation_timeline") {
+          node.selectedEventId = button.dataset.eventId;
+          saveIncubationTimelineNode(node);
+        }
+      }
+      if (action === "time-incubation-toggle-reverse") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        const eventItem = node?.timelineEvents?.find((item) => item.id === button.dataset.eventId);
+        if (node?.type === "time" && eventItem) {
+          eventItem.reverse = !eventItem.reverse;
+          node.selectedEventId = eventItem.id;
+          saveIncubationTimelineNode(node);
+        }
+      }
+      if (action === "time-incubation-duplicate-event") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        const eventItem = node?.timelineEvents?.find((item) => item.id === button.dataset.eventId);
+        if (node?.type === "time" && eventItem) {
+          const copy = {
+            ...eventItem,
+            id: canvasId("timeline_evt"),
+            label: `${eventItem.label || "Event"} copy`,
+            startBeat: Math.min(timeClockDerived().totalBeats, Number(eventItem.startBeat || 0) + Number(eventItem.durationBeats || 1)),
+          };
+          node.timelineEvents = [...(node.timelineEvents || []), copy];
+          node.selectedEventId = copy.id;
+          saveIncubationTimelineNode(node);
+        }
+      }
+      if (action === "time-incubation-delete-event") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        if (node?.type === "time") {
+          node.timelineEvents = (node.timelineEvents || []).filter((item) => item.id !== button.dataset.eventId);
+          node.selectedEventId = node.timelineEvents[0]?.id || "";
+          saveIncubationTimelineNode(node);
+        }
+      }
+      if (action === "time-incubation-remove-source") {
+        const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);
+        if (node?.type === "time") {
+          node.timelineSources = (node.timelineSources || []).filter((item) => item.id !== button.dataset.sourceId);
+          node.timelineEvents = (node.timelineEvents || []).filter((item) => item.sourceId !== button.dataset.sourceId);
+          node.selectedEventId = node.timelineEvents[0]?.id || "";
+          saveIncubationTimelineNode(node);
+        }
+      }
       if (action === "time-generate-shot") {
         await generateTimeShot(button.dataset.nodeId, button.dataset.kind, Number(button.dataset.index));
       }
@@ -16908,6 +17442,7 @@ document.addEventListener("click", async (event) => {
         if (item?.audioPath) {
           await setCurrentTrack(item.audioPath, item.metadataPath, item.metadata);
           await $("audioPlayer")?.play?.();
+          recordPetriSignal(petriItemKey(item), "play");
         }
         return;
       }
@@ -16921,6 +17456,7 @@ document.addEventListener("click", async (event) => {
             origin: canvasOriginFromItem(item.metadata || {}),
             label: displayNameFromPath(item.audioPath),
           }, canvasBoardDefaultPoint());
+          recordPetriSignal(petriItemKey(item), "use");
           activateTab("chamber");
           setState("Source Added", "ok", item.audioPath);
         }
@@ -16987,11 +17523,13 @@ document.addEventListener("click", async (event) => {
       }
       if (action === "petri-favorite") {
         const key = button.dataset.key;
+        const nextFavorite = !petriState[key]?.favorite;
         updatePetriState(key, {
-          favorite: !petriState[key]?.favorite,
+          favorite: nextFavorite,
           rejected: false,
-          rating: petriState[key]?.favorite ? 0 : 5,
+          rating: nextFavorite ? 5 : 0,
         });
+        persistPetriRatings(key).catch((error) => setState("Petri Sync", "muted", error.message));
         renderPetri();
         renderHerbarium();
         return;
@@ -17034,6 +17572,7 @@ document.addEventListener("click", async (event) => {
           });
           await setCurrentTrack(item.audioPath, item.metadataPath, item.metadata);
           await audio?.play?.();
+          recordPetriSignal(petriItemKey(item), "play");
           button.innerHTML = iconSvg("stop");
           button.title = "Stop";
           button.setAttribute("aria-label", "Stop");
@@ -17071,6 +17610,7 @@ document.addEventListener("click", async (event) => {
           origin: canvasOriginFromItem(item.metadata || {}),
           label: displayNameFromPath(item.audioPath),
         }, canvasBoardDefaultPoint());
+        recordPetriSignal(petriItemKey(item), "use");
         activateTab("chamber");
         setState("Source Added", "ok", item.audioPath);
       }
@@ -17161,6 +17701,14 @@ if ($("timeModeToggle")) $("timeModeToggle").addEventListener("click", () => set
 });
 if ($("timeRenderSelectedBtn")) $("timeRenderSelectedBtn").addEventListener("click", () => {
   renderTimeNode().catch((error) => finishWork("Harvest Error", "bad", error.message));
+});
+if ($("listenerPrompt") && $("prompt")) $("listenerPrompt").value = $("prompt").value;
+if ($("listenerNegative") && $("negativePrompt")) $("listenerNegative").value = $("negativePrompt").value;
+if ($("listenerEnhanceBtn")) $("listenerEnhanceBtn").addEventListener("click", () => {
+  runListenerEnhance().catch((error) => finishWork("Listener Error", "bad", error.message));
+});
+if ($("listenerScoreBtn")) $("listenerScoreBtn").addEventListener("click", () => {
+  runListenerScoreSelected().catch((error) => finishWork("Listener Error", "bad", error.message));
 });
 if ($("canvasMasterRecordBtn")) $("canvasMasterRecordBtn").addEventListener("click", () => {
   canvasToggleMasterRecording().catch((error) => finishWork("Record Error", "bad", error.message));
@@ -17480,6 +18028,16 @@ document.addEventListener("input", (event) => {
       canvasSaveState();
       renderCanvas();
     }
+    return;
+  }
+  const incubationEventParam = event.target.closest?.(".time-incubation-event-param[data-node-id][data-event-id][data-param]");
+  if (incubationEventParam) {
+    updateIncubationTimelineParam(incubationEventParam);
+    return;
+  }
+  const incubationSourceParam = event.target.closest?.(".time-incubation-source-param[data-node-id][data-source-id][data-param]");
+  if (incubationSourceParam) {
+    updateIncubationSourceParam(incubationSourceParam);
     return;
   }
   const sliceParam = event.target.closest?.(".time-slice-param[data-node-id][data-param]");
@@ -18595,6 +19153,16 @@ document.addEventListener("change", (e) => {
   if (handleCanvasModulatorControl(e)) return;
   if (handleCanvasGeneticControl(e)) return;
   if (handleAudioSnapshotControl(e)) return;
+  const incubationEventParam = e.target.closest(".time-incubation-event-param[data-node-id][data-event-id][data-param]");
+  if (incubationEventParam) {
+    updateIncubationTimelineParam(incubationEventParam);
+    return;
+  }
+  const incubationSourceParam = e.target.closest(".time-incubation-source-param[data-node-id][data-source-id][data-param]");
+  if (incubationSourceParam) {
+    updateIncubationSourceParam(incubationSourceParam);
+    return;
+  }
   const timeSetting = e.target.closest(".time-node-setting[data-node-id][data-field]");
   if (timeSetting) {
     const node = canvasNodes.find((item) => item.id === timeSetting.dataset.nodeId);

@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#FAFAFA" />
     <title>germ — generative microsound system</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f7f7f4'/%3E%3Ccircle cx='22' cy='22' r='8' fill='%23476f5d'/%3E%3Ccircle cx='43' cy='20' r='5' fill='%23b9784a'/%3E%3Ccircle cx='38' cy='43' r='10' fill='%23292929'/%3E%3Cpath d='M26 27 35 37M30 20h12M25 42h12' stroke='%23292929' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260610-review-p2" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260610-ecosystem-p1" />
   </head>
   <body class="canvas-active no-left-sidebar">
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -49,6 +49,9 @@
                   </button>
                   <button class="transport-icon-button nav-item" type="button" data-tab="onebit" aria-label="Microcosmos" title="Microcosmos" data-help="Open Microcosmos — a scope-based world where sounds grow as germs.">
                     <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="13.5" r="2.3" fill="currentColor" stroke="none"/><circle cx="13" cy="8" r="1" fill="currentColor" stroke="none"/></svg>
+                  </button>
+                  <button class="transport-icon-button nav-item" type="button" data-tab="listener" aria-label="Listener" title="Listener" data-help="Open prompt enhancement and listening analysis.">
+                    <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a8 8 0 0116 0"/><path d="M7 12v3a3 3 0 003 3h1"/><path d="M17 12v3a3 3 0 01-3 3h-1"/><path d="M9 8c2-1.2 4-1.2 6 0"/><path d="M11 12h2"/></svg>
                   </button>
                 </div>
                 </div>
@@ -433,6 +436,11 @@
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPolymeter"></use></svg></span>
                             <strong class="source-tool-title">Polymeter</strong>
                             <span class="source-tool-desc">Layer unequal pulse cycles.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Incubation Timeline" aria-label="Add Incubation Timeline" data-action="canvas-source-option" data-source="time" data-time="incubation_timeline">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconTimeTab"></use></svg></span>
+                            <strong class="source-tool-title">Incubation Timeline</strong>
+                            <span class="source-tool-desc">Place sounds on a clock.</span>
                           </button>
                           <button class="source-tool-card" type="button" title="Render Bus" aria-label="Add Render Bus" data-action="canvas-source-option" data-source="time" data-time="render_bus">
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconBus"></use></svg></span>
@@ -995,6 +1003,12 @@
                   <button id="dishPipeBtn" class="dish-action-btn" type="button" aria-label="Pipe selected germ to canvas" title="Pipe selected germ to canvas" data-name="Pipe">
                     <span data-icon="pipe"></span>
                   </button>
+                  <button id="dishBiomeBtn" class="dish-action-btn" type="button" aria-label="Save or load biome" title="Biomes" data-name="Biomes">
+                    <span data-icon="library"></span>
+                  </button>
+                  <button id="dishSpectatorBtn" class="dish-action-btn" type="button" aria-label="Toggle spectator mode" title="Spectator" data-name="Spectator">
+                    <span data-icon="microscope"></span>
+                  </button>
                   <button id="dishResetBtn" class="dish-action-btn" type="button" aria-label="Clear Microcosmos" title="Clear Microcosmos" data-name="Clear">
                     <span data-icon="clear"></span>
                   </button>
@@ -1104,6 +1118,7 @@
                   </select>
                   <select id="libSort" class="petri-compact-select" aria-label="Sort" title="Sort order" data-help="Sort sounds by date, duration, model or seed.">
                     <option value="date">newest</option>
+                    <option value="fitness">fitness</option>
                     <option value="duration">duration</option>
                     <option value="model">model</option>
                     <option value="seed">seed</option>
@@ -1276,6 +1291,40 @@
             <pre id="loraResult" class="log"></pre>
           </section>
 
+          <!-- LISTENER -->
+          <section class="tab-panel" id="tab-listener">
+            <div class="panel-head">
+              <div>
+                <span class="eyebrow">Listener</span>
+                <h2>Prompt & Audio Critic</h2>
+              </div>
+              <div class="button-row">
+                <button id="listenerEnhanceBtn" class="secondary" type="button" data-help="Enhance the prompt and suggest a negative prompt.">Enhance</button>
+                <button id="listenerScoreBtn" type="button" data-help="Score the selected saved WAV against the prompt.">Score Selected</button>
+                <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Listener">Close</button>
+              </div>
+            </div>
+            <div class="listener-grid">
+              <label>Provider
+                <select id="listenerProvider">
+                  <option value="mock">mock</option>
+                  <option value="local">local</option>
+                </select>
+              </label>
+              <label>Model
+                <input id="listenerModel" value="heuristic-listener" />
+              </label>
+              <label class="listener-wide">Prompt
+                <textarea id="listenerPrompt" rows="4">wet glass insects</textarea>
+              </label>
+              <label class="listener-wide">Negative
+                <textarea id="listenerNegative" rows="3">speech, vocals, music</textarea>
+              </label>
+            </div>
+            <div id="listenerSummary" class="listener-summary"></div>
+            <pre id="listenerResult" class="log slim"></pre>
+          </section>
+
           <!-- DIAGNOSTICS -->
           <section class="tab-panel" id="tab-diagnostics">
             <div class="panel-head">
@@ -1391,6 +1440,6 @@
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260610-wt-p1"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260610-ecosystem-p2"></script>
   </body>
 </html>

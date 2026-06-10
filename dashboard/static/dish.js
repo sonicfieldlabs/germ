@@ -138,6 +138,8 @@ let generationEpoch = 0;
 let gravity = 0.04;
 let viscosity = FRICTION;
 let harvestScope = "scope";
+let spectatorMode = false;
+let spectatorPhase = 0;
 let pointer = { dragging: null, draggingModule: null, panning: false, lastX: 0, lastY: 0, downX: 0, downY: 0, moved: false };
 let cardFlow = null; // active word-card session
 let modulePalettePoint = null;
@@ -231,6 +233,31 @@ function updateCamera(dt) {
   camera.y += (cameraTarget.y - camera.y) * ease;
   camera.zoom += (cameraTarget.zoom - camera.zoom) * ease;
   clampCamera(camera);
+}
+
+function updateSpectatorCamera(dt) {
+  if (!spectatorMode) return;
+  spectatorPhase += dt;
+  const living = germs.filter((g) => g.state === "living" || g.state === "dormant");
+  const focus = living.length ? living[Math.floor(spectatorPhase / 6) % living.length] : null;
+  const orbit = spectatorPhase * 0.18;
+  const center = focus ? { x: focus.x, y: focus.y } : DISH;
+  setCameraTarget({
+    x: center.x + Math.cos(orbit) * 180,
+    y: center.y + Math.sin(orbit * 0.83) * 130,
+    zoom: clamp(MICRO_WORLD_ZOOM + Math.sin(orbit * 0.7) * 0.12, MICRO_WORLD_ZOOM, 1.15),
+  });
+}
+
+function toggleSpectatorMode() {
+  spectatorMode = !spectatorMode;
+  dom.panel?.classList.toggle("is-spectator", spectatorMode);
+  dom.spectatorBtn?.classList.toggle("is-active", spectatorMode);
+  if (spectatorMode) {
+    setMicroMode("world", { announce: false });
+    spectatorPhase = 0;
+  }
+  E.finishWork?.(spectatorMode ? "Spectator On" : "Spectator Off", "ok", spectatorMode ? "Auto camera enabled." : "Manual camera restored.");
 }
 
 function currentListeningRadius() {
@@ -1658,6 +1685,7 @@ function frame(ts) {
   if (!running) return;
   const dt = Math.min(0.05, (ts - lastFrame) / 1000 || 0.016);
   lastFrame = ts;
+  updateSpectatorCamera(dt);
   updateCamera(dt);
   stepPhysics(dt);
   updateSpatialAudio(dt);
@@ -3457,32 +3485,36 @@ function randomizeDish() {
 }
 
 // ---- Persistence ---------------------------------------------------------
+function dishSnapshotState() {
+  return {
+    version: 2,
+    camera: { ...camera },
+    microMode,
+    energy: energyLevel,
+    chemistry,
+    harvestScope,
+    gravity,
+    viscosity,
+    modules: modules.map((m) => ({
+      id: m.id,
+      type: m.type,
+      x: m.x,
+      y: m.y,
+      radius: m.radius,
+      loop: m.loop !== false,
+      params: m.params || {},
+    })),
+    germs: germs.filter((g) => g.assetId).map((g) => ({
+      id: g.id, assetId: g.assetId, x: g.x, y: g.y, label: g.label,
+      state: g.state === "mutating" ? "dormant" : g.state, volume: g.volume,
+      genome: g.genome, parents: g.parents,
+    })),
+  };
+}
+
 function saveDish() {
   try {
-    const data = {
-      version: 2,
-      camera: { ...camera },
-      microMode,
-      energy: energyLevel,
-      chemistry,
-      harvestScope,
-      gravity,
-      viscosity,
-      modules: modules.map((m) => ({
-        id: m.id,
-        type: m.type,
-        x: m.x,
-        y: m.y,
-        radius: m.radius,
-        loop: m.loop !== false,
-        params: m.params || {},
-      })),
-      germs: germs.filter((g) => g.assetId).map((g) => ({
-        id: g.id, assetId: g.assetId, x: g.x, y: g.y, label: g.label,
-        state: g.state === "mutating" ? "dormant" : g.state, volume: g.volume,
-        genome: g.genome, parents: g.parents,
-      })),
-    };
+    const data = dishSnapshotState();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch { /* storage full / disabled */ }
 }
@@ -3520,6 +3552,79 @@ function loadDish() {
     } catch { /* storage unavailable */ }
     germs = [];
     showCorruptDishRecovery();
+  }
+}
+
+async function saveBiome() {
+  saveDish();
+  const name = window.prompt("Biome name", `biome-${new Date().toISOString().slice(0, 10)}`);
+  if (!name) return;
+  const result = await E.api("/micro/biomes", {
+    method: "POST",
+    body: JSON.stringify({ name, state: dishSnapshotState() }),
+  });
+  E.finishWork?.("Biome Saved", "ok", result.biome?.name || name);
+}
+
+async function loadBiome(biomeId) {
+  const result = await E.api(`/micro/biomes/${encodeURIComponent(biomeId)}`);
+  stopHarvest();
+  clearQueuedGeneration();
+  germs.forEach(disposeGermAudio);
+  germs = [];
+  modules = [];
+  effects = [];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(result.state || {}));
+  loadDish();
+  syncControls();
+  saveDish();
+  E.finishWork?.("Biome Loaded", "ok", result.biome?.name || biomeId);
+}
+
+async function deleteBiome(biomeId) {
+  if (!window.confirm(`Delete biome "${biomeId}"?`)) return;
+  await E.api(`/micro/biomes/${encodeURIComponent(biomeId)}`, { method: "DELETE" });
+  E.finishWork?.("Biome Deleted", "ok", biomeId);
+  openBiomeLibrary();
+}
+
+async function openBiomeLibrary() {
+  const host = dom.cards;
+  if (!host) return;
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="dish-cards-inner" style="max-width: 680px; width: 94%;">
+      <span class="dish-cards-kicker">Biomes</span>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+        <button id="dishSaveBiomeBtn" class="dish-pixel-button" type="button">Save Current</button>
+      </div>
+      <div id="dishBiomeList" class="dish-module-grid" style="width: 100%; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));"></div>
+      <button class="dish-cards-cancel" type="button" data-card-cancel>esc</button>
+    </div>`;
+  host.querySelector("[data-card-cancel]")?.addEventListener("click", () => { host.hidden = true; });
+  host.querySelector("#dishSaveBiomeBtn")?.addEventListener("click", () => {
+    saveBiome().then(openBiomeLibrary).catch((error) => E.finishWork?.("Biome Error", "bad", error.message));
+  });
+  const list = host.querySelector("#dishBiomeList");
+  try {
+    const biomes = await E.api("/micro/biomes");
+    list.innerHTML = (biomes || []).map((biome) => `
+      <div class="dish-module-card" style="cursor: default;">
+        <strong>${E.escapeHtml(biome.name)}<span>${biome.germ_count} germ(s) / ${biome.module_count} module(s)</span></strong>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; grid-column: 1 / -1;">
+          <button class="dish-pixel-button" type="button" data-biome-load="${E.escapeHtml(biome.id)}">Load</button>
+          <button class="dish-pixel-button" type="button" data-biome-delete="${E.escapeHtml(biome.id)}">Delete</button>
+        </div>
+      </div>
+    `).join("") || `<span class="dish-cards-trail">No saved biomes</span>`;
+    list.querySelectorAll("[data-biome-load]").forEach((btn) => {
+      btn.addEventListener("click", () => loadBiome(btn.dataset.biomeLoad).catch((error) => E.finishWork?.("Biome Error", "bad", error.message)));
+    });
+    list.querySelectorAll("[data-biome-delete]").forEach((btn) => {
+      btn.addEventListener("click", () => deleteBiome(btn.dataset.biomeDelete).catch((error) => E.finishWork?.("Biome Error", "bad", error.message)));
+    });
+  } catch (error) {
+    list.innerHTML = `<span class="dish-cards-trail">${E.escapeHtml(error.message)}</span>`;
   }
 }
 
@@ -3788,6 +3893,8 @@ export function initOneBitDish(engine) {
     expandBtn: document.getElementById("dishExpandBtn"),
     worldLabel: document.getElementById("dishWorldLabel"),
     pipeBtn: document.getElementById("dishPipeBtn"),
+    biomeBtn: document.getElementById("dishBiomeBtn"),
+    spectatorBtn: document.getElementById("dishSpectatorBtn"),
     resetBtn: document.getElementById("dishResetBtn"),
     settingsBtn: document.getElementById("dishSettingsBtn"),
     exitBtn: document.getElementById("dishExitBtn"),
@@ -3818,6 +3925,8 @@ export function initOneBitDish(engine) {
   dom.harvestBtn?.addEventListener("click", () => toggleHarvest());
   dom.expandBtn?.addEventListener("click", () => toggleMicroMode());
   dom.pipeBtn?.addEventListener("click", () => pipeSelectedToCanvas());
+  dom.biomeBtn?.addEventListener("click", () => openBiomeLibrary().catch((error) => E.finishWork?.("Biome Error", "bad", error.message)));
+  dom.spectatorBtn?.addEventListener("click", () => toggleSpectatorMode());
   dom.resetBtn?.addEventListener("click", () => resetDish());
   dom.settingsBtn?.addEventListener("click", () => openMicrocosmosSettings());
   dom.exitBtn?.addEventListener("click", () => E.activateTab("chamber"));

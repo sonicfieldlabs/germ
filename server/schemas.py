@@ -19,6 +19,7 @@ TimeModuleType = Literal[
     "clock_divider",
     "humanizer",
     "polymeter",
+    "incubation_timeline",
     "render_bus",
     "render_macros",
 ]
@@ -164,6 +165,27 @@ class MicroMatterProfileResult(BaseModel):
     descriptors: dict[str, Any] = Field(default_factory=dict)
     module_suggestions: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None = None
+
+
+class MicroBiomeSaveRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    state: dict[str, Any] = Field(default_factory=dict)
+
+
+class MicroBiomeSummary(BaseModel):
+    id: str
+    name: str
+    biome_file: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    germ_count: int = 0
+    module_count: int = 0
+
+
+class MicroBiomeResult(BaseModel):
+    status: Literal["done", "deleted"]
+    biome: MicroBiomeSummary | None = None
+    state: dict[str, Any] = Field(default_factory=dict)
 
 
 class WavetableConvertRequest(BaseModel):
@@ -609,6 +631,54 @@ class TimeRenderRequest(BaseModel):
         return self
 
 
+ListenerProvider = Literal["mock", "local", "api"]
+ListenerTask = Literal["prompt_enhance", "negative_prompt", "curate", "repair"]
+
+
+class ListenerEnhanceRequest(BaseModel):
+    provider: ListenerProvider = "mock"
+    task: ListenerTask = "prompt_enhance"
+    prompt: str = Field(default="", max_length=2000)
+    negative_prompt: str = Field(default="", max_length=2000)
+    model: str = "heuristic-listener"
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListenerEnhanceResult(BaseModel):
+    provider: ListenerProvider
+    model: str
+    task: ListenerTask
+    prompt: str
+    enhanced_prompt: str
+    negative_prompt: str
+    suggestions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    repair_proposals: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ListenerScoreRequest(BaseModel):
+    provider: ListenerProvider = "mock"
+    prompt: str = Field(default="", max_length=2000)
+    audio_path: str
+    metadata_path: str | None = None
+    model: str = "heuristic-listener"
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListenerScoreResult(BaseModel):
+    provider: ListenerProvider
+    model: str
+    prompt: str
+    audio_path: str
+    score: float = Field(ge=0.0, le=1.0)
+    rating: Literal["excellent", "good", "fair", "weak"]
+    tags: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    repair_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    features: dict[str, Any] = Field(default_factory=dict)
+
+
 class JobStatus(BaseModel):
     job_id: str
     status: str
@@ -866,6 +936,27 @@ class ControlOSCResult(BaseModel):
     address: str
     byte_count: int = 0
     sent: bool = False
+    error: str | None = None
+
+
+class ControlNornsBridgeRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = Field(default=10111, ge=1, le=65535)
+    profile: Literal["norns", "fates"] = "fates"
+    gravity: float | None = Field(default=None, ge=0.0, le=1.0)
+    viscosity: float | None = Field(default=None, ge=0.0, le=1.0)
+    energy: float | None = Field(default=None, ge=0.0, le=1.0)
+    spawn: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlNornsBridgeResult(BaseModel):
+    status: Literal["sent", "error"]
+    host: str
+    port: int
+    profile: str
+    sent: bool = False
+    messages: list[ControlOSCResult] = Field(default_factory=list)
     error: str | None = None
 
 

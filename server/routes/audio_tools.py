@@ -120,6 +120,7 @@ class AudioToolRequest(BaseModel):
     culture_id: str | None = None
     tags: list[str] = Field(default_factory=list)
     notes: str | None = None
+    ratings: dict[str, Any] = Field(default_factory=dict)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("end_sec")
@@ -763,6 +764,9 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
         data["tags"] = request.tags
     if request.notes is not None:
         data["notes"] = request.notes
+    if request.ratings:
+        current_ratings = data.get("ratings") if isinstance(data.get("ratings"), dict) else {}
+        data["ratings"] = {**current_ratings, **request.ratings}
     data["updated_at"] = utc_now_iso()
     data["tool_operation"] = "metadata"
     operation_params = data.get("operation_params") if isinstance(data.get("operation_params"), dict) else {}
