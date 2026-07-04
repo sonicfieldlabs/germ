@@ -1,0 +1,140 @@
+"""The oída→germ akousma bridge: /import modes + /akousma JSON surface.
+
+Runs against an isolated temp akousmata store (AKOUSMATA_PATH) so the real shared
+store is never touched, mirroring conftest's output isolation.
+"""
+from __future__ import annotations
+
+import io
+import wave
+
+import akousma
+import pytest
+from fastapi.testclient import TestClient
+
+from server.main import app
+
+
+def _wav_bytes(seconds: float = 0.05, rate: int = 8000) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(seconds * rate))
+    return buf.getvalue()
+
+
+@pytest.fixture()
+def store_path(tmp_path, monkeypatch):
+    path = tmp_path / "akousmata"
+    monkeypatch.setenv("AKOUSMATA_PATH", str(path))
+    return path
+
+
+@pytest.fixture()
+def seeded(store_path):
+    """One oída listen record with real audio in the isolated store."""
+    with akousma.AkousmataStore(store_path) as store:
+        uri = store.put_audio(_wav_bytes(), ext="wav")
+        record = akousma.new_akousma(
+            audio={"asset_id": "cap_1", "uri": uri, "duration_seconds": 0.05},
+            originating_app="oida",
+            source_type="recorded",
+            origin="live-input",
+            listening={
+                "oida.signal": {"class": "tonal", "caption": "steady low hum"},
+                "akouo.describe": {"summary": "warm synthesizer drone"},
+            },
+            tags=["drone"],
+        )
+        store.put(record)
+    return record
+
+
+@pytest.fixture()
+def client():
+    return TestClient(app)
+
+
+def test_record_endpoint_roundtrip(client, seeded):
+    response = client.get(f"/akousma/record/{seeded['akousma_id']}")
+    assert response.status_code == 200
+    assert response.json()["akousma_id"] == seeded["akousma_id"]
+
+
+def test_record_404(client, store_path):
+    assert client.get("/akousma/record/akm_missing").status_code == 404
+
+
+def test_import_rejects_unknown_mode(client, seeded):
+    response = client.get(f"/import?akousma={seeded['akousma_id']}&mode=bogus")
+    assert response.status_code == 400
+
+
+def test_import_as_prompt_derives_from_listening(client, seeded):
+    response = client.get(f"/import?akousma={seeded['akousma_id']}&mode=prompt&format=json")
+    assert response.status_code == 200
+    prompt = response.json()["prompt"]
+    assert "warm synthesizer drone" in prompt  # preferred akouo.describe namespace
+
+    page = client.get(f"/import?akousma={seeded['akousma_id']}&mode=prompt")
+    assert page.status_code == 200
+    assert "opened as prompt" in page.text
+
+
+def test_import_as_sound_lands_in_germ_library(client, seeded, store_path):
+    response = client.get(f"/import?akousma={seeded['akousma_id']}&mode=sound&format=json")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "done"
+    assert payload["audio_files"], "import should produce a germ library file"
+
+    # The shared record now carries the germ.import extension.
+    with akousma.AkousmataStore(store_path) as store:
+        updated = store.get(seeded["akousma_id"])
+    assert updated["extensions"]["germ.import"]["job_id"] == payload["job_id"]
+
+
+def test_generation_writes_child_and_lineage_resolves(client, seeded, store_path, tmp_path):
+    generated = tmp_path / "generated.wav"
+    generated.write_bytes(_wav_bytes())
+
+    response = client.post(
+        "/akousma/generation",
+        json={
+            "audio_path": str(generated),
+            "prompt": "make it metallic",
+            "model": "stable-audio-3",
+            "operation": "audio-to-audio",
+            "parent_akousma_ids": [seeded["akousma_id"]],
+            "tags": ["metallic"],
+        },
+    )
+    assert response.status_code == 200
+    child_id = response.json()["akousma_id"]
+    child = response.json()["record"]
+    assert child["provenance"]["originating_app"] == "germ"
+    assert child["lineage"]["parent_akousma_ids"] == [seeded["akousma_id"]]
+
+    lineage = client.get(f"/akousma/lineage/{child_id}").json()
+    assert [p["akousma_id"] for p in lineage["parents"]] == [seeded["akousma_id"]]
+    assert lineage["ancestor_ids"] == [seeded["akousma_id"]]
+
+    parent_lineage = client.get(f"/akousma/lineage/{seeded['akousma_id']}").json()
+    assert [c["akousma_id"] for c in parent_lineage["children"]] == [child_id]
+
+    explorer = client.get(f"/import?akousma={child_id}&mode=lineage")
+    assert explorer.status_code == 200
+    assert "lineage explorer" in explorer.text
+    assert seeded["akousma_id"] in explorer.text
+
+
+def test_generation_rejects_unknown_parent(client, store_path, tmp_path):
+    generated = tmp_path / "generated.wav"
+    generated.write_bytes(_wav_bytes())
+    response = client.post(
+        "/akousma/generation",
+        json={"audio_path": str(generated), "parent_akousma_ids": ["akm_missing"]},
+    )
+    assert response.status_code == 404

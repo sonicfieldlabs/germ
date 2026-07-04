@@ -9,6 +9,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from server.config import get_settings
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_DESCRIPTION, PRODUCT_NAME
 from server.routes import (
+    akousma,
     audio_tools,
     audio_to_audio,
     continue_audio,
@@ -69,6 +70,7 @@ app.add_middleware(PerformanceMiddleware)
 app.include_router(health.router)
 app.include_router(diagnostics.router)
 app.include_router(earworm.router)
+app.include_router(akousma.router)
 app.include_router(huggingface.router)
 app.include_router(models.router)
 app.include_router(performance.router)

@@ -40,6 +40,44 @@ analysis, render, provenance, and retention records.
 When `persist=true`, the session JSON is written under `output/metadata/` and the
 response includes `session_file` plus the inline `session` object.
 
+## GET /import
+
+The oída→germ handoff (the three buttons). Query params: `akousma` (record id in the
+shared akousmata store), `mode` (`sound` | `prompt` | `lineage`), `format`
+(`html` default, or `json`). `sound` imports the record's audio into germ's library
+via the standard audio-import flow and stamps `extensions["germ.import"]` back onto
+the shared record; `prompt` derives a generation prompt from the record's listening
+block; `lineage` opens the lineage explorer (parents, children, ancestry).
+
+## GET /akousma/record/{akousma_id}
+
+Returns the raw akousma record from the shared store (404 if unknown, 503 if the
+`akousma` package is not installed).
+
+## GET /akousma/lineage/{akousma_id}
+
+Returns `{record, parents, children, ancestor_ids}` with parent/child records
+resolved from the shared store — the data behind the lineage explorer.
+
+## POST /akousma/generation
+
+Writes a germ generation into the shared store as a new akousma whose
+`lineage.parent_akousma_ids` point at its sources.
+
+```json
+{
+  "audio_path": "output/audio/example.wav",
+  "prompt": "make it metallic",
+  "model": "stable-audio-3",
+  "operation": "audio-to-audio",
+  "parent_akousma_ids": ["akm_..."],
+  "tags": ["metallic"]
+}
+```
+
+Unknown parent ids are rejected with 404; the response returns `akousma_id` plus the
+full record. The audio stays in place (referenced by `file://` uri + content hash).
+
 ## GET /huggingface/status
 
 Checks Hugging Face CLI auth for the gated Stable Audio 3 Python-provider weights.
