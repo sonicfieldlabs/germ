@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SA3_REPO_DIR="${GERMINATOR_MLX_REPO_DIR:-$PROJECT_ROOT/vendor/stable-audio-3}"
+SA3_REPO_DIR="${GERM_MLX_REPO_DIR:-${GERMINATOR_MLX_REPO_DIR:-$PROJECT_ROOT/vendor/stable-audio-3}}"
 
 if [ "$(uname -m)" != "arm64" ]; then
   echo "The MLX provider requires Apple Silicon (arm64)." >&2
@@ -36,11 +36,10 @@ cat <<EOF
 
 MLX provider setup complete.
 
-Set GERMINATOR_MLX_REPO_DIR if the repo is not under this project:
-  export GERMINATOR_MLX_REPO_DIR="$SA3_REPO_DIR"
+Set GERM_MLX_REPO_DIR if the repo is not under this project:
+  export GERM_MLX_REPO_DIR="$SA3_REPO_DIR"
 
 Run:
   cd "$PROJECT_ROOT"
   ./scripts/run_server.sh
 EOF
-

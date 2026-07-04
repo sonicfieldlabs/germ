@@ -53,7 +53,7 @@ The MLX provider requires Apple Silicon and the official `optimized/mlx/sa3` CLI
 If the official repo is outside this project:
 
 ```bash
-export GERMINATOR_MLX_REPO_DIR=/path/to/stable-audio-3
+export GERM_MLX_REPO_DIR=/path/to/stable-audio-3
 ```
 
 ## Generation Returns Error Metadata

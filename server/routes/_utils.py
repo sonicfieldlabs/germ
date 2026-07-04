@@ -92,21 +92,6 @@ def run_provider_method_with_existing_job(
         method = getattr(provider, method_name)
         # Providers record their own result; no extra record_result needed.
         result = method(request_model)
-        if cancel_event and cancel_event.is_set():
-            result = GenerationResult(
-                job_id=job_id,
-                status="cancelled",
-                audio_files=result.audio_files,
-                metadata_files=result.metadata_files,
-                seed=result.seed,
-                duration=result.duration,
-                sample_rate=result.sample_rate,
-                error=result.error or "job cancelled",
-                provider=result.provider or getattr(request_model, "provider", None),
-                model=result.model or getattr(request_model, "model", None),
-                mode=result.mode or mode,
-            )
-            storage.record_result(result)
         storage.update_job(
             job_id,
             metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
@@ -237,16 +222,33 @@ def pop_transient_upload_paths(payload: dict[str, Any]) -> list[Path]:
     paths: list[Path] = []
     legacy_path = payload.pop("_transient_upload_path", None)
     if legacy_path:
-        paths.append(Path(legacy_path))
+        path = _safe_transient_upload_path(legacy_path)
+        if path:
+            paths.append(path)
     for item in payload.pop("_transient_upload_paths", []) or []:
         if item:
-            paths.append(Path(item))
+            path = _safe_transient_upload_path(item)
+            if path:
+                paths.append(path)
     return paths
+
+
+def _safe_transient_upload_path(path: str | Path) -> Path | None:
+    try:
+        resolved = storage.resolve_path(path)
+    except (OSError, RuntimeError):
+        return None
+    if not storage.is_within(resolved, settings.scratch_dir):
+        return None
+    return resolved
 
 
 def cleanup_transient_uploads(paths: list[Path]) -> None:
     for path in paths:
-        path.unlink(missing_ok=True)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def parse_ranges_text(value: str | list | None) -> list[tuple[float, float]]:

@@ -14,16 +14,27 @@ load_dotenv(PROJECT_ROOT / ".env")
 DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "testserver"}
 
 
-def _path_from_env(name: str, default: str) -> Path:
-    value = os.getenv(name, default)
+def _env(name: str, default: str | None = None, *, legacy: str | None = None) -> str | None:
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    if legacy:
+        legacy_value = os.getenv(legacy)
+        if legacy_value is not None:
+            return legacy_value
+    return default
+
+
+def _path_from_env(name: str, default: str, *, legacy: str | None = None) -> Path:
+    value = _env(name, default, legacy=legacy) or default
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     return path
 
 
-def _path_list_from_env(name: str, defaults: list[Path]) -> list[Path]:
-    raw = os.getenv(name)
+def _path_list_from_env(name: str, defaults: list[Path], *, legacy: str | None = None) -> list[Path]:
+    raw = _env(name, legacy=legacy)
     if not raw:
         return [path.resolve() for path in defaults]
     paths: list[Path] = []
@@ -44,12 +55,28 @@ class Settings:
 
     def __init__(self) -> None:
         self.project_root = PROJECT_ROOT
-        self.host = os.getenv("GERMINATOR_HOST", "127.0.0.1")
-        self.port = int(os.getenv("GERMINATOR_PORT", "8765"))
-        self.active_provider = os.getenv("GERMINATOR_ACTIVE_PROVIDER", "mock")
-        self.default_model = os.getenv("GERMINATOR_DEFAULT_MODEL", "small-sfx")
-        self.default_device = os.getenv("GERMINATOR_DEFAULT_DEVICE", "auto")
-        self.output_root = _path_from_env("GERMINATOR_OUTPUT_DIR", "output")
+        self.host = _env("GERM_HOST", "127.0.0.1", legacy="GERMINATOR_HOST") or "127.0.0.1"
+        self.port = int(_env("GERM_PORT", "8765", legacy="GERMINATOR_PORT") or "8765")
+        self.active_provider = _env(
+            "GERM_ACTIVE_PROVIDER",
+            "mock",
+            legacy="GERMINATOR_ACTIVE_PROVIDER",
+        ) or "mock"
+        self.default_model = _env(
+            "GERM_DEFAULT_MODEL",
+            "small-sfx",
+            legacy="GERMINATOR_DEFAULT_MODEL",
+        ) or "small-sfx"
+        self.default_device = _env(
+            "GERM_DEFAULT_DEVICE",
+            "auto",
+            legacy="GERMINATOR_DEFAULT_DEVICE",
+        ) or "auto"
+        self.output_root = _path_from_env(
+            "GERM_OUTPUT_DIR",
+            "output",
+            legacy="GERMINATOR_OUTPUT_DIR",
+        )
         self.audio_dir = self.output_root / "audio"
         self.metadata_dir = self.output_root / "metadata"
         self.upload_dir = self.output_root / "uploads"
@@ -60,33 +87,85 @@ class Settings:
         self.wavetable_preview_dir = self.wavetable_dir / "previews"
         self.micro_biome_dir = self.output_root / "micro" / "biomes"
         self.allowed_input_roots = _path_list_from_env(
-            "GERMINATOR_ALLOWED_INPUT_ROOTS",
+            "GERM_ALLOWED_INPUT_ROOTS",
             [self.output_root],
+            legacy="GERMINATOR_ALLOWED_INPUT_ROOTS",
         )
         self.official_repo_dir = _path_from_env(
-            "GERMINATOR_OFFICIAL_REPO_DIR", "vendor/stable-audio-3"
+            "GERM_OFFICIAL_REPO_DIR",
+            "vendor/stable-audio-3",
+            legacy="GERMINATOR_OFFICIAL_REPO_DIR",
         )
-        self.mlx_repo_dir = _path_from_env("GERMINATOR_MLX_REPO_DIR", "vendor/stable-audio-3")
+        self.mlx_repo_dir = _path_from_env(
+            "GERM_MLX_REPO_DIR",
+            "vendor/stable-audio-3",
+            legacy="GERMINATOR_MLX_REPO_DIR",
+        )
         self.allowed_model_roots = _path_list_from_env(
-            "GERMINATOR_ALLOWED_MODEL_ROOTS",
+            "GERM_ALLOWED_MODEL_ROOTS",
             [self.official_repo_dir, self.mlx_repo_dir, self.output_root],
+            legacy="GERMINATOR_ALLOWED_MODEL_ROOTS",
         )
-        self.mlx_decoder = os.getenv("GERMINATOR_MLX_DECODER", "same-s")
+        self.mlx_decoder = _env(
+            "GERM_MLX_DECODER",
+            "same-s",
+            legacy="GERMINATOR_MLX_DECODER",
+        ) or "same-s"
         self.provider_timeout_seconds = float(
-            os.getenv("GERMINATOR_PROVIDER_TIMEOUT_SECONDS", "1800")
+            _env(
+                "GERM_PROVIDER_TIMEOUT_SECONDS",
+                "1800",
+                legacy="GERMINATOR_PROVIDER_TIMEOUT_SECONDS",
+            )
+            or "1800"
         )
-        self.job_workers = max(1, int(os.getenv("GERMINATOR_JOB_WORKERS", "1")))
+        self.job_workers = max(
+            1,
+            int(_env("GERM_JOB_WORKERS", "1", legacy="GERMINATOR_JOB_WORKERS") or "1"),
+        )
         self.stability_api_key = os.getenv("STABILITY_API_KEY", "")
         self.allowed_hosts = self._parse_allowed_hosts()
         self.max_upload_bytes = int(
-            float(os.getenv("GERMINATOR_MAX_UPLOAD_MB", "100")) * 1024 * 1024
+            float(_env("GERM_MAX_UPLOAD_MB", "100", legacy="GERMINATOR_MAX_UPLOAD_MB") or "100")
+            * 1024
+            * 1024
         )
         self.max_image_upload_bytes = int(
-            float(os.getenv("GERMINATOR_MAX_IMAGE_MB", "8")) * 1024 * 1024
+            float(_env("GERM_MAX_IMAGE_MB", "8", legacy="GERMINATOR_MAX_IMAGE_MB") or "8")
+            * 1024
+            * 1024
         )
+        self.listener_score_max_bytes = int(
+            float(
+                _env(
+                    "GERM_LISTENER_MAX_AUDIO_MB",
+                    "50",
+                    legacy="GERMINATOR_LISTENER_MAX_AUDIO_MB",
+                )
+                or "50"
+            )
+            * 1024
+            * 1024
+        )
+        self.listener_score_max_duration_seconds = float(
+            _env(
+                "GERM_LISTENER_MAX_DURATION_SECONDS",
+                "600",
+                legacy="GERMINATOR_LISTENER_MAX_DURATION_SECONDS",
+            )
+            or "600"
+        )
+        self.cloud_vision_enabled = (
+            _env(
+                "GERM_ENABLE_CLOUD_VISION",
+                "0",
+                legacy="GERMINATOR_ENABLE_CLOUD_VISION",
+            )
+            or "0"
+        ).lower() in {"1", "true", "yes", "on"}
 
     def _parse_allowed_hosts(self) -> list[str]:
-        raw = os.getenv("GERMINATOR_ALLOWED_HOSTS")
+        raw = _env("GERM_ALLOWED_HOSTS", legacy="GERMINATOR_ALLOWED_HOSTS")
         if raw is None:
             hosts = set(DEFAULT_ALLOWED_HOSTS)
             if self.host and self.host not in {"0.0.0.0", "::"}:

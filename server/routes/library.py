@@ -68,6 +68,9 @@ def _output_signature() -> tuple[int, tuple[tuple[str, int, int], ...]]:
     Metadata writes explicitly increment storage.library_version. For files
     copied into output/ outside the app, directory mtime/size changes catch new
     archive audio without walking every audio file on every /library request.
+    Known accepted trade-off: an in-place edit to an existing file by an
+    external tool changes neither the directory stats nor library_version, so
+    it is not detected until another change busts the signature.
     """
     root = settings.output_root
     directories: list[tuple[str, int, int]] = []
@@ -203,6 +206,14 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if path.name.endswith(".earworm.session.json") or (
+        "session_id" in data and isinstance(data.get("events"), list)
+    ):
+        # Earworm context-chain sessions persist beside organism metadata but
+        # are exports, not library organisms.
         return None
 
     audio_path = data.get("output_audio_path")

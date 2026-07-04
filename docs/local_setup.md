@@ -38,7 +38,8 @@ curl -X POST http://127.0.0.1:8765/generate \
 ```
 
 This clones or reuses the official Stable Audio 3 repository under `vendor/` unless
-`GERMINATOR_OFFICIAL_REPO_DIR` is set. It runs:
+`GERM_OFFICIAL_REPO_DIR` is set. `GERMINATOR_OFFICIAL_REPO_DIR` remains a legacy
+fallback. It runs:
 
 ```bash
 uv sync --extra ui --extra lora
@@ -77,7 +78,7 @@ in or have not accepted the Stability AI model terms.
 3. Start the server and verify access:
 
    ```bash
-   ./launch_germinator.command
+   ./launch_germ.command
    curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
    ```
 
@@ -104,10 +105,10 @@ and performs a short test render:
 If the repo lives elsewhere:
 
 ```bash
-export GERMINATOR_MLX_REPO_DIR=/path/to/stable-audio-3
+export GERM_MLX_REPO_DIR=/path/to/stable-audio-3
 ```
 
-Long local renders are bounded by `GERMINATOR_PROVIDER_TIMEOUT_SECONDS`, which
+Long local renders are bounded by `GERM_PROVIDER_TIMEOUT_SECONDS`, which
 defaults to 1800 seconds.
 
 ## Dashboard
@@ -141,7 +142,7 @@ In the `Status` tab:
 2. Click `HF Check` if you plan to use the Python provider.
 3. Run `mock` + `mock-sine` first.
 4. Install the recommended real provider from diagnostics.
-5. Restart `./launch_germinator.command`.
+5. Restart `./launch_germ.command`.
 6. Select the real provider/model and click `Run Model Test`.
 
 The model is actually functioning locally when the test writes a WAV and metadata

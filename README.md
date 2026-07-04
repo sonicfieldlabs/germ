@@ -39,12 +39,18 @@ Official Stable Audio references:
 - Batch and seed variations.
 - Layer comparison and source handoff.
 - Library and Herbarium-style archive views over generated metadata.
+- Wavetable Forge routes for conversion, prompt generation, mutation, rendering,
+  import, export, and Petri audition.
 - LoRA loading, strength control, and a persistent Strain registry surfaced in
   Thermostat and Culture Mix workflows.
 - Micro/Matter module family for grains, cells, swarms, membranes, spectral tissue,
-  quanta, microscope analysis, persisted matter profiles, and incubated evolution.
+  quanta, microscope analysis, persisted matter profiles, biome save/load, and
+  incubated evolution.
 - Control layer for audio-to-control, safe OSC, MIDI intent, CV-safe exports, and
-  control ancestry.
+  control ancestry, including the norns/Fates OSC bridge.
+- Listener prompt enhancement and heuristic scoring through `/listener/enhance`
+  and `/listener/score`, with optional local Ollama fallback.
+- Earworm 0.1 export of generated metadata into local context-chain sessions.
 - Shared audio player with waveform drawing, metadata preview, path copy, open, and
   Finder reveal.
 - Diagnostics for provider readiness and Hugging Face access.
@@ -75,7 +81,7 @@ Copy `.env.example` to `.env` if you want to override defaults.
 Double-click in Finder or run:
 
 ```bash
-./launch_germinator.command
+./launch_germ.command
 ```
 
 The dashboard opens at:
@@ -99,7 +105,10 @@ private-network launch for another device in the same private-network:
 Open the printed `http://<private-network-ip>:8765/dashboard` URL from the other device.
 The script binds to the detected private-network IP by default and allowlists localhost,
 the detected private-network IP, the local host name, and private-network MagicDNS host names
-in `GERMINATOR_ALLOWED_HOSTS`.
+in `GERM_ALLOWED_HOSTS`.
+`GERM_ALLOWED_HOSTS` is the preferred name; `GERMINATOR_ALLOWED_HOSTS` remains a
+legacy fallback. The private-network launcher now fails closed if no private-network IP is
+detected, instead of binding to all interfaces.
 
 Health check:
 
@@ -127,24 +136,31 @@ Install the Apple Silicon MLX route:
 Useful environment variables:
 
 ```text
-GERMINATOR_HOST=127.0.0.1
-GERMINATOR_PORT=8765
-GERMINATOR_ACTIVE_PROVIDER=mock
-GERMINATOR_OUTPUT_DIR=output
-GERMINATOR_ALLOWED_INPUT_ROOTS=output
-GERMINATOR_OFFICIAL_REPO_DIR=vendor/stable-audio-3
-GERMINATOR_MLX_REPO_DIR=vendor/stable-audio-3
-GERMINATOR_ALLOWED_MODEL_ROOTS=vendor/stable-audio-3,output
-GERMINATOR_DEFAULT_MODEL=small-sfx
-GERMINATOR_DEFAULT_DEVICE=auto
-GERMINATOR_MLX_DECODER=same-s
-GERMINATOR_PROVIDER_TIMEOUT_SECONDS=1800
-GERMINATOR_JOB_WORKERS=1
-GERMINATOR_MAX_UPLOAD_MB=100
-GERMINATOR_MAX_IMAGE_MB=8
-GERMINATOR_RELOAD=1            # launch_germinator.command only: start uvicorn with --reload
-GERMINATOR_private-network_IP=...    # scripts/run_private-network.sh only: override the auto-detected IP
+GERM_HOST=127.0.0.1
+GERM_PORT=8765
+GERM_ACTIVE_PROVIDER=mock
+GERM_OUTPUT_DIR=output
+GERM_ALLOWED_INPUT_ROOTS=output
+GERM_OFFICIAL_REPO_DIR=vendor/stable-audio-3
+GERM_MLX_REPO_DIR=vendor/stable-audio-3
+GERM_ALLOWED_MODEL_ROOTS=vendor/stable-audio-3,output
+GERM_DEFAULT_MODEL=small-sfx
+GERM_DEFAULT_DEVICE=auto
+GERM_MLX_DECODER=same-s
+GERM_PROVIDER_TIMEOUT_SECONDS=1800
+GERM_JOB_WORKERS=1
+GERM_MAX_UPLOAD_MB=100
+GERM_MAX_IMAGE_MB=8
+GERM_ENABLE_CLOUD_VISION=0
+GERM_LISTENER_MAX_AUDIO_MB=50
+GERM_LISTENER_MAX_DURATION_SECONDS=600
+GERM_RELOAD=1            # launch_germ.command only: start uvicorn with --reload
+GERM_private-network_IP=...    # scripts/run_private-network.sh only: override the auto-detected IP
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2
 ```
+
+The older `GERMINATOR_*` names are still accepted as fallbacks for compatibility.
 
 The Stable Audio 3 Python provider uses gated Hugging Face model repositories. Accept
 the model terms and log in when needed:
@@ -153,6 +169,11 @@ the model terms and log in when needed:
 uv run hf auth login
 curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
 ```
+
+Cancellation note: queued jobs can always be cancelled. MLX jobs terminate the
+`sa3` subprocess group on cancellation. The Python provider uses the in-process
+Stable Audio API, which does not expose a reliable mid-render interrupt; a cancel
+request is recorded, but a render already inside the model call may finish normally.
 
 ## germ Vocabulary
 
@@ -203,7 +224,8 @@ curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
 - Propagation: continuation workflow for loops, tails, beds, and textures.
 - Strains: creative LoRA palette and Culture Mix scaffold.
 - Herbarium: archive view over saved outputs.
-- Listener: prompt enhancer and curation-action stub with no mandatory LLM key.
+- Listener: prompt enhancer, heuristic scorer, repair proposals, and optional
+  local Ollama prompt enhancement with no mandatory cloud key.
 - Lab: placeholders for SAME latents, dataset prep, model comparison, benchmarks,
   and agent experiments.
 
@@ -228,12 +250,12 @@ favorite, use as source, mutate, prune, propagate, and harvest. It is experiment
 and intentionally additive; it does not replace the existing Variations or Library
 sections.
 
-## Listener Prototype
+## Listener
 
-Listener currently runs in manual/stub mode. It can enhance a rough idea into a
-Stable Audio prompt, suggest a negative prompt, propose a mode/model/duration, and
-save notes into the active Culture metadata scaffold. It does not require an LLM API
-for the app to run.
+Listener can enhance a rough idea into a Stable Audio prompt, merge a negative
+prompt, score WAV files with bounded local DSP features, propose loop-seam repair
+ranges, and fall back to local Ollama when available. It does not require a cloud
+LLM API for the app to run.
 
 ## API
 
@@ -245,6 +267,7 @@ GET  /models
 GET  /diagnostics
 GET  /performance
 GET  /huggingface/status
+POST /earworm/export
 POST /models/load
 POST /generate
 POST /audio-to-audio
@@ -257,6 +280,9 @@ POST /image-to-audio/analyze
 POST /time/render
 POST /lora/load
 POST /lora/strength
+GET  /listener/providers
+POST /listener/enhance
+POST /listener/score
 GET  /strains
 POST /strains
 GET  /strains/{strain_id}
@@ -264,7 +290,12 @@ DELETE /strains/{strain_id}
 POST /strains/load
 POST /micro/matter-profile
 GET  /micro/matter-profiles
-GET/POST /control/...  (ports, routes, events, OSC, MIDI, CV profiles, analyze-audio, render-cv)
+GET  /micro/biomes
+POST /micro/biomes
+GET  /micro/biomes/{biome_id}
+DELETE /micro/biomes/{biome_id}
+GET/POST /wavetables/... (list, detail, data, convert, prompt, mutate, render, import, export)
+GET/POST /control/...  (ports, routes, enable/delete, events, OSC, norns/Fates, MIDI, CV profiles, analyze-audio, render-cv)
 POST /jobs/submit
 GET  /jobs/{job_id}
 POST /jobs/{job_id}/cancel
@@ -323,6 +354,11 @@ Generated metadata keeps existing compatibility fields and adds germ identity fi
   "created_at": "..."
 }
 ```
+
+Each generated metadata record also includes an `earworm` block with deterministic
+session, asset, and provenance IDs. Use `POST /earworm/export` to write a local
+Earworm 0.1 session JSON from a metadata path. The cross-stack fixture lives at
+`tests/fixtures/germ-organism-mapping.session.json`.
 
 ## Development Notes
 

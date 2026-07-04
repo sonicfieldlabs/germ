@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SA3_REPO_DIR="${GERMINATOR_OFFICIAL_REPO_DIR:-$PROJECT_ROOT/vendor/stable-audio-3}"
+SA3_REPO_DIR="${GERM_OFFICIAL_REPO_DIR:-${GERMINATOR_OFFICIAL_REPO_DIR:-$PROJECT_ROOT/vendor/stable-audio-3}}"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv is required. Install it from https://docs.astral.sh/uv/ and rerun this script." >&2

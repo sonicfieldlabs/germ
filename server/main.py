@@ -14,6 +14,7 @@ from server.routes import (
     continue_audio,
     control,
     diagnostics,
+    earworm,
     files,
     generate,
     health,
@@ -67,6 +68,7 @@ app.add_middleware(PerformanceMiddleware)
 
 app.include_router(health.router)
 app.include_router(diagnostics.router)
+app.include_router(earworm.router)
 app.include_router(huggingface.router)
 app.include_router(models.router)
 app.include_router(performance.router)

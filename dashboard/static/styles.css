@@ -7394,6 +7394,7 @@ textarea:focus-visible,
     width: auto;
     max-width: none;
     max-height: none;
+    bottom: calc(174px + env(safe-area-inset-bottom));
     border: 0;
     background: transparent;
     box-shadow: none;

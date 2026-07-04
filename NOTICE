@@ -1,0 +1,22 @@
+germ
+Copyright (c) 2026 Sonic Field Labs and contributors.
+
+germ is an independent open-source research tool for generative microsound,
+lineage-aware audio cultivation, and Listening Stack integrations.
+
+germ is not an official Stability AI product, is not endorsed by Stability AI,
+and does not distribute Stable Audio 3 model weights. Stable Audio 3 provider
+paths are optional local integrations. Users are responsible for accepting and
+following the licenses, model cards, gated-weight terms, and usage restrictions
+for any third-party model, checkpoint, LoRA, dataset, or generated asset they
+choose to use with germ.
+
+The optional `python-provider` extra references:
+
+stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git
+
+That dependency is not vendored in this repository. Install it only if your use
+case and environment are compatible with the upstream project and model terms.
+
+Earworm integration surfaces map germ metadata into Earworm 0.1 protocol-shaped
+sessions for local provenance, consent, retention, and lineage workflows.

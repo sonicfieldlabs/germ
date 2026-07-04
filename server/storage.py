@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -41,6 +42,7 @@ def safe_suffix(value: str | None, fallback: str = ".wav") -> str:
 
 MAX_TRACKED_JOBS = 500
 JOB_EVICTION_GRACE_SECONDS = 15 * 60
+MAX_LINEAGE_CHILD_LOCKS = 512
 AUDIO_EXTENSIONS = {".aif", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".wav", ".webm"}
 MODEL_FILE_EXTENSIONS = {".bin", ".ckpt", ".gguf", ".mlmodel", ".pt", ".pth", ".safetensors"}
 UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -61,7 +63,7 @@ class StorageManager:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.job_listeners: dict[str, int] = {}
         self._lock = RLock()
-        self._lineage_child_locks: dict[Path, RLock] = {}
+        self._lineage_child_locks: OrderedDict[Path, RLock] = OrderedDict()
         self.library_version = 0
         self.ensure_dirs()
 
@@ -466,6 +468,14 @@ class StorageManager:
             "parent_branch": lineage.get("parent_branch"),
             "source_region": lineage.get("region"),
             "lineage": lineage,
+            "earworm": {
+                "protocol": "earworm",
+                "version": "0.1",
+                "session_id": f"sess_{lineage['id']}",
+                "asset_id": f"asset_{lineage['id']}",
+                "provenance_id": f"prov_{lineage['id']}",
+                "export_route": "/earworm/export",
+            },
             "request": request_data if status == "error" else None,
         }
         if extra:
@@ -645,7 +655,21 @@ class StorageManager:
             if lock is None:
                 lock = RLock()
                 self._lineage_child_locks[key] = lock
+            else:
+                self._lineage_child_locks.move_to_end(key)
+            self._prune_lineage_child_locks()
             return lock
+
+    def _prune_lineage_child_locks(self) -> None:
+        if len(self._lineage_child_locks) <= MAX_LINEAGE_CHILD_LOCKS:
+            return
+        for key in list(self._lineage_child_locks):
+            if len(self._lineage_child_locks) <= MAX_LINEAGE_CHILD_LOCKS:
+                return
+            if not key.exists():
+                self._lineage_child_locks.pop(key, None)
+        while len(self._lineage_child_locks) > MAX_LINEAGE_CHILD_LOCKS:
+            self._lineage_child_locks.popitem(last=False)
 
     @staticmethod
     def _germinator_mode(mode: str) -> str:

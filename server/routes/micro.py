@@ -39,6 +39,8 @@ MICRO_FEATURES = [
 ]
 
 MATTER_PROFILE_CACHE_LIMIT = 32
+MAX_BIOME_COUNT = 128
+MAX_BIOME_STATE_BYTES = 1_000_000
 _MATTER_PROFILE_ANALYSIS_CACHE_LOCK = Lock()
 _MATTER_PROFILE_ANALYSIS_CACHE: OrderedDict[
     tuple[str, int, int, int, tuple[str, ...]],
@@ -177,6 +179,14 @@ def list_biomes() -> list[MicroBiomeSummary]:
 def save_biome(request: MicroBiomeSaveRequest) -> MicroBiomeResult:
     biome_id = safe_stem(request.name, fallback="biome")
     path = _biome_dir() / f"{biome_id}.json"
+    if not path.exists() and len(list(_biome_dir().glob("*.json"))) >= MAX_BIOME_COUNT:
+        raise HTTPException(status_code=400, detail=f"Biome limit reached ({MAX_BIOME_COUNT}).")
+    state_bytes = len(json.dumps(request.state, separators=(",", ":")).encode("utf-8"))
+    if state_bytes > MAX_BIOME_STATE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Biome state exceeds the {MAX_BIOME_STATE_BYTES} byte limit.",
+        )
     existing = _read_biome(path) if path.exists() else {}
     now = utc_now_iso()
     artifact = {

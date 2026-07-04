@@ -773,13 +773,33 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
     request_params = request.lineage.get("operation_params") if isinstance(request.lineage, dict) and isinstance(request.lineage.get("operation_params"), dict) else {}
     operation_params.update(request_params)
     operation_params["metadata_edited_at"] = data["updated_at"]
+    if request.prompt is not None:
+        operation_params["prompt"] = request.prompt
+    if request.negative_prompt is not None:
+        operation_params["negative_prompt"] = request.negative_prompt
+    if request.tags:
+        operation_params["tags"] = request.tags
     data["operation_params"] = operation_params
     lineage = data.get("lineage") if isinstance(data.get("lineage"), dict) else {}
+    lineage["audio_path"] = storage.relative_path(source_audio)
+    lineage["metadata_path"] = storage.relative_path(metadata_path)
+    if request.prompt is not None:
+        lineage["prompt"] = request.prompt
     lineage_params = lineage.get("operation_params") if isinstance(lineage.get("operation_params"), dict) else {}
     lineage_params.update(request_params)
     lineage_params["metadata_edited_at"] = data["updated_at"]
+    if request.prompt is not None:
+        lineage_params["prompt"] = request.prompt
+    if request.negative_prompt is not None:
+        lineage_params["negative_prompt"] = request.negative_prompt
+    if request.tags:
+        lineage_params["tags"] = request.tags
     lineage["operation_params"] = lineage_params
     data["lineage"] = lineage
+    audio = data.get("audio") if isinstance(data.get("audio"), dict) else {}
+    audio["path"] = storage.relative_path(source_audio)
+    audio["absolute_path"] = storage.absolute_path(source_audio)
+    data["audio"] = audio
     storage.write_json_atomic(metadata_path, data, touch_library=True)
     return metadata_path
 

@@ -57,6 +57,10 @@ LoRA loading is implemented through the official package helpers when present. I
 the installed package changes those helper names, the endpoint returns a clear error
 rather than failing silently.
 
+Cancellation asymmetry: queued Python-provider jobs can be cancelled before they
+start, but a running Python render may finish normally because the in-process
+Stable Audio API does not expose a safe mid-render interrupt hook.
+
 ## Stable Audio MLX Provider
 
 The MLX provider is a subprocess wrapper over the official `optimized/mlx/sa3` CLI.
@@ -74,8 +78,11 @@ Supported command shape:
 
 The wrapper captures stdout, stderr, command, and return code in metadata.
 It also forwards the request `steps` value to the MLX CLI and honors
-`GERMINATOR_PROVIDER_TIMEOUT_SECONDS` so a stuck subprocess returns error metadata
+`GERM_PROVIDER_TIMEOUT_SECONDS` so a stuck subprocess returns error metadata
 instead of hanging indefinitely.
+
+Running MLX jobs observe the job cancellation signal and terminate the `sa3`
+process group with SIGTERM, then SIGKILL if needed.
 
 The official MLX CLI accepts one `--inpaint-range` per call. The wrapper supports
 multi-region inpainting by running ranges sequentially: range 1 writes an

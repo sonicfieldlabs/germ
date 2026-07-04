@@ -50,7 +50,7 @@ def sanitize_filename_stem(stem: str) -> str:
     sanitized = sanitized.strip()
     if not sanitized:
         sanitized = "unnamed"
-    return sanitized
+    return sanitized[:100]
 
 
 def _resolve_output_file(file_path: str) -> Path:
@@ -90,10 +90,9 @@ def rename_output_file(request: RenameRequest) -> dict[str, str]:
     audio_path = _resolve_output_file(request.audio_path)
     metadata_path = None
     if request.metadata_path:
-        try:
-            metadata_path = _resolve_output_file(request.metadata_path)
-        except HTTPException:
-            pass
+        metadata_path = _resolve_output_file(request.metadata_path)
+        if metadata_path.suffix.lower() != ".json":
+            raise HTTPException(status_code=422, detail="Metadata path must point to a JSON file.")
 
     sanitized_stem = sanitize_filename_stem(request.new_stem)
     if not sanitized_stem:
@@ -182,7 +181,7 @@ def rename_output_file(request: RenameRequest) -> dict[str, str]:
 
 
 @router.post("/files/delete")
-def delete_output_files(request: BulkDeleteRequest) -> dict[str, str]:
+def delete_output_files(request: BulkDeleteRequest) -> dict[str, str | int]:
     if len(request.items) > 500:
         raise HTTPException(status_code=400, detail="Too many items in one delete request (max 500).")
     deleted_count = 0
@@ -204,4 +203,4 @@ def delete_output_files(request: BulkDeleteRequest) -> dict[str, str]:
                 pass
 
     storage.touch_library()
-    return {"status": "ok", "deleted_count": str(deleted_count)}
+    return {"status": "ok", "deleted_count": deleted_count}

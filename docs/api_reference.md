@@ -24,6 +24,22 @@ paths, missing pieces for real local models, and install commands.
 Returns recent request timings recorded by the in-process performance middleware
 (per-route durations, status codes, and a summary).
 
+## POST /earworm/export
+
+Exports one generated metadata JSON file into an Earworm 0.1 session with prompt,
+generation request, optional expanded-sensorium metadata packet, generated-audio,
+analysis, render, provenance, and retention records.
+
+```json
+{
+  "metadata_path": "output/metadata/example.json",
+  "persist": true
+}
+```
+
+When `persist=true`, the session JSON is written under `output/metadata/` and the
+response includes `session_file` plus the inline `session` object.
+
 ## GET /huggingface/status
 
 Checks Hugging Face CLI auth for the gated Stable Audio 3 Python-provider weights.
@@ -120,7 +136,7 @@ file. JSON request:
 
 Multipart upload of an external audio file plus optional metadata fields. The file is
 stored under `output/uploads/`, indexed into the library as an archive item, and capped
-by `GERMINATOR_MAX_UPLOAD_MB`.
+by `GERM_MAX_UPLOAD_MB` (`GERMINATOR_MAX_UPLOAD_MB` remains a legacy fallback).
 
 ## POST /audio/process
 
@@ -135,8 +151,10 @@ new library item). Results carry lineage back to the source sound.
 
 ## POST /image-to-audio/analyze
 
-Analyzes an inline base64 image (capped by `GERMINATOR_MAX_IMAGE_MB`) into prompt
-material for germination.
+Analyzes an inline base64 image (capped by `GERM_MAX_IMAGE_MB`) into prompt material
+for germination. Vision mode is local fallback by default; Gemini cloud vision is
+used only when `GERM_ENABLE_CLOUD_VISION=1` and a `GEMINI_API_KEY` or
+`GOOGLE_API_KEY` is present. Spectrogram mode stays in-browser/local.
 
 ## POST /time/render
 
@@ -149,7 +167,7 @@ resample fallback otherwise). Returns the rendered file plus metadata with event
 ```json
 {
   "provider": "stable_audio_python",
-  "paths": ["/path/to/momoto_signature.safetensors"]
+  "paths": ["/path/to/your_style.safetensors"]
 }
 ```
 
@@ -252,7 +270,9 @@ running outside the realtime audio path.
 
 Cancels a queued or running dashboard job. Queued jobs are removed before execution;
 running jobs receive a provider cancellation signal. The MLX provider terminates its
-child process group when that signal is observed.
+child process group when that signal is observed. The Python provider uses the
+in-process Stable Audio API and may finish normally if it is already inside the
+model call.
 
 ## GET /control/ports
 
@@ -283,6 +303,20 @@ Returns persisted source-to-destination control routes from `output/control/rout
 
 Routes are restricted to known ports so MIDI/OSC input cannot target arbitrary app
 state.
+
+## POST /control/routes/{route_id}/enable
+
+Enables or disables an existing route:
+
+```json
+{
+  "enabled": false
+}
+```
+
+## DELETE /control/routes/{route_id}
+
+Deletes a persisted control route.
 
 ## GET /control/bridge/status
 
@@ -329,6 +363,16 @@ control event. Public-network targets are rejected.
 
 Records an OSC message delivered by an explicit local bridge. This endpoint does not
 open a background UDP listener.
+
+## GET /control/osc/norns/profile
+
+Returns the norns/Fates bridge profile with OSC address mappings for germ dish
+gravity, viscosity, energy, and spawn pulses.
+
+## POST /control/osc/norns/send
+
+Sends the norns/Fates bridge messages through the same private/loopback OSC safety
+gate as `/control/osc/send`.
 
 ## POST /control/midi/send
 
@@ -412,6 +456,86 @@ the Micro palette.
 ## GET /micro/matter-profiles
 
 Lists recent persisted Micro/Matter profile artifacts.
+
+## GET /micro/biomes
+
+Lists saved Microcosmos biome states under `output/micro/biomes/`.
+
+## POST /micro/biomes
+
+Saves a bounded biome state:
+
+```json
+{
+  "name": "mist biome",
+  "state": {
+    "germs": [],
+    "modules": []
+  }
+}
+```
+
+## GET /micro/biomes/{biome_id}
+
+Loads one biome state.
+
+## DELETE /micro/biomes/{biome_id}
+
+Deletes one saved biome state.
+
+## GET /listener/providers
+
+Lists listener providers: heuristic local scorer/enhancer, optional local Ollama
+fallback, and unavailable API placeholder.
+
+## POST /listener/enhance
+
+Enhances a rough prompt, merges negative-prompt defaults, and returns local
+suggestions without requiring a cloud key.
+
+## POST /listener/score
+
+Scores a WAV file inside `GERM_ALLOWED_INPUT_ROOTS` using bounded local DSP
+features and returns tags, warnings, and repair proposals.
+
+## GET /wavetables
+
+Lists wavetable assets from `output/wavetables/`.
+
+## GET /wavetables/{wavetable_id}
+
+Returns one wavetable metadata record.
+
+## GET /wavetables/{wavetable_id}/data
+
+Returns the raw float wavetable data.
+
+## POST /wavetables/convert
+
+Converts an allowed source WAV into a `germ_wavetable` metadata/data pair.
+
+## POST /wavetables/prompt
+
+Builds a wavetable-focused prompt contract, generates source audio, and converts it
+into one or more wavetable assets.
+
+## POST /wavetables/mutate
+
+Renders a parent wavetable, mutates the render through audio-to-audio, and converts
+the result into child wavetable assets with lineage.
+
+## POST /wavetables/render
+
+Renders a wavetable to a stereo WAV source for use in germ.
+
+## POST /wavetables/import
+
+Imports a WAV stack as a wavetable.
+
+## GET /wavetables/{wavetable_id}/export
+
+Exports a wavetable as `gwt`, `wav-stack`, `single-cycle`, or `metadata` using the
+`format` query parameter.
 
 ## GET /library
 

@@ -2015,6 +2015,11 @@ function outputUrl(path) {
   return `${baseUrl()}/files/${safePath}`;
 }
 
+function wavetableExportUrl(id, format = "gwt") {
+  if (!id) return "#";
+  return `${baseUrl()}/wavetables/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
+}
+
 function audioContextForDecode() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error("Audio decoding is not available in this browser.");
@@ -2088,7 +2093,20 @@ function trackChips(metadata) {
 
 async function setCurrentTrack(audioPath, metadataPath, metadata = null) {
   if (!audioPath) return;
-  const loadedMetadata = metadata || (metadataPath ? await loadMetadata(metadataPath) : null);
+  let loadedMetadata = metadata || null;
+  if (!loadedMetadata && metadataPath) {
+    try {
+      loadedMetadata = await loadMetadata(metadataPath);
+    } catch (error) {
+      loadedMetadata = {
+        app: "germ",
+        status: "metadata_missing",
+        output_audio_path: audioPath,
+        metadata_path: metadataPath,
+        metadata_error: error.message,
+      };
+    }
+  }
   currentTrack = { audioPath, metadataPath, metadata: loadedMetadata };
   $("trackTitle").textContent = displayNameFromPath(audioPath);
   $("audioPath").value = audioPath;
@@ -2724,7 +2742,7 @@ function wavetableCard(item) {
   const state = petriState[key] || {};
   const id = item.wavetable_id || item.id || "";
   const favoriteLabel = state.favorite ? "Unfavorite" : "Favorite";
-  const exportHref = `/wavetables/${encodeURIComponent(id)}/export?format=gwt`;
+  const exportHref = wavetableExportUrl(id);
   const frameText = `${item.frame_count || "-"} x ${item.frame_size || "-"} · ${item.root_note || "-"}`;
   return `
     <article class="petri-card ${state.favorite ? "favorite" : ""}" data-candidate-key="${escapeHtml(key)}">
@@ -3072,7 +3090,7 @@ function renderRack() {
               <button type="button" data-action="wavetable-asset-use" data-wavetable-id="${escapeHtml(id)}" aria-label="Use in Germ" title="Use in Germ">${iconSvg("source")}</button>
               <button type="button" data-action="wavetable-asset-render" data-wavetable-id="${escapeHtml(id)}" aria-label="Render as source" title="Render as source">${iconSvg("render")}</button>
               <button type="button" data-action="wavetable-asset-mutate" data-wavetable-id="${escapeHtml(id)}" aria-label="Mutate table" title="Mutate">${iconSvg("lineage")}</button>
-              <a href="/wavetables/${encodeURIComponent(id)}/export?format=gwt" download class="rack-button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 0;" title="Export GWT">${iconSvg("download")}</a>
+              <a href="${escapeHtml(wavetableExportUrl(id))}" download class="rack-button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 0;" title="Export GWT">${iconSvg("download")}</a>
               <button type="button" data-action="rack-lineage" data-metadata="${escapeHtml(item.metadata_file || "")}" data-audio="" aria-label="Lineage" title="Lineage">${iconSvg("lineage")}</button>
               <button type="button" data-action="rack-copy-path" data-path="${escapeHtml(item.metadata_file || "")}" aria-label="Copy metadata path" title="Copy metadata path">${iconSvg("copy")}</button>
             </div>
@@ -3115,7 +3133,7 @@ function renderRack() {
             <button type="button" data-action="rack-source" data-metadata="${escapeHtml(item.metadata_file || "")}" data-audio="${escapeHtml(item.audio_file || "")}" aria-label="Use source" title="Use source">${iconSvg("source")}</button>
             <button type="button" data-action="rack-lineage" data-metadata="${escapeHtml(item.metadata_file || "")}" data-audio="${escapeHtml(item.audio_file || "")}" aria-label="Lineage" title="Lineage">${iconSvg("lineage")}</button>
             <button type="button" data-action="rack-reveal" data-audio="${escapeHtml(item.audio_file || "")}" aria-label="Reveal in Finder" title="Reveal">${iconSvg("reveal")}</button>
-            <a href="/files/${encodeURIComponent(item.audio_file)}" download="${escapeHtml(stem + ext)}" class="rack-button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 0;" title="Download">${iconSvg("download")}</a>
+            <a href="${escapeHtml(outputUrl(item.audio_file))}" download="${escapeHtml(stem + ext)}" class="rack-button" style="display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 0;" title="Download">${iconSvg("download")}</a>
             <button type="button" data-action="rack-copy-path" data-path="${escapeHtml(item.audio_file)}" aria-label="Copy relative path" title="Copy relative path">${iconSvg("copy")}</button>
             <button type="button" data-action="rack-delete" data-metadata="${escapeHtml(item.metadata_file || "")}" data-audio="${escapeHtml(item.audio_file || "")}" aria-label="Delete" title="Delete from disk">${iconSvg("delete")}</button>
           </div>
@@ -6265,7 +6283,7 @@ function canvasGermNodeMarkup(node, selected, style) {
           <canvas class="wavetable-frame-strip" data-node-id="${escapeHtml(node.id)}" width="280" height="42"></canvas>
           <div class="time-node-actions">
             <button class="time-action" type="button" data-action="wavetable-mutate" data-node-id="${escapeHtml(node.id)}">Mutate</button>
-            <a class="time-action" href="${selectedId ? `${baseUrl()}/wavetables/${encodeURIComponent(selectedId)}/export?format=gwt` : "#"}">Export</a>
+            <a class="time-action" href="${escapeHtml(wavetableExportUrl(selectedId))}">Export</a>
           </div>
         ` : ""}
         ${active === "synth" ? `
@@ -6335,7 +6353,7 @@ function canvasWavetableForgeNodeMarkup(node, selected, style) {
             <label>Table <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="wavetableId">${renderGermWavetableOptions(selectedId)}</select></label>
             <label>Format <select class="wavetable-node-setting" data-node-id="${escapeHtml(node.id)}" data-field="exportFormat"><option value="gwt"${node.exportFormat === "gwt" ? " selected" : ""}>gwt</option><option value="wav-stack"${node.exportFormat === "wav-stack" ? " selected" : ""}>wav-stack</option><option value="single-cycle"${node.exportFormat === "single-cycle" ? " selected" : ""}>single-cycle</option><option value="metadata"${node.exportFormat === "metadata" ? " selected" : ""}>metadata</option></select></label>
           </div>
-          <a class="time-action primary" href="${selectedId ? `${baseUrl()}/wavetables/${encodeURIComponent(selectedId)}/export?format=${encodeURIComponent(node.exportFormat)}` : "#"}">Export</a>
+          <a class="time-action primary" href="${escapeHtml(wavetableExportUrl(selectedId, node.exportFormat))}">Export</a>
         ` : ""}
       </div>
     </article>
@@ -9397,7 +9415,7 @@ function canvasNodeMarkup(node) {
         <div class="image-node-controls">
           <label data-help="Vision mode translates image content into a prompt. Spectrogram mode resynthesizes pixels as sound.">Mode
             <select class="canvas-image-setting" data-node-id="${escapeHtml(node.id)}" data-field="imageMode">
-              <option value="vision"${mode === "vision" ? " selected" : ""}>Vision prompt</option>
+              <option value="vision"${mode === "vision" ? " selected" : ""}>Vision prompt (cloud opt-in)</option>
               <option value="spectrogram"${mode === "spectrogram" ? " selected" : ""}>Spectrogram</option>
             </select>
           </label>
@@ -11918,7 +11936,25 @@ async function runCanvasImageToAudio(nodeId) {
         duration: Math.min(60, Math.max(0.5, Number(analysis.duration) || duration)),
         batch_size: 1,
         output_name: safeOutputName(`image_${node.label || "source"}`),
-        source: { type: "image", mode: "vision", image_name: node.imageName },
+        source: {
+          type: "image",
+          mode: "vision",
+          image_name: node.imageName,
+          analysis_provider: analysis.analysis_provider || "local_fallback",
+          cloud_vision: Boolean(analysis.cloud_vision),
+        },
+        generation_context: {
+          image_analysis: {
+            provider: analysis.analysis_provider || "local_fallback",
+            cloud_vision: Boolean(analysis.cloud_vision),
+            cloud_vision_enabled: Boolean(analysis.cloud_vision_enabled),
+            image_summary: analysis.imageSummary || "",
+            visual_elements: analysis.visualElements || [],
+            acoustic_space: analysis.acousticSpace || "",
+            material_textures: analysis.materialTextures || [],
+            mood: analysis.mood || {},
+          },
+        },
         latents: { fingerprint, type: "image-identity-fingerprint" },
         latent_fingerprint: fingerprint,
         lineage: canvasLineagePayload("image_to_audio", {
@@ -11928,6 +11964,8 @@ async function runCanvasImageToAudio(nodeId) {
             image_name: node.imageName,
             image_mode: "vision",
             image_summary: analysis.imageSummary || "",
+            analysis_provider: analysis.analysis_provider || "local_fallback",
+            cloud_vision: Boolean(analysis.cloud_vision),
             latent_fingerprint: fingerprint,
           },
         }),
@@ -15796,7 +15834,28 @@ async function libraryItemByReference(metadataPath = "", audioPath = "") {
     const wavetableId = item.wavetable_id || item.id;
     metadata = wavetableId ? await api(`/wavetables/${encodeURIComponent(wavetableId)}`) : item;
   } else if (item.metadata_file) {
-    metadata = await loadMetadata(item.metadata_file);
+    try {
+      metadata = await loadMetadata(item.metadata_file);
+    } catch (error) {
+      metadata = {
+        app: item.app || "germ",
+        provider: item.provider,
+        runtime: item.runtime,
+        model: item.model,
+        mode: item.mode,
+        germinator_mode: item.germinator_mode,
+        prompt: item.prompt,
+        duration: item.duration,
+        seed: item.seed,
+        status: item.status || "metadata_missing",
+        tags: item.tags || [],
+        ratings: item.ratings || {},
+        created_at: item.created_at,
+        output_audio_path: item.audio_file,
+        metadata_path: item.metadata_file,
+        metadata_error: error.message,
+      };
+    }
   } else {
     metadata = {
       app: item.app || "germ",

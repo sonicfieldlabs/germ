@@ -18,6 +18,8 @@ def _strip_port(host: str | None) -> str:
     value = host.strip().lower()
     if value.startswith("[") and "]" in value:
         return value[1 : value.index("]")]
+    if value.count(":") > 1:
+        return value
     return value.rsplit(":", 1)[0]
 
 

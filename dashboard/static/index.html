@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#FAFAFA" />
     <title>germ — generative microsound system</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f7f7f4'/%3E%3Ccircle cx='22' cy='22' r='8' fill='%23476f5d'/%3E%3Ccircle cx='43' cy='20' r='5' fill='%23b9784a'/%3E%3Ccircle cx='38' cy='43' r='10' fill='%23292929'/%3E%3Cpath d='M26 27 35 37M30 20h12M25 42h12' stroke='%23292929' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260610-ecosystem-p1" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260618-review-p1" />
   </head>
   <body class="canvas-active no-left-sidebar">
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -383,7 +383,7 @@
                           <button class="source-tool-card" type="button" title="Image" aria-label="Add Image source" data-action="canvas-source-option" data-source="image">
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconImage"></use></svg></span>
                             <strong class="source-tool-title">Image</strong>
-                            <span class="source-tool-desc">Use image input as seed.</span>
+                            <span class="source-tool-desc">Use image input with local fallback or cloud opt-in.</span>
                           </button>
                         </section>
                         <section class="canvas-source-panel" data-source-panel="time" aria-label="Time modules" hidden>
@@ -1261,7 +1261,7 @@
             <span id="thermostatHint" class="module-hint floating-hint">Hover a Thermostat action for details.</span>
             <label>
               Adapter Paths
-              <textarea id="loraPaths" rows="5" placeholder="/path/to/momoto_signature.safetensors"></textarea>
+              <textarea id="loraPaths" rows="5" placeholder="/path/to/your_style.safetensors"></textarea>
             </label>
             <div class="control-grid compact thermostat-controls">
               <label>Strength <small>(lora_strength)</small> <input id="loraStrength" type="number" min="0" max="10" step="0.05" value="0.7" /></label>
@@ -1440,6 +1440,6 @@
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260610-ecosystem-p2"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260702-listening-p1"></script>
   </body>
 </html>

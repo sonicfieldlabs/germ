@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import math
+import re
 import socket
 import struct
 import time
@@ -24,7 +25,7 @@ from server.routes import audio_tools
 from server.routes import micro as micro_routes
 from server.routes.time_render import time_clock_summary
 from server.schemas import GenerationResult, GenerateRequest, InpaintRequest, TimeClock, TimeRenderRequest
-from server.storage import JOB_EVICTION_GRACE_SECONDS, MAX_TRACKED_JOBS
+from server.storage import JOB_EVICTION_GRACE_SECONDS, MAX_LINEAGE_CHILD_LOCKS, MAX_TRACKED_JOBS
 
 
 client = TestClient(app)
@@ -641,6 +642,15 @@ def test_micro_biomes_save_list_load_delete() -> None:
     assert deleted.json()["status"] == "deleted"
 
 
+def test_micro_biome_rejects_oversized_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(micro_routes, "MAX_BIOME_STATE_BYTES", 64)
+    response = client.post(
+        "/micro/biomes",
+        json={"name": "pytest huge biome", "state": {"payload": "x" * 128}},
+    )
+    assert response.status_code == 413
+
+
 def test_huggingface_status_reports_cli_auth_without_model_check() -> None:
     response = client.get("/huggingface/status?check_models=false")
     assert response.status_code == 200
@@ -684,6 +694,118 @@ def test_mock_generate_creates_wav_and_metadata() -> None:
     assert metadata["output_audio_path"] == body["audio_files"][0]
     assert metadata["culture_id"] == "culture-pytest"
     assert metadata["tags"] == ["SFX", "review"]
+    assert metadata["earworm"]["protocol"] == "earworm"
+    assert metadata["earworm"]["export_route"] == "/earworm/export"
+
+
+def test_earworm_export_maps_germ_metadata_to_context_chain() -> None:
+    response = client.post(
+        "/generate",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "rain cell with pressure drop context",
+            "duration": 0.25,
+            "output_name": "pytest_earworm_export",
+            "generation_context": {
+                "ambiente": {"light_lux": 12, "pressure_hpa": 1007.2},
+            },
+            "control_sources": [{"id": "oidito_pressure", "kind": "sensor"}],
+            "tags": ["earworm", "context"],
+        },
+    )
+    assert response.status_code == 200
+    metadata_file = response.json()["metadata_files"][0]
+    export_response = client.post(
+        "/earworm/export",
+        json={"metadata_path": metadata_file, "persist": True},
+    )
+    assert export_response.status_code == 200
+    body = export_response.json()
+    assert body["session_id"].startswith("sess_sound_")
+    assert body["event_count"] >= 5
+    assert body["session_file"]
+    assert Path(body["session_file"]).exists()
+    session = body["session"]
+    event_types = [event["type"] for event in session["events"]]
+    assert event_types[:2] == ["prompt.ingested", "generation.requested"]
+    assert "signal.packet.ingested" in event_types
+    assert "audio.generated" in event_types
+    assert "render.created" in event_types
+    assert session["policy"]["local_only"] is True
+    assert session["assets"][0]["tags"] == ["earworm", "context"]
+
+
+def test_earworm_sessions_do_not_appear_as_library_items() -> None:
+    response = client.post(
+        "/generate",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "library filter source",
+            "duration": 0.25,
+            "output_name": "pytest_earworm_library_filter",
+        },
+    )
+    assert response.status_code == 200
+    metadata_file = response.json()["metadata_files"][0]
+    export_response = client.post(
+        "/earworm/export",
+        json={"metadata_path": metadata_file, "persist": True},
+    )
+    assert export_response.status_code == 200
+    session_file = export_response.json()["session_file"]
+    assert session_file
+
+    library = client.get("/library")
+    assert library.status_code == 200
+    metadata_files = [item.get("metadata_file") for item in library.json()["items"]]
+    assert metadata_file in metadata_files
+    assert session_file not in metadata_files
+    assert not any(
+        str(name).endswith(".earworm.session.json") for name in metadata_files if name
+    )
+
+
+def test_earworm_cross_stack_fixture_is_present() -> None:
+    fixture = Path("tests/fixtures/germ-organism-mapping.session.json")
+    session = json.loads(fixture.read_text(encoding="utf-8"))
+    assert session["app_id"] == "germ"
+    assert session["policy"]["local_only"] is True
+    assert {event["type"] for event in session["events"]} >= {
+        "prompt.ingested",
+        "generation.requested",
+        "audio.generated",
+        "analysis.frame",
+        "render.created",
+    }
+
+
+def test_earworm_export_accepts_legacy_string_source_metadata() -> None:
+    metadata_path = settings.metadata_dir / "pytest_earworm_legacy_source.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "sound_id": "pytest_earworm_legacy_source",
+                "created_at": "2026-06-01T12:00:00+00:00",
+                "output_audio_path": "output/audio/legacy-source.wav",
+                "prompt": "legacy source metadata",
+                "provider": "mock",
+                "model": "mock-sine",
+                "source": "upload",
+                "status": "done",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/earworm/export",
+        json={"metadata_path": storage.relative_path(metadata_path), "persist": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session"]["provenance"][0]["source_type"] == "imported"
 
 
 def test_wavetable_convert_list_detail_and_data_routes() -> None:
@@ -1373,6 +1495,22 @@ def test_listener_scores_wav_and_rejects_external_path(tmp_path: Path) -> None:
         },
     )
     assert rejected.status_code == 422
+    assert "allowed input root" in rejected.json()["detail"]
+
+    original_limit = settings.listener_score_max_duration_seconds
+    try:
+        settings.listener_score_max_duration_seconds = 0.01
+        too_long = client.post(
+            "/listener/score",
+            json={
+                "provider": "mock",
+                "prompt": "clean glass tone",
+                "audio_path": storage.relative_path(audio_path),
+            },
+        )
+    finally:
+        settings.listener_score_max_duration_seconds = original_limit
+    assert too_long.status_code == 413
 
 
 def test_audio_metadata_update_persists_petri_ratings() -> None:
@@ -1386,6 +1524,11 @@ def test_audio_metadata_update_persists_petri_ratings() -> None:
             "metadata_path": storage.relative_path(metadata_path),
             "prompt": "petri rating source",
             "ratings": {"rating": 1},
+            "lineage": {
+                "audio_path": storage.relative_path(audio_path),
+                "metadata_path": storage.relative_path(metadata_path),
+                "operation_params": {},
+            },
         },
     )
     response = client.post(
@@ -1394,7 +1537,9 @@ def test_audio_metadata_update_persists_petri_ratings() -> None:
             "input_audio_path": storage.relative_path(audio_path),
             "metadata_path": storage.relative_path(metadata_path),
             "operation": "metadata",
-            "prompt": "petri rating source",
+            "prompt": "petri rating source revised",
+            "negative_prompt": "speech",
+            "tags": ["petri", "favorite"],
             "ratings": {
                 "favorite": True,
                 "rating": 5,
@@ -1409,6 +1554,13 @@ def test_audio_metadata_update_persists_petri_ratings() -> None:
     assert saved["ratings"]["rating"] == 5
     assert saved["ratings"]["play_count"] == 2
     assert saved["ratings"]["fitness"] == 8.5
+    assert saved["prompt"] == "petri rating source revised"
+    assert saved["negative_prompt"] == "speech"
+    assert saved["tags"] == ["petri", "favorite"]
+    assert saved["operation_params"]["prompt"] == "petri rating source revised"
+    assert saved["lineage"]["prompt"] == "petri rating source revised"
+    assert saved["lineage"]["operation_params"]["negative_prompt"] == "speech"
+    assert saved["audio"]["path"] == storage.relative_path(audio_path)
 
 
 def test_time_render_event_rejects_invalid_source_window() -> None:
@@ -1946,6 +2098,21 @@ def test_job_eviction_keeps_recent_terminal_jobs_during_grace_window() -> None:
         storage.job_listeners.update(original_listeners)
 
 
+def test_lineage_child_lock_cache_is_lru_bounded(tmp_path: Path) -> None:
+    original_locks = storage._lineage_child_locks.copy()
+    try:
+        storage._lineage_child_locks.clear()
+        for index in range(MAX_LINEAGE_CHILD_LOCKS + 5):
+            path = tmp_path / f"parent_{index}.json"
+            path.write_text("{}", encoding="utf-8")
+            storage._lineage_child_lock(path)
+
+        assert len(storage._lineage_child_locks) == MAX_LINEAGE_CHILD_LOCKS
+    finally:
+        storage._lineage_child_locks.clear()
+        storage._lineage_child_locks.update(original_locks)
+
+
 def test_mock_audio_to_audio_accepts_input_path() -> None:
     input_path = settings.upload_dir / "pytest_allowed_input.wav"
     write_sine_wav(input_path, duration=0.25)
@@ -2120,6 +2287,22 @@ def test_dashboard_static_app_serves() -> None:
     assert head_response.status_code == 200
     assert head_response.text == ""
     assert head_response.headers["content-type"].startswith("text/html")
+
+
+def test_api_reference_mentions_schema_routes() -> None:
+    docs = Path("docs/api_reference.md").read_text(encoding="utf-8")
+    missing: list[str] = []
+    excluded = {"/", "/dashboard", "/dashboard/"}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path or path in excluded or not getattr(route, "include_in_schema", False):
+            continue
+        normalized = re.sub(r"\{([^}:]+):[^}]+\}", r"{\1}", path)
+        if normalized != "/":
+            normalized = normalized.rstrip("/")
+        if normalized not in docs:
+            missing.append(normalized)
+    assert missing == []
 
 
 def test_generated_output_can_be_played_from_files_route() -> None:
@@ -2311,6 +2494,28 @@ def test_multipart_audio_to_audio_transient_upload_is_cleaned_and_hidden(tmp_pat
     assert all(item.get("source_type") != "scratch" for item in library_response.json()["items"])
 
 
+def test_json_transient_cleanup_paths_cannot_delete_non_scratch_files() -> None:
+    protected_path = settings.audio_dir / "pytest_transient_cleanup_protected.wav"
+    write_sine_wav(protected_path, duration=0.25)
+
+    response = client.post(
+        "/audio-to-audio",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "invalid cleanup attempt",
+            "duration": 0.5,
+            "init_noise_level": 0.45,
+            "input_audio_path": "/outside-allowed-roots.wav",
+            "_transient_upload_paths": [storage.relative_path(protected_path)],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "error"
+    assert protected_path.exists()
+
+
 def test_multipart_inpaint_transient_upload_is_cleaned(tmp_path: Path) -> None:
     input_path = tmp_path / "pytest_transient_inpaint.wav"
     write_sine_wav(input_path, duration=0.25)
@@ -2452,6 +2657,26 @@ def test_image_to_audio_rejects_oversized_inline_image(monkeypatch: pytest.Monke
         },
     )
     assert response.status_code == 413
+
+
+def test_image_to_audio_does_not_use_cloud_without_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "ambient-key-that-must-not-trigger-upload")
+    monkeypatch.setattr(settings, "cloud_vision_enabled", False)
+    response = client.post(
+        "/image-to-audio/analyze",
+        json={
+            "image_base64": base64.b64encode(b"image").decode("ascii"),
+            "mime_type": "image/png",
+            "mode": "vision",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cloud_vision"] is False
+    assert body["cloud_vision_enabled"] is False
+    assert body["analysis_provider"] == "local_fallback"
 
 
 def test_mlx_command_includes_steps_and_validates_model() -> None:
@@ -2688,6 +2913,28 @@ def test_files_rename_conflict_preserves_source() -> None:
     assert audio_path.exists()
     assert metadata_path.exists()
     assert target_path.read_bytes() == b"existing-target"
+
+
+def test_files_rename_rejects_missing_metadata_without_renaming_audio() -> None:
+    audio_path = settings.output_root / "audio" / "pytest_rename_missing_metadata.wav"
+    missing_metadata_path = settings.output_root / "audio" / "pytest_rename_missing_metadata.json"
+    target_path = settings.output_root / "audio" / "pytest_rename_should_not_exist.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, missing_metadata_path, target_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(missing_metadata_path),
+            "new_stem": "pytest_rename_should_not_exist",
+        },
+    )
+    assert response.status_code == 404
+    assert audio_path.exists()
+    assert not target_path.exists()
 
 
 def test_files_bulk_delete_endpoint() -> None:

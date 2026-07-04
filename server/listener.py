@@ -33,6 +33,8 @@ DEFAULT_NEGATIVE = [
     "muddy background",
 ]
 
+PCM_HEADER_BYTES = 44
+
 MATERIAL_WORDS = {
     "glass",
     "metal",
@@ -208,21 +210,14 @@ def _try_local_ollama(request: ListenerEnhanceRequest) -> ListenerEnhanceResult 
 def _resolve_audio_path(raw_path: str) -> Path:
     if not raw_path:
         raise HTTPException(status_code=422, detail="audio_path is required")
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = settings.project_root / path
     try:
-        resolved = path.resolve(strict=True)
+        return storage.resolve_existing_input_audio_path(raw_path, label="listener audio")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"audio file not found: {raw_path}") from exc
-    allowed_roots = [
-        settings.audio_dir.resolve(),
-        settings.upload_dir.resolve(),
-        settings.output_root.resolve(),
-    ]
-    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-        raise HTTPException(status_code=422, detail="audio_path must stay inside germinator output directories")
-    return resolved
+    except PermissionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _wav_features(path: Path) -> dict[str, Any]:
@@ -232,6 +227,22 @@ def _wav_features(path: Path) -> dict[str, Any]:
             sample_rate = wav.getframerate()
             sample_width = wav.getsampwidth()
             frames = wav.getnframes()
+            duration = frames / float(sample_rate) if sample_rate else 0.0
+            pcm_bytes = frames * max(1, channels) * max(1, sample_width)
+            if duration > settings.listener_score_max_duration_seconds:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "listener scoring is capped at "
+                        f"{settings.listener_score_max_duration_seconds:.0f} seconds"
+                    ),
+                )
+            if max(path.stat().st_size, pcm_bytes + PCM_HEADER_BYTES) > settings.listener_score_max_bytes:
+                limit_mb = settings.listener_score_max_bytes / (1024 * 1024)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"listener scoring is capped at {limit_mb:.0f} MB WAV files",
+                )
             raw = wav.readframes(frames)
     except wave.Error as exc:
         raise HTTPException(status_code=422, detail="Listener scoring currently supports PCM WAV input") from exc

@@ -35,6 +35,26 @@ function checkCssVars() {
   assert.ok(refs.length > 1000, "CSS variable scan should cover the full dashboard stylesheet");
 }
 
+function checkResponsiveAssetContracts() {
+  const html = read("dashboard/static/index.html");
+  const css = read("dashboard/static/styles.css");
+  assert.match(
+    html,
+    /styles\.css\?v=20260618-review-p1/,
+    "Dashboard should request the current stylesheet cache key",
+  );
+  assert.match(
+    html,
+    /app\.js\?v=20260702-listening-p1/,
+    "Dashboard should request the current app script cache key",
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 760px\)[\s\S]*body\.canvas-active #tab-petri\.active\s*{[\s\S]*bottom:\s*calc\(174px \+ env\(safe-area-inset-bottom\)\)/,
+    "Mobile Petri panel should reserve clearance above the wrapped transport bar",
+  );
+}
+
 function loadMicroRender() {
   const source = read("dashboard/static/micro_render.js").replaceAll("export ", "");
   return new Function(`${source}\nreturn { lodBucket, SpriteCache, createMicroRenderer, GERM_FORMS, MODULE_FORMS };`)();
@@ -114,8 +134,21 @@ function checkWavetableContracts() {
   assert.match(app, /wavetable-asset-use/, "Wavetable library should expose Use in Germ actions");
   assert.match(app, /mutationDepth/, "Germ mutation depth should be available as a modulation target");
   assert.match(app, /tablePosition/, "Germ table position should be available as a modulation target");
+  assert.match(app, /wavetableExportUrl/, "Wavetable export links should use the configured API base URL");
+  assert.doesNotMatch(app, /href="\/(?:wavetables|files)\//, "Asset hrefs should not assume same-origin API routes");
   assert.match(synth, /export function createGermSynthEngine/, "Wavetable synth engine export should exist");
   assert.match(synth, /createPeriodicWave/, "Preview synth should build PeriodicWave frames");
+}
+
+function checkPetriActionContracts() {
+  const app = read("dashboard/static/app.js");
+  assert.match(app, /metadata_missing/, "Petri playback should tolerate missing metadata files");
+  assert.match(app, /metadata_error/, "Missing metadata details should be preserved for inspection");
+  assert.match(
+    app,
+    /catch \(error\)[\s\S]*metadata_error: error\.message/,
+    "Library item resolution should fall back to audio metadata when JSON metadata is stale",
+  );
 }
 
 function checkTimelineContracts() {
@@ -156,8 +189,10 @@ function checkControlBridgeContracts() {
 checkJsSyntax();
 checkDuplicateIds();
 checkCssVars();
+checkResponsiveAssetContracts();
 checkMicroRenderer();
 checkWavetableContracts();
+checkPetriActionContracts();
 checkTimelineContracts();
 checkListenerContracts();
 checkMicrocosmosContracts();

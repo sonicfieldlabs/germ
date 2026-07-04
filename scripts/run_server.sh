@@ -7,9 +7,12 @@ cd "$PROJECT_ROOT"
 mkdir -p output/audio output/metadata output/uploads
 
 RELOAD_FLAG=""
-if [ "${GERMINATOR_RELOAD:-0}" = "1" ] || [ "${GERMINATOR_RELOAD:-0}" = "true" ]; then
+RELOAD_VALUE="${GERM_RELOAD:-${GERMINATOR_RELOAD:-0}}"
+if [ "$RELOAD_VALUE" = "1" ] || [ "$RELOAD_VALUE" = "true" ]; then
   RELOAD_FLAG="--reload"
 fi
 
-uv run uvicorn server.main:app --host "${GERMINATOR_HOST:-127.0.0.1}" --port "${GERMINATOR_PORT:-8765}" ${RELOAD_FLAG}
-
+uv run uvicorn server.main:app \
+  --host "${GERM_HOST:-${GERMINATOR_HOST:-127.0.0.1}}" \
+  --port "${GERM_PORT:-${GERMINATOR_PORT:-8765}}" \
+  ${RELOAD_FLAG}

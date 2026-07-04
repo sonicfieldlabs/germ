@@ -39,6 +39,10 @@ class JobRunner:
             if job is None:
                 return {"cancelled": False, "status": "missing"}
             return {"cancelled": False, "status": job.status}
+        if future.done():
+            self._forget(job_id)
+            job = self.storage.get_job(job_id)
+            return {"cancelled": False, "status": job.status if job else "missing"}
         if cancel_event:
             cancel_event.set()
         if future.cancel():
@@ -49,6 +53,10 @@ class JobRunner:
             )
             self._forget(job_id)
             return {"cancelled": True, "status": "cancelled"}
+        if future.done():
+            self._forget(job_id)
+            job = self.storage.get_job(job_id)
+            return {"cancelled": False, "status": job.status if job else "missing"}
         self.storage.update_job(
             job_id,
             status="cancelled",

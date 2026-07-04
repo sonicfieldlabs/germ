@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+      - name: Python tests
+        run: uv run pytest -q
+      - name: Ruff
+        run: uv run ruff check server tests
+      - name: Dashboard syntax
+        run: |
+          node --check dashboard/static/app.js
+          node --check dashboard/static/dish.js
+          node --check dashboard/static/micro_forms.js
+          node --check dashboard/static/micro_render.js
+          node --check dashboard/static/micro_unicode.js
+          node --check dashboard/static/ui_utils.js
+          node --check dashboard/static/wavetable_synth.js
+      - name: Dashboard smoke
+        run: node scripts/smoke_dashboard.mjs

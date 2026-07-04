@@ -129,6 +129,8 @@ async def _gemini_analysis(
     *,
     image_base64: str,
 ) -> dict[str, Any] | None:
+    if not settings.cloud_vision_enabled:
+        return None
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return None
@@ -171,10 +173,15 @@ async def analyze_image_to_audio(request: ImageToAudioAnalyzeRequest) -> dict[st
             **_mock_analysis(),
             "imageSummary": "Image will be interpreted directly as a spectrogram-like signal.",
             "mode": "spectrogram",
+            "analysis_provider": "browser_spectrogram",
+            "cloud_vision": False,
             "fallback": False,
         }
+    analysis_provider = "local_fallback"
     try:
         analysis = await _gemini_analysis(request, image_base64=image_base64)
+        if analysis:
+            analysis_provider = "gemini"
     except httpx.HTTPStatusError as exc:
         analysis = {
             **_mock_analysis(),
@@ -191,6 +198,9 @@ async def analyze_image_to_audio(request: ImageToAudioAnalyzeRequest) -> dict[st
     return {
         **analysis,
         "mode": "vision",
+        "analysis_provider": analysis_provider,
+        "cloud_vision": analysis_provider == "gemini",
+        "cloud_vision_enabled": settings.cloud_vision_enabled,
         "prompt": primary.get("prompt") or _mock_analysis()["soundCards"][0]["prompt"],
         "duration": primary.get("durationSeconds") or 6,
     }
