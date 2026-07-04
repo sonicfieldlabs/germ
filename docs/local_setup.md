@@ -17,7 +17,7 @@ Run the server:
 Check:
 
 ```bash
-curl http://127.0.0.1:8765/health
+curl http://127.0.0.1:5178/health
 ```
 
 ## Mock Mode
@@ -26,7 +26,7 @@ Mock mode is the default. It writes placeholder WAV files and metadata so germ a
 the dashboard can be tested before model downloads.
 
 ```bash
-curl -X POST http://127.0.0.1:8765/generate \
+curl -X POST http://127.0.0.1:5178/generate \
   -H "content-type: application/json" \
   -d '{"provider":"mock","model":"mock-sine","prompt":"dry wood impact","duration":2}'
 ```
@@ -79,7 +79,7 @@ in or have not accepted the Stability AI model terms.
 
    ```bash
    ./launch_germ.command
-   curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
+   curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
    ```
 
 You can run the same check from the dashboard Status section with `HF Check`.
@@ -122,7 +122,7 @@ The optimized dashboard is served by the FastAPI sidecar:
 Open:
 
 ```text
-http://127.0.0.1:8765/dashboard
+http://127.0.0.1:5178/dashboard
 ```
 
 This dashboard is plain HTML/CSS/JavaScript, not Gradio. Gradio is only used for the
@@ -133,7 +133,7 @@ optional official Stability demo through `scripts/run_official_gradio.sh`.
 Open:
 
 ```text
-http://127.0.0.1:8765/dashboard
+http://127.0.0.1:5178/dashboard
 ```
 
 In the `Status` tab:

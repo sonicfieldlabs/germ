@@ -87,7 +87,7 @@ Double-click in Finder or run:
 The dashboard opens at:
 
 ```text
-http://127.0.0.1:8765/dashboard
+http://127.0.0.1:5178/dashboard
 ```
 
 Server-only launch:
@@ -102,7 +102,7 @@ private-network launch for another device in the same private-network:
 ./scripts/run_private-network.sh
 ```
 
-Open the printed `http://<private-network-ip>:8765/dashboard` URL from the other device.
+Open the printed `http://<private-network-ip>:5178/dashboard` URL from the other device.
 The script binds to the detected private-network IP by default and allowlists localhost,
 the detected private-network IP, the local host name, and private-network MagicDNS host names
 in `GERM_ALLOWED_HOSTS`.
@@ -113,7 +113,7 @@ detected, instead of binding to all interfaces.
 Health check:
 
 ```bash
-curl http://127.0.0.1:8765/health
+curl http://127.0.0.1:5178/health
 ```
 
 ## Python And MLX Runtimes
@@ -137,7 +137,7 @@ Useful environment variables:
 
 ```text
 GERM_HOST=127.0.0.1
-GERM_PORT=8765
+GERM_PORT=5178
 GERM_ACTIVE_PROVIDER=mock
 GERM_OUTPUT_DIR=output
 GERM_ALLOWED_INPUT_ROOTS=output
@@ -167,7 +167,7 @@ the model terms and log in when needed:
 
 ```bash
 uv run hf auth login
-curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
+curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
 ```
 
 Cancellation note: queued jobs can always be cancelled. MLX jobs terminate the
@@ -310,7 +310,7 @@ POST /files/reveal
 Example germination request:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/generate \
+curl -X POST http://127.0.0.1:5178/generate \
   -H "content-type: application/json" \
   -d '{
     "provider": "mock",

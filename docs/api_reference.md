@@ -3,7 +3,7 @@
 Default base URL:
 
 ```text
-http://127.0.0.1:8765
+http://127.0.0.1:5178
 ```
 
 ## GET /health
@@ -85,7 +85,7 @@ Use `check_models=true` to run dry-run download checks for Small SFX, Small Musi
 and Medium:
 
 ```bash
-curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
+curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
 ```
 
 Response includes `auth.logged_in`, per-model `status`, and `next_steps`. The route

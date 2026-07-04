@@ -56,7 +56,7 @@ class Settings:
     def __init__(self) -> None:
         self.project_root = PROJECT_ROOT
         self.host = _env("GERM_HOST", "127.0.0.1", legacy="GERMINATOR_HOST") or "127.0.0.1"
-        self.port = int(_env("GERM_PORT", "8765", legacy="GERMINATOR_PORT") or "8765")
+        self.port = int(_env("GERM_PORT", "5178", legacy="GERMINATOR_PORT") or "5178")
         self.active_provider = _env(
             "GERM_ACTIVE_PROVIDER",
             "mock",
