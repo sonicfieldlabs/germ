@@ -33,7 +33,7 @@ uv run hf auth login
 Then check from the server:
 
 ```bash
-curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
+curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
 ```
 
 If the model status is `requires_approval_or_login`, open the corresponding
@@ -78,7 +78,7 @@ Then launch the dashboard:
 Confirm the dashboard Server URL is:
 
 ```text
-http://127.0.0.1:8765
+http://127.0.0.1:5178
 ```
 
 ## Licensing
