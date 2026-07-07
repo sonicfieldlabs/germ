@@ -1,30 +1,55 @@
-export function createGermSynthEngine() {
-  let context = null;
+// Options let the Chamber inject its shared playback context and master-bus
+// destination so wavetable voices obey the master volume, limiter, and
+// recording tap. Standalone use (no options) still works with an own context.
+export function createGermSynthEngine({ getContext = null, getDestination = null } = {}) {
+  let ownContext = null;
   let currentSource = null;
   let currentGain = null;
   let currentTable = null;
   let holdActive = false;
 
+  const ATTACK = 0.006;
+  const RELEASE = 0.045;
+
   function ensureContext() {
-    if (!context) {
+    const shared = typeof getContext === "function" ? getContext() : null;
+    if (shared) return shared;
+    if (!ownContext) {
       const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextCtor) throw new Error("Web Audio is not available.");
-      context = new AudioContextCtor();
+      ownContext = new AudioContextCtor();
     }
-    return context;
+    return ownContext;
   }
 
+  function destinationFor(ctx) {
+    const shared = typeof getDestination === "function" ? getDestination() : null;
+    return shared || ctx.destination;
+  }
+
+  // Release-then-stop: every voice ends through a short gain ramp, never a
+  // hard stop() — the old engine clicked on each preview and stop.
   function stop() {
-    if (currentSource) {
-      try { currentSource.stop(); } catch {}
-      try { currentSource.disconnect(); } catch {}
-    }
-    if (currentGain) {
-      try { currentGain.disconnect(); } catch {}
-    }
+    const source = currentSource;
+    const gainNode = currentGain;
     currentSource = null;
     currentGain = null;
     holdActive = false;
+    if (!source) return;
+    const ctx = source.context;
+    if (gainNode) {
+      try {
+        const now = ctx.currentTime;
+        gainNode.gain.cancelScheduledValues(now);
+        gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+        gainNode.gain.linearRampToValueAtTime(0, now + RELEASE);
+      } catch {}
+    }
+    try { source.stop(ctx.currentTime + RELEASE + 0.01); } catch {}
+    window.setTimeout(() => {
+      try { source.disconnect(); } catch {}
+      try { gainNode?.disconnect(); } catch {}
+    }, (RELEASE + 0.05) * 1000);
   }
 
   async function loadWavetable(detail, frames) {
@@ -62,14 +87,25 @@ export function createGermSynthEngine() {
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
     oscillator.frequency.value = noteToFrequency(note);
-    gainNode.gain.value = Math.max(0, Math.min(1, Number(gain) || 0.45));
-    oscillator.connect(gainNode).connect(ctx.destination);
+    const level = Math.max(0, Math.min(1, Number(gain) || 0.45));
+    const now = ctx.currentTime;
+    const holdUntil = now + Math.max(0.05, Number(duration) || 0.7);
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(level, now + ATTACK);
+    gainNode.gain.setValueAtTime(level, holdUntil);
+    gainNode.gain.linearRampToValueAtTime(0, holdUntil + RELEASE);
+    oscillator.connect(gainNode).connect(destinationFor(ctx));
     currentSource = oscillator;
     currentGain = gainNode;
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + Math.max(0.05, Number(duration) || 0.7));
+    oscillator.start(now);
+    oscillator.stop(holdUntil + RELEASE + 0.01);
     oscillator.onended = () => {
-      if (currentSource === oscillator) stop();
+      if (currentSource === oscillator) {
+        currentSource = null;
+        currentGain = null;
+        try { oscillator.disconnect(); } catch {}
+        try { gainNode.disconnect(); } catch {}
+      }
     };
   }
 
@@ -81,12 +117,15 @@ export function createGermSynthEngine() {
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
     oscillator.frequency.value = noteToFrequency(note);
-    gainNode.gain.value = Math.max(0, Math.min(1, Number(gain) || 0.35));
-    oscillator.connect(gainNode).connect(ctx.destination);
+    const level = Math.max(0, Math.min(1, Number(gain) || 0.35));
+    const now = ctx.currentTime;
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(level, now + ATTACK + 0.002);
+    oscillator.connect(gainNode).connect(destinationFor(ctx));
     currentSource = oscillator;
     currentGain = gainNode;
     holdActive = true;
-    oscillator.start();
+    oscillator.start(now);
   }
 
   function renderPreviewBuffer({ position = 0, note = "C3", duration = 1, gain = 0.5 } = {}) {

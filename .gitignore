@@ -6,6 +6,12 @@ __pycache__/
 .ruff_cache/
 test-results/
 .env
+*.log
+*.bak
+*.backup
+*.orig
+docs/review-*.md
+*.session.json
 
 output/audio/*
 !output/audio/.gitkeep
@@ -25,6 +31,10 @@ output/intermediate/
 output/lora/
 output/playwright/
 output/scratch/
+output/sessions/
+
+apps/macos/.build/
+apps/macos/dist/
 
 /*.png
 /*.jpg

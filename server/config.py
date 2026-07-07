@@ -86,6 +86,7 @@ class Settings:
         self.wavetable_data_dir = self.wavetable_dir / "tables"
         self.wavetable_preview_dir = self.wavetable_dir / "previews"
         self.micro_biome_dir = self.output_root / "micro" / "biomes"
+        self.session_dir = self.output_root / "sessions"
         self.allowed_input_roots = _path_list_from_env(
             "GERM_ALLOWED_INPUT_ROOTS",
             [self.output_root],

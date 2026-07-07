@@ -30,6 +30,7 @@ from server.routes import (
     micro,
     models,
     performance,
+    sessions,
     strains,
     time_render,
     wavetables,
@@ -85,6 +86,7 @@ app.include_router(continue_audio.router)
 app.include_router(lora.router)
 app.include_router(strains.router)
 app.include_router(micro.router)
+app.include_router(sessions.router)
 app.include_router(jobs.router)
 app.include_router(library.router)
 app.include_router(listener.router)

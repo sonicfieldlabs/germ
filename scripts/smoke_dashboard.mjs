@@ -40,13 +40,24 @@ function checkResponsiveAssetContracts() {
   const css = read("dashboard/static/styles.css");
   assert.match(
     html,
-    /styles\.css\?v=20260618-review-p1/,
+    /styles\.css\?v=20260706-engine-p1/,
     "Dashboard should request the current stylesheet cache key",
   );
   assert.match(
     html,
-    /app\.js\?v=20260702-listening-p1/,
+    /app\.js\?v=20260706-engine-p1/,
     "Dashboard should request the current app script cache key",
+  );
+  const appSource = read("dashboard/static/app.js");
+  assert.match(
+    appSource,
+    /audio_engine\.js\?v=20260706-engine-p1/,
+    "App should import the current audio engine cache key",
+  );
+  assert.match(
+    appSource,
+    /dish\.js\?v=20260706-engine-p1/,
+    "App should import the current dish cache key",
   );
   assert.match(
     css,

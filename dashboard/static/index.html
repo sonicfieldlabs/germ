@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#FAFAFA" />
     <title>germ — generative microsound system</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23f7f7f4'/%3E%3Ccircle cx='22' cy='22' r='8' fill='%23476f5d'/%3E%3Ccircle cx='43' cy='20' r='5' fill='%23b9784a'/%3E%3Ccircle cx='38' cy='43' r='10' fill='%23292929'/%3E%3Cpath d='M26 27 35 37M30 20h12M25 42h12' stroke='%23292929' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260618-review-p1" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260706-engine-p1" />
   </head>
   <body class="canvas-active no-left-sidebar">
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -98,7 +98,7 @@
                 <button id="canvasCandidateModalBtn" class="transport-icon-button" type="button" aria-label="Open candidate tray" title="Candidate tray" data-help="Open generated alternatives waiting for audition or acceptance.">
                   <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="4" rx="1"/><rect x="5" y="11" width="14" height="4" rx="1"/><rect x="5" y="17" width="14" height="2" rx="1"/></svg>
                 </button>
-                <button id="canvasLoadSnapshotBtn" class="transport-icon-button" type="button" aria-label="Load canvas snapshot" title="Load snapshot" data-help="Open the snapshot library to load a saved graph.">
+                <button id="canvasLoadSnapshotBtn" class="transport-icon-button" type="button" aria-label="Open sessions and snapshots" title="Sessions &amp; snapshots" data-help="Open server sessions (shared with the mac app) and local snapshots.">
                   <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 </button>
                 <button id="canvasSnapshotBtn" class="transport-icon-button" type="button" aria-label="Save canvas snapshot" title="Save snapshot" data-help="Save the current graph snapshot.">
@@ -1400,7 +1400,7 @@
     <span id="layerCount" style="display:none">0 layers</span>
     <div id="generationState" style="display:none"></div>
     <div id="libraryList" style="display:none"></div>
-    <button id="refreshLibraryBtn" type="button" style="display:none"></button>
+    <button id="refreshLibraryBtn" type="button" style="display:none" aria-label="Refresh library" aria-hidden="true"></button>
     <div id="layerStackLarge" style="display:none"></div>
     <pre id="cultureJson" style="display:none"></pre>
     <span id="cultureId" style="display:none"></span>
@@ -1427,19 +1427,35 @@
       <div id="seedCards"></div>
     </div>
 
-    <!-- Snapshot Library Modal -->
+    <!-- Sessions & Snapshot Library Modal -->
     <div id="snapshotLibraryModal" class="snapshot-library-overlay" hidden>
       <div class="snapshot-library-dialog">
         <div class="snapshot-library-head">
-          <strong>Snapshot Library</strong>
+          <strong>Sessions &amp; Snapshots</strong>
           <button type="button" data-action="close-snapshot-library" aria-label="Close">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
           </button>
+        </div>
+        <div class="snapshot-library-section-head">
+          <span>Server Sessions</span>
+          <span class="snapshot-library-section-actions">
+            <button type="button" data-action="session-refresh" title="Refresh sessions" aria-label="Refresh sessions">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
+            </button>
+            <button type="button" data-action="session-save-as" title="Save the current graph as a named session" aria-label="Save current graph as session">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              <span>Save current</span>
+            </button>
+          </span>
+        </div>
+        <div id="sessionLibraryList" class="snapshot-library-list"></div>
+        <div class="snapshot-library-section-head">
+          <span>Local Snapshots</span>
         </div>
         <div id="snapshotLibraryList" class="snapshot-library-list"></div>
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260702-listening-p1"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260706-engine-p1"></script>
   </body>
 </html>

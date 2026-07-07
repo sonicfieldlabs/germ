@@ -1,6 +1,21 @@
 import { escapeHtml, iconSvg } from "./ui_utils.js";
-import { initOneBitDish } from "./dish.js?v=20260610-ecosystem-p2";
-import { createGermSynthEngine } from "./wavetable_synth.js?v=20260610-wt-p1";
+import { initOneBitDish } from "./dish.js?v=20260706-engine-p1";
+import { createGermSynthEngine } from "./wavetable_synth.js?v=20260706-engine-p1";
+import {
+  SMOOTH_FAST,
+  SMOOTH_UI,
+  SMOOTH_GLIDE,
+  smoothSet,
+  equalPowerMix,
+  createReverbImpulse,
+  softClipCurve,
+  encodeWavBlob,
+  ensureWorklets,
+  createGranularNode,
+  createGateNode,
+  createWavRecorder,
+  createVoicePool,
+} from "./audio_engine.js?v=20260706-engine-p1";
 
 /* Theme toggle */
 (function initTheme() {
@@ -576,6 +591,10 @@ let petriCanvasObserver = null;
 let decodeAudioContext = null;
 let canvasPlaybackAudioContext = null;
 let canvasMasterBus = null;
+// True once the germ AudioWorklet module is registered on the playback
+// context; granular/gate FX and WAV recording upgrade themselves then.
+let canvasWorkletsReady = false;
+let canvasTriggerPool = null;
 let activeCanvasSurface = "chamber";
 let oneBitDish = null;
 let canvasRealtimeModulationRaf = null;
@@ -7356,16 +7375,22 @@ function applyFxNodeToTarget(fxNode) {
     const basePlaybackRate = Math.min(4, Math.max(0.25, Number(params.basePlaybackRate ?? 1) || 1));
     target.playbackRate = Math.min(4, Math.max(0.25, Number((basePlaybackRate * Math.pow(2, semitones / 12)).toFixed(4))));
   }
-  const audio = canvasEnsureNodeAudio(target);
-  if (audio) canvasApplyNodeAudioParams(target);
+  if (["gain", "pan", "pitch"].includes(fxNode.fxType)) {
+    const audio = canvasEnsureNodeAudio(target);
+    if (audio) canvasApplyNodeAudioParams(target);
+  } else if (target.audio) {
+    // Chain FX (filter/space/echo/granular/…): live in-place update, no rebuild.
+    canvasApplyFxNodeParams(fxNode);
+  }
   canvasSaveState();
 }
 
 function applyMixerSoloMute() {
-  const soloed = canvasSoundNodes().filter((node) => node.solo);
   canvasSoundNodes().forEach((node) => {
-    const audio = canvasEnsureNodeAudio(node);
-    if (audio) canvasApplyNodeAudioParams(node);
+    // Only touch modules that already have live audio; creating elements for
+    // every silent node here wasted memory, and params apply at ensure-time
+    // anyway.
+    if (node.audio) canvasApplyNodeAudioParams(node);
   });
   canvasSaveState();
 }
@@ -7442,7 +7467,7 @@ function canvasSerializableGraph() {
   const serializableAssets = canvasAssets
     .map(({ file, objectUrl, ...asset }) => asset);
   const serializableNodes = canvasNodes
-    .map(({ audio, audioGraph, recorder, stream, recordingStream, recordedChunks, meterLevel, reverseObjectUrl, audioMode, captureTimeout, _recAnalyser, _recAudioCtx, _recFrame, ...node }) => ({
+    .map(({ audio, audioGraph, recorder, wavRecorder, stream, recordingStream, recordedChunks, meterLevel, reverseObjectUrl, audioMode, captureTimeout, _recAnalyser, _recAudioCtx, _recFrame, _recSource, _stopTimer, _waveLayer, ...node }) => ({
       ...node,
       recording: false,
     }));
@@ -7537,6 +7562,9 @@ function canvasSaveState() {
     _canvasLocalSaveTimer = null;
     _canvasFlushLocalSave();
   }, 600);
+  // The daemon mirrors the live graph so any surface (browser tab, macOS
+  // shell) can pick up exactly this session.
+  scheduleCurrentSessionSync();
 }
 
 window.addEventListener("pagehide", _canvasFlushLocalSave);
@@ -7591,6 +7619,8 @@ function openSnapshotLibrary() {
   const modal = $("snapshotLibraryModal");
   if (!modal) return;
   renderSnapshotLibrary();
+  renderSessionLibrary();
+  refreshCanvasSessions();
   modal.hidden = false;
 }
 
@@ -7686,6 +7716,165 @@ function toggleSnapshotFavorite(snapshotId) {
   renderSnapshotLibrary();
 }
 
+/* ── Sessions (server-side) ───────────────────────────────────────────
+   Named sessions and the autosaved "current" graph live on the daemon
+   (output/sessions/), not in localStorage — that is what lets the
+   browser dashboard and the native macOS shell open the exact same
+   modules, connections, and clock state from either surface.          */
+
+let canvasSessions = [];
+let _sessionSyncTimer = null;
+let _sessionSyncLastPayload = "";
+
+const SESSION_CLIENT_ID = (() => {
+  try {
+    let id = localStorage.getItem("germ-client-id");
+    if (!id) {
+      id = `client_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem("germ-client-id", id);
+    }
+    return id;
+  } catch {
+    return "client_anon";
+  }
+})();
+
+async function refreshCanvasSessions({ render = true } = {}) {
+  try {
+    canvasSessions = await api("/sessions");
+  } catch {
+    canvasSessions = [];
+  }
+  if (render) renderSessionLibrary();
+  return canvasSessions;
+}
+
+function renderSessionLibrary() {
+  const list = $("sessionLibraryList");
+  if (!list) return;
+  if (!canvasSessions.length) {
+    list.innerHTML = `<div class="snapshot-library-empty">No server sessions yet. Save one to share the graph between the browser and the mac app.</div>`;
+    return;
+  }
+  list.innerHTML = canvasSessions.map((session) => {
+    const date = session.updated_at ? new Date(session.updated_at).toLocaleString() : "—";
+    return `<div class="snapshot-card" data-session-id="${escapeHtml(session.id)}">
+      <div class="snapshot-card-info" data-action="session-load" data-session-id="${escapeHtml(session.id)}">
+        <div class="snapshot-card-name">${escapeHtml(session.name || session.id)}</div>
+        <div class="snapshot-card-meta">${session.node_count} nodes · ${session.edge_count} edges · ${date}</div>
+      </div>
+      <div class="snapshot-card-actions">
+        <button class="snapshot-delete" data-action="session-delete" data-session-id="${escapeHtml(session.id)}" title="Delete session" aria-label="Delete session" type="button">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function canvasSaveSessionAs() {
+  const suggested = canvasSessions[0]?.name || "";
+  const name = window.prompt("Session name:", suggested);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { setState("Session Error", "bad", "A session needs a name."); return; }
+  try {
+    const result = await api("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ name: trimmed, graph: canvasSerializableGraph() }),
+    });
+    await refreshCanvasSessions();
+    setState("Session Saved", "ok", `${result.session?.node_count ?? canvasNodes.length} module(s) → ${trimmed}`);
+  } catch (error) {
+    setState("Session Error", "bad", error.message);
+  }
+}
+
+async function canvasLoadSession(sessionId) {
+  try {
+    const result = await api(`/sessions/${encodeURIComponent(sessionId)}`);
+    const graph = result?.graph;
+    if (!graph || typeof graph !== "object") throw new Error("Session graph is empty.");
+    if (canvasNodes.length && !window.confirm("Load this session? The current graph will be replaced.")) return;
+    canvasClearGraphInMemory();
+    canvasResetAutoState();
+    if (canvasHydrateGraph(graph)) {
+      renderCanvas();
+      drawCanvasWaveforms();
+      canvasSaveState();
+      setState("Session Loaded", "ok", result.session?.name || sessionId);
+    } else {
+      setState("Session Error", "bad", "Could not hydrate session data.");
+    }
+    closeSnapshotLibrary();
+  } catch (error) {
+    setState("Session Error", "bad", error.message);
+  }
+}
+
+async function canvasDeleteSession(sessionId) {
+  if (!window.confirm("Delete this server session?")) return;
+  try {
+    await api(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+    await refreshCanvasSessions();
+    setState("Session Deleted", "ok");
+  } catch (error) {
+    setState("Session Error", "bad", error.message);
+  }
+}
+
+// Debounced autosave of the live graph to the daemon. Fire-and-forget: a
+// missing/offline server must never interrupt patching.
+function scheduleCurrentSessionSync() {
+  if (_sessionSyncTimer) clearTimeout(_sessionSyncTimer);
+  _sessionSyncTimer = setTimeout(() => {
+    _sessionSyncTimer = null;
+    pushCurrentSession();
+  }, 1500);
+}
+
+async function pushCurrentSession() {
+  try {
+    const graph = canvasSerializableGraph();
+    const payload = JSON.stringify({ nodes: graph.nodes, edges: graph.edges, assets: graph.assets, timeState: graph.timeState });
+    if (payload === _sessionSyncLastPayload) return;
+    _sessionSyncLastPayload = payload;
+    await api("/sessions/current", {
+      method: "PUT",
+      body: JSON.stringify({ graph, client_id: SESSION_CLIENT_ID }),
+    });
+  } catch {
+    // Server unreachable — the local graph still works; retry on next edit.
+    _sessionSyncLastPayload = "";
+  }
+}
+
+async function canvasRestoreCurrentSessionFromServer() {
+  try {
+    const result = await api("/sessions/current");
+    const graph = result?.graph;
+    if (result?.status !== "done" || !Array.isArray(graph?.nodes) || !graph.nodes.length) return false;
+    if (canvasNodes.length) return false;
+    if (!canvasHydrateGraph(graph)) return false;
+    _sessionSyncLastPayload = "";
+    renderCanvas();
+    drawCanvasWaveforms();
+    setState(
+      "Session Restored",
+      "ok",
+      `${graph.nodes.length} module(s) from the shared current session. Reset the graph to start empty.`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function canvasClearCurrentSessionOnServer() {
+  _sessionSyncLastPayload = "";
+  try { await api("/sessions/current", { method: "DELETE" }); } catch {}
+}
+
 function canvasClearGraphInMemory() {
   pushUndo();
   canvasAssets.forEach((asset) => {
@@ -7717,7 +7906,7 @@ function canvasHydrateGraph(graph) {
   const nodes = (Array.isArray(graph.nodes) ? graph.nodes : [])
     .filter((node) => node && typeof node === "object")
     .filter((node) => node.type !== "sound" || assetIds.has(node.assetId))
-    .map(({ audio, recorder, stream, recordingStream, recordedChunks, captureTimeout, _recAnalyser, _recAudioCtx, _recFrame, ...node }) => {
+    .map(({ audio, recorder, wavRecorder, stream, recordingStream, recordedChunks, captureTimeout, _recAnalyser, _recAudioCtx, _recFrame, _recSource, _stopTimer, _waveLayer, ...node }) => {
       const hydrated = {
         ...node,
         recording: false,
@@ -7762,9 +7951,12 @@ function canvasLoadState() {
   canvasClearGraphInMemory();
   const restoreMode = new URLSearchParams(window.location.search).get("restore");
   if (restoreMode !== "canvas") {
-    // Default Chamber starts empty; snapshots remain the explicit restore path.
     canvasResetAutoState();
     renderCanvas();
+    // Cross-surface continuity: if the daemon holds a live current session
+    // (saved by this browser earlier, another tab, or the macOS shell),
+    // restore it so every surface opens the same modules and connections.
+    canvasRestoreCurrentSessionFromServer();
     return;
   }
   const keys = ["germinator-canvas-current-session", "germinator-canvas-graph"];
@@ -7780,12 +7972,16 @@ function canvasLoadState() {
     }
   }
   renderCanvas();
+  if (!canvasNodes.length) canvasRestoreCurrentSessionFromServer();
 }
 
 function canvasResetGraph() {
   if (canvasNodes.length && !window.confirm("Reset the graph? Generated files remain in the library.")) return;
   canvasClearGraphInMemory();
   canvasResetAutoState();
+  // An explicit reset also clears the shared current session, so the other
+  // surface does not resurrect what the user just discarded.
+  canvasClearCurrentSessionOnServer();
   closeCanvasSourceMenu();
   renderCanvas();
 }
@@ -9728,7 +9924,14 @@ async function ensureNodeWavetable(node) {
   }
   if (!table) throw new Error("No wavetable available.");
   const frames = await fetchWavetableData(table.id);
-  if (!germSynthEngine) germSynthEngine = createGermSynthEngine();
+  if (!germSynthEngine) {
+    // Wavetable voices share the Chamber's context and master bus so they
+    // obey master volume, limiting, and recording instead of bypassing them.
+    germSynthEngine = createGermSynthEngine({
+      getContext: () => canvasPlaybackContext(),
+      getDestination: () => canvasMasterBusInput(),
+    });
+  }
   await germSynthEngine.loadWavetable(table, frames);
   return { table, frames };
 }
@@ -10540,28 +10743,65 @@ function drawCanvasBuffer(canvas, buffer, node, asset) {
   const height = canvas.height;
   const isDark = document.documentElement.getAttribute("data-theme") === "dark";
   const isVertical = document.body.classList.contains("canvas-vertical");
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = isDark ? "#151817" : "#fbfbf9";
-  ctx.fillRect(0, 0, width, height);
   const fullDuration = Number(asset?.durationSec) || buffer?.duration || Number(node?.futureDuration) || 4;
   const viewStart = Math.min(canvasNodePlaybackStart(node), Math.max(0, fullDuration - 0.01));
   const viewEnd = Math.min(Math.max(canvasNodePlaybackEnd(node), viewStart + 0.01), Math.max(fullDuration, viewStart + 0.01));
   const viewDuration = Math.max(0.01, viewEnd - viewStart);
   const sourceDuration = node?.playbackEndSec ? viewDuration : fullDuration;
   const totalDuration = Math.max(sourceDuration, Number(node?.futureDuration) || sourceDuration);
-  if (canvasVisualMode === "spectrogram") {
-    drawCanvasSpectrogramView(canvas, buffer, node, asset, {
-      width,
-      height,
-      isDark,
-      viewStart,
-      viewEnd,
-      totalDuration,
-      sourceDuration,
-    });
-    return;
-  }
+  const metrics = { width, height, isDark, isVertical, viewStart, viewEnd, totalDuration, sourceDuration };
 
+  // Static content (waveform or spectrogram plus regions) renders once into
+  // an offscreen layer that is blitted per frame; only the playhead is drawn
+  // per tick. The old path rescanned every visible sample of the buffer at
+  // 60 fps for each playing module — the main Chamber frame-loop cost.
+  const key = [
+    asset?.id || "none", buffer ? buffer.length : 0, canvasVisualMode,
+    width, height, isDark ? 1 : 0, isVertical ? 1 : 0,
+    viewStart.toFixed(4), viewEnd.toFixed(4), totalDuration.toFixed(4), sourceDuration.toFixed(4),
+    asset?.localOnly ? 1 : 0,
+    JSON.stringify(node?.regions || []),
+  ].join("|");
+  let layer = node?._waveLayer;
+  if (!layer || layer.key !== key) {
+    const surface = document.createElement("canvas");
+    surface.width = width;
+    surface.height = height;
+    const layerCtx = surface.getContext("2d");
+    layerCtx.fillStyle = isDark ? "#151817" : "#fbfbf9";
+    layerCtx.fillRect(0, 0, width, height);
+    if (canvasVisualMode === "spectrogram") {
+      drawCanvasSpectrogramView(layerCtx, buffer, node, asset, metrics);
+    } else {
+      canvasPaintWaveformLayer(layerCtx, buffer, node, asset, metrics);
+    }
+    layer = { key, surface };
+    if (node) node._waveLayer = layer;
+  }
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(layer.surface, 0, 0);
+
+  if (node?.audio && totalDuration > 0) {
+    const localTime = Math.max(0, canvasCurrentForwardPlaybackTime(node) - viewStart);
+    ctx.strokeStyle = isDark ? "rgba(232,232,232,0.72)" : "rgba(68,68,68,0.58)";
+    ctx.beginPath();
+    if (isVertical && canvasVisualMode !== "spectrogram") {
+      const playheadY = Math.max(0, Math.min(height, height - (localTime / totalDuration) * height));
+      ctx.lineWidth = Math.max(1, height / 520);
+      ctx.moveTo(0, playheadY);
+      ctx.lineTo(width, playheadY);
+    } else {
+      const playheadX = Math.min(width, Math.max(0, (localTime / totalDuration) * width));
+      ctx.lineWidth = Math.max(1, width / 760);
+      ctx.moveTo(playheadX, 0);
+      ctx.lineTo(playheadX, height);
+    }
+    ctx.stroke();
+  }
+}
+
+function canvasPaintWaveformLayer(ctx, buffer, node, asset, metrics) {
+  const { width, height, isDark, isVertical, viewStart, viewEnd, totalDuration, sourceDuration } = metrics;
   if (isVertical) {
     // === VERTICAL MODE: bottom-to-top ===
     const sourceHeight = Math.max(1, (sourceDuration / totalDuration) * height);
@@ -10625,17 +10865,6 @@ function drawCanvasBuffer(canvas, buffer, node, asset) {
         height: Math.max(2, startY - endY),
       }, { isDark, vertical: true, lineWidth: Math.max(2, height / 760) });
     });
-    // Playhead (horizontal line moving upward)
-    if (node?.audio && totalDuration > 0) {
-      const localTime = Math.max(0, canvasCurrentForwardPlaybackTime(node) - viewStart);
-      const playheadY = Math.max(0, Math.min(height, height - (localTime / totalDuration) * height));
-      ctx.strokeStyle = isDark ? "rgba(232,232,232,0.72)" : "rgba(68,68,68,0.58)";
-      ctx.lineWidth = Math.max(1, height / 520);
-      ctx.beginPath();
-      ctx.moveTo(0, playheadY);
-      ctx.lineTo(width, playheadY);
-      ctx.stroke();
-    }
   } else {
     // === HORIZONTAL MODE (default) ===
     const sourceWidth = Math.max(1, (sourceDuration / totalDuration) * width);
@@ -10692,16 +10921,6 @@ function drawCanvasBuffer(canvas, buffer, node, asset) {
         height,
       }, { isDark, vertical: false, lineWidth: Math.max(2, width / 760) });
     });
-    if (node?.audio && totalDuration > 0) {
-      const localTime = Math.max(0, canvasCurrentForwardPlaybackTime(node) - viewStart);
-      const playheadX = Math.min(width, Math.max(0, (localTime / totalDuration) * width));
-      ctx.strokeStyle = isDark ? "rgba(232,232,232,0.72)" : "rgba(68,68,68,0.58)";
-      ctx.lineWidth = Math.max(1, width / 760);
-      ctx.beginPath();
-      ctx.moveTo(playheadX, 0);
-      ctx.lineTo(playheadX, height);
-      ctx.stroke();
-    }
   }
 }
 
@@ -10783,8 +11002,7 @@ function canvasUpdateFilterCurveFromPointer(event, canvas, node) {
   canvasSaveState();
 }
 
-function drawCanvasSpectrogramView(canvas, audioBuffer, node, asset, metrics) {
-  const ctx = canvas.getContext("2d");
+function drawCanvasSpectrogramView(ctx, audioBuffer, node, asset, metrics) {
   const { width: w, height: h, isDark, viewStart, viewEnd, totalDuration, sourceDuration } = metrics;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = isDark ? "#151817" : "#fbfbf9";
@@ -10918,16 +11136,6 @@ function drawCanvasSpectrogramView(canvas, audioBuffer, node, asset, metrics) {
       height: h,
     }, { isDark, vertical: false, lineWidth: Math.max(1.4, w / 760) });
   });
-  if (node?.audio && totalDuration > 0) {
-    const localTime = Math.max(0, canvasCurrentForwardPlaybackTime(node) - viewStart);
-    const playheadX = Math.min(w, Math.max(0, (localTime / totalDuration) * w));
-    ctx.strokeStyle = isDark ? "rgba(232,232,232,0.72)" : "rgba(68,68,68,0.58)";
-    ctx.lineWidth = Math.max(1, w / 760);
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, h);
-    ctx.stroke();
-  }
 }
 
 async function drawCanvasCandidateWaveforms() {
@@ -11057,6 +11265,17 @@ async function canvasEnsurePlaybackAudio(node) {
   return canvasEnsureNodeAudio(node);
 }
 
+// The media element may only loop natively when no loop region and no
+// playback chain is involved — one helper so every call site agrees.
+function canvasNativeLoopFlag(node, loop = node?.loop) {
+  return Boolean(
+    loop
+    && !canvasLoopRegion(node)
+    && !canvasLinkedContinuationForSource(node)
+    && !canvasLinkedSourceForContinuation(node),
+  );
+}
+
 function canvasEnsureNodeAudio(node) {
   const asset = canvasAssetById(node?.assetId);
   if (!node || node.type !== "sound" || !asset) return null;
@@ -11078,7 +11297,7 @@ function canvasEnsureNodeAudio(node) {
       }
     });
   }
-  node.audio.loop = Boolean(node.loop && !canvasLoopRegion(node) && !canvasLinkedContinuationForSource(node) && !canvasLinkedSourceForContinuation(node));
+  node.audio.loop = canvasNativeLoopFlag(node);
   node.audio.playbackRate = Number(node.playbackRate) || 1;
   canvasEnsureNodeAudioGraph(node);
   canvasApplyNodeAudioParams(node);
@@ -11091,36 +11310,76 @@ function canvasPlaybackContext() {
   if (!canvasPlaybackAudioContext || canvasPlaybackAudioContext.state === "closed") {
     canvasPlaybackAudioContext = new AudioContextClass();
     canvasMasterBus = null;
+    canvasWorkletsReady = false;
+    canvasTriggerPool = null;
+    const context = canvasPlaybackAudioContext;
+    ensureWorklets(context).then((ready) => {
+      if (!ready || context !== canvasPlaybackAudioContext) return;
+      canvasWorkletsReady = true;
+      // Live FX chains upgrade in place (granular/gate move onto worklets).
+      canvasRebuildActiveAudioGraphs();
+    });
   }
   return canvasPlaybackAudioContext;
 }
 
 // Shared master bus: every voice (Chamber nodes AND Microcosmos germs) routes
-// through one gain stage and a brick-wall-ish limiter before the speakers. This
-// gives the whole app headroom protection when many sources play at once, makes
-// the master-volume control actually global, and provides a single tap point for
-// master recording / dish harvest.
+// through one smoothed gain stage, an automatic voice-count headroom trim, a
+// glue compressor, and a soft-clip safety stage before the speakers. One tap
+// point (bus.output) feeds master recording and dish harvest, so what you
+// record is exactly what you hear.
 function canvasEnsureMasterBus() {
   const context = canvasPlaybackContext();
   if (!context) return null;
   if (canvasMasterBus && canvasMasterBus.context === context) return canvasMasterBus;
   const gain = context.createGain();
   gain.gain.value = germinatorMasterVolume();
+  const headroom = context.createGain();
+  headroom.gain.value = 1;
   let limiter = null;
   if (context.createDynamicsCompressor) {
     limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -3;
-    limiter.knee.value = 0;
-    limiter.ratio.value = 20;
-    limiter.attack.value = 0.003;
-    limiter.release.value = 0.25;
-    gain.connect(limiter);
-    limiter.connect(context.destination);
-  } else {
-    gain.connect(context.destination);
+    limiter.knee.value = 1.5;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.15;
   }
-  canvasMasterBus = { context, gain, limiter, output: limiter || gain };
+  const clip = context.createWaveShaper();
+  clip.curve = softClipCurve();
+  clip.oversample = "2x";
+  gain.connect(headroom);
+  if (limiter) {
+    headroom.connect(limiter);
+    limiter.connect(clip);
+  } else {
+    headroom.connect(clip);
+  }
+  clip.connect(context.destination);
+  canvasMasterBus = { context, gain, headroom, limiter, clip, output: clip };
   return canvasMasterBus;
+}
+
+// Gentle master headroom: as simultaneous voices stack up, trim the bus by
+// 1/sqrt(n/3) so the compressor glues instead of pumping. Slow smoothing keeps
+// the move inaudible.
+function canvasUpdateMasterHeadroom() {
+  if (!canvasMasterBus?.headroom) return;
+  const playing = canvasSoundNodes().filter((node) => node.audio && !node.audio.paused).length
+    + (canvasTriggerPool?.activeCount || 0);
+  const target = playing > 3 ? 1 / Math.sqrt(playing / 3) : 1;
+  smoothSet(canvasMasterBus.headroom.gain, target, canvasMasterBus.context, 0.25);
+}
+
+function canvasEnsureTriggerPool() {
+  const context = canvasPlaybackContext();
+  if (!context) return null;
+  if (!canvasTriggerPool || canvasTriggerPool.context !== context) {
+    const pool = createVoicePool(context, canvasMasterBusInput() || context.destination, { maxVoices: 32 });
+    pool.context = context;
+    canvasTriggerPool = pool;
+  }
+  return canvasTriggerPool;
 }
 
 function canvasMasterBusInput() {
@@ -11133,17 +11392,15 @@ function canvasFxNodesForTarget(node) {
   return canvasNodes.filter((item) => item.type === "fx" && item.targetNodeId === node.id);
 }
 
+// Structural signature only: the chain rebuilds when FX modules are added,
+// removed, or reordered — parameter values apply in place through each unit's
+// apply() with smoothing, so a moving slider can never glitch the audio.
 function canvasAudioGraphSignature(node) {
   return JSON.stringify({
-    realtimeModulators: canvasModulatorNodes()
-      .map(normalizeModulatorNode)
-      .flatMap((modulator) => (modulator.routes || []).map((route) => ({ modulator, route })))
-      .filter(({ modulator, route }) => route.enabled !== false && route.targetNodeId === node.id && REALTIME_VALUE_MODULATOR_TYPES.has(modulator.modulatorType))
-      .map(({ modulator, route }) => ({ id: modulator.id, type: modulator.modulatorType, route: route.id, targetPath: route.targetPath, config: modulator.config, routeConfig: route.config })),
+    workletsReady: canvasWorkletsReady,
     fx: canvasFxNodesForTarget(node).map((fxNode) => ({
       id: fxNode.id,
       type: fxNode.fxType,
-      params: fxNode.params || {},
     })),
   });
 }
@@ -11250,39 +11507,52 @@ function canvasGateCurve(threshold = 0.18, release = 0.22) {
   return curve;
 }
 
-function canvasImpulseBuffer(context, mode = "room") {
-  const settings = {
-    room: { seconds: 0.55, decay: 2.8 },
-    plate: { seconds: 1.15, decay: 2.1 },
-    hall: { seconds: 2.1, decay: 1.8 },
-  }[mode] || { seconds: 0.55, decay: 2.8 };
-  const length = Math.max(1, Math.floor(context.sampleRate * settings.seconds));
-  const impulse = context.createBuffer(2, length, context.sampleRate);
-  for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
-    const data = impulse.getChannelData(channel);
-    for (let i = 0; i < length; i += 1) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, settings.decay);
-    }
-  }
-  return impulse;
-}
-
-function canvasWetDryUnit(context, processor, mix = 0.5) {
+// Equal-power wet/dry with a live setMix, so mix sweeps hold perceived level
+// and never rebuild the chain.
+function canvasWetDryUnit(context, processor, mix = 0.5, extraNodes = []) {
   const input = context.createGain();
   const dry = context.createGain();
   const wet = context.createGain();
   const output = context.createGain();
-  const clampedMix = canvasClamp01(mix, 0.5);
-  dry.gain.value = 1 - clampedMix;
-  wet.gain.value = clampedMix;
+  const levels = equalPowerMix(canvasClamp01(mix, 0.5));
+  dry.gain.value = levels.dry;
+  wet.gain.value = levels.wet;
   input.connect(dry);
   input.connect(processor);
   processor.connect(wet);
   dry.connect(output);
   wet.connect(output);
-  return { input, output, nodes: [input, dry, wet, processor, output] };
+  const unit = {
+    input,
+    output,
+    dry,
+    wet,
+    nodes: [input, dry, wet, processor, output, ...extraNodes],
+    setMix(nextMix, timeConstant = SMOOTH_UI) {
+      const next = equalPowerMix(canvasClamp01(nextMix, 0.5));
+      smoothSet(dry.gain, next.dry, context, timeConstant);
+      smoothSet(wet.gain, next.wet, context, timeConstant);
+    },
+  };
+  return unit;
 }
 
+function canvasGranularWorkletParams(fxNode) {
+  const params = fxNode.params || {};
+  const density = canvasClamp01(
+    params.density ?? params.generation ?? (Number.isFinite(Number(params.rateHz)) ? Number(params.rateHz) / 80 : 0.58),
+    0.58,
+  );
+  const jitter = canvasClamp01(params.jitter ?? params.drift ?? params.mutation ?? 0.35, 0.35);
+  const scatter = canvasClamp01(params.frequencyScatter ?? params.spray ?? params.smear ?? jitter * 0.7, 0.25);
+  const spray = canvasClamp01(params.spray ?? params.spread ?? 0.4, 0.4);
+  const sizeMs = Number(params.sizeMs ?? params.grainSizeMs ?? params.durationMs ?? params.minCellMs ?? 70);
+  return { density, sizeMs, jitter, scatter, spray };
+}
+
+// Every FX unit exposes apply(params): live, smoothed, in-place parameter
+// updates. The audio graph itself is only rebuilt on structural changes
+// (adding/removing FX modules), never while a slider moves.
 function canvasBuildFxUnit(context, fxNode) {
   const params = fxNode.params || {};
   if (fxNode.fxType === "filter") {
@@ -11290,12 +11560,32 @@ function canvasBuildFxUnit(context, fxNode) {
     filter.type = params.mode || "lowpass";
     filter.frequency.value = canvasFilterFrequency(fxNode);
     filter.Q.value = filter.type === "bandpass" ? 1.4 : 0.75;
-    return { input: filter, output: filter, nodes: [filter] };
+    return {
+      input: filter,
+      output: filter,
+      nodes: [filter],
+      apply(nextParams) {
+        const mode = nextParams.mode || "lowpass";
+        if (filter.type !== mode) filter.type = mode;
+        smoothSet(filter.frequency, canvasFilterFrequency({ ...fxNode, params: nextParams }), context, 0.02);
+        smoothSet(filter.Q, mode === "bandpass" ? 1.4 : 0.75, context, 0.02);
+      },
+    };
   }
   if (fxNode.fxType === "space") {
     const convolver = context.createConvolver();
-    convolver.buffer = canvasImpulseBuffer(context, params.mode || "room");
-    return canvasWetDryUnit(context, convolver, params.mix ?? 0.28);
+    let currentMode = params.mode || "room";
+    convolver.buffer = createReverbImpulse(context, currentMode);
+    const unit = canvasWetDryUnit(context, convolver, params.mix ?? 0.28);
+    unit.apply = (nextParams) => {
+      const mode = nextParams.mode || "room";
+      if (mode !== currentMode) {
+        currentMode = mode;
+        convolver.buffer = createReverbImpulse(context, mode);
+      }
+      unit.setMix(nextParams.mix ?? 0.28);
+    };
+    return unit;
   }
   if (fxNode.fxType === "echo") {
     const input = context.createGain();
@@ -11304,21 +11594,56 @@ function canvasBuildFxUnit(context, fxNode) {
     const wet = context.createGain();
     const delay = context.createDelay(1.5);
     const feedback = context.createGain();
-    const mix = canvasClamp01(params.mix ?? 0.25, 0.25);
+    // Damping in the feedback loop: repeats darken like tape instead of
+    // building into a metallic ring; the soft clip keeps high feedback
+    // settings from running away.
+    const damp = context.createBiquadFilter();
+    damp.type = "lowpass";
+    damp.frequency.value = 3400;
+    damp.Q.value = 0.5;
+    const loopClip = context.createWaveShaper();
+    loopClip.curve = softClipCurve();
+    const mixLevels = equalPowerMix(canvasClamp01(params.mix ?? 0.25, 0.25));
     delay.delayTime.value = Math.min(1.2, Math.max(0.04, Number(params.time) || 0.28));
     feedback.gain.value = Math.min(0.85, Math.max(0, Number(params.feedback) || 0.32));
-    dry.gain.value = 1 - mix;
-    wet.gain.value = mix;
+    dry.gain.value = mixLevels.dry;
+    wet.gain.value = mixLevels.wet;
     input.connect(dry);
     input.connect(delay);
-    delay.connect(feedback);
+    delay.connect(damp);
+    damp.connect(loopClip);
+    loopClip.connect(feedback);
     feedback.connect(delay);
-    delay.connect(wet);
+    damp.connect(wet);
     dry.connect(output);
     wet.connect(output);
-    return { input, output, nodes: [input, output, dry, wet, delay, feedback] };
+    return {
+      input,
+      output,
+      nodes: [input, output, dry, wet, delay, feedback, damp, loopClip],
+      apply(nextParams) {
+        smoothSet(delay.delayTime, Math.min(1.2, Math.max(0.04, Number(nextParams.time) || 0.28)), context, SMOOTH_GLIDE);
+        smoothSet(feedback.gain, Math.min(0.85, Math.max(0, Number(nextParams.feedback) || 0.32)), context, SMOOTH_UI);
+        const next = equalPowerMix(canvasClamp01(nextParams.mix ?? 0.25, 0.25));
+        smoothSet(dry.gain, next.dry, context, SMOOTH_UI);
+        smoothSet(wet.gain, next.wet, context, SMOOTH_UI);
+      },
+    };
   }
   if (fxNode.fxType === "granular" || MICRO_FX_TYPES.has(fxNode.fxType)) {
+    // True grain scheduling on the worklet when available; the legacy
+    // comb+bandpass texture remains as the fallback audition voice.
+    if (canvasWorkletsReady) {
+      const granular = createGranularNode(context, canvasGranularWorkletParams(fxNode));
+      if (granular) {
+        const unit = canvasWetDryUnit(context, granular, params.mix ?? 0.32);
+        unit.apply = (nextParams) => {
+          try { granular.port.postMessage(canvasGranularWorkletParams({ ...fxNode, params: nextParams })); } catch {}
+          unit.setMix(nextParams.mix ?? 0.32);
+        };
+        return unit;
+      }
+    }
     const input = context.createGain();
     const output = context.createGain();
     const dry = context.createGain();
@@ -11326,20 +11651,22 @@ function canvasBuildFxUnit(context, fxNode) {
     const delay = context.createDelay(0.35);
     const feedback = context.createGain();
     const filter = context.createBiquadFilter();
-    const density = canvasClamp01(
-      params.density ?? params.generation ?? (Number.isFinite(Number(params.rateHz)) ? Number(params.rateHz) / 80 : 0.58),
-      0.58,
-    );
-    const jitter = canvasClamp01(params.jitter ?? params.drift ?? params.frequencyScatter ?? params.mutation ?? 0.35, 0.35);
-    const mix = canvasClamp01(params.mix ?? 0.32, 0.32);
-    const sizeMs = Number(params.sizeMs ?? params.grainSizeMs ?? params.durationMs ?? params.minCellMs ?? 70);
-    delay.delayTime.value = Math.min(0.32, Math.max(0.012, (sizeMs / 1000) * (0.65 + jitter)));
-    feedback.gain.value = Math.min(0.48, Math.max(0.02, density * 0.34 + jitter * 0.12));
+    const applyLegacy = (nextParams, timeConstant = SMOOTH_UI) => {
+      const density = canvasClamp01(
+        nextParams.density ?? nextParams.generation ?? (Number.isFinite(Number(nextParams.rateHz)) ? Number(nextParams.rateHz) / 80 : 0.58),
+        0.58,
+      );
+      const jitter = canvasClamp01(nextParams.jitter ?? nextParams.drift ?? nextParams.frequencyScatter ?? nextParams.mutation ?? 0.35, 0.35);
+      const sizeMs = Number(nextParams.sizeMs ?? nextParams.grainSizeMs ?? nextParams.durationMs ?? nextParams.minCellMs ?? 70);
+      smoothSet(delay.delayTime, Math.min(0.32, Math.max(0.012, (sizeMs / 1000) * (0.65 + jitter))), context, SMOOTH_GLIDE);
+      smoothSet(feedback.gain, Math.min(0.48, Math.max(0.02, density * 0.34 + jitter * 0.12)), context, timeConstant);
+      smoothSet(filter.frequency, 1200 + density * 4200, context, timeConstant);
+      smoothSet(filter.Q, 0.8 + jitter * 4, context, timeConstant);
+      const next = equalPowerMix(canvasClamp01(nextParams.mix ?? 0.32, 0.32));
+      smoothSet(dry.gain, next.dry, context, timeConstant);
+      smoothSet(wet.gain, next.wet, context, timeConstant);
+    };
     filter.type = "bandpass";
-    filter.frequency.value = 1200 + density * 4200;
-    filter.Q.value = 0.8 + jitter * 4;
-    dry.gain.value = 1 - mix;
-    wet.gain.value = mix;
     input.connect(dry);
     input.connect(delay);
     delay.connect(feedback);
@@ -11348,18 +11675,74 @@ function canvasBuildFxUnit(context, fxNode) {
     filter.connect(wet);
     dry.connect(output);
     wet.connect(output);
-    return { input, output, nodes: [input, output, dry, wet, delay, feedback, filter] };
+    applyLegacy(params, 0.001);
+    return { input, output, nodes: [input, output, dry, wet, delay, feedback, filter], apply: applyLegacy };
   }
   if (fxNode.fxType === "saturation") {
     const shaper = context.createWaveShaper();
     shaper.curve = canvasDistortionCurve(params.drive ?? 0.28, params.mode || "warm");
     shaper.oversample = "4x";
-    return { input: shaper, output: shaper, nodes: [shaper] };
+    // Tone stage after the shaper: dark (2.2 kHz) to open (18 kHz). The
+    // `tone` default existed but was never wired to anything.
+    const tone = context.createBiquadFilter();
+    tone.type = "lowpass";
+    tone.Q.value = 0.6;
+    const toneFrequency = (value) => 2200 * Math.pow(18000 / 2200, canvasClamp01(value, 0.55));
+    tone.frequency.value = toneFrequency(params.tone ?? 0.55);
+    shaper.connect(tone);
+    let lastCurveKey = `${params.drive ?? 0.28}:${params.mode || "warm"}`;
+    let lastCurveAt = 0;
+    return {
+      input: shaper,
+      output: tone,
+      nodes: [shaper, tone],
+      apply(nextParams) {
+        const curveKey = `${nextParams.drive ?? 0.28}:${nextParams.mode || "warm"}`;
+        const now = performance.now();
+        if (curveKey !== lastCurveKey && now - lastCurveAt > 30) {
+          shaper.curve = canvasDistortionCurve(nextParams.drive ?? 0.28, nextParams.mode || "warm");
+          lastCurveKey = curveKey;
+          lastCurveAt = now;
+        }
+        smoothSet(tone.frequency, toneFrequency(nextParams.tone ?? 0.55), context, SMOOTH_UI);
+      },
+    };
   }
   if (fxNode.fxType === "gate") {
+    // Envelope-follower gate on the worklet (attack/hold/release). The old
+    // waveshaper "gate" stays only as the no-worklet fallback: it distorts
+    // rather than gates, because it has no time behavior.
+    if (canvasWorkletsReady) {
+      const gate = createGateNode(context, {
+        threshold: canvasClamp01(params.threshold ?? 0.18, 0.18),
+        release: Math.max(0.02, Number(params.release) || 0.22),
+      });
+      if (gate) {
+        return {
+          input: gate,
+          output: gate,
+          nodes: [gate],
+          apply(nextParams) {
+            try {
+              gate.port.postMessage({
+                threshold: canvasClamp01(nextParams.threshold ?? 0.18, 0.18),
+                release: Math.max(0.02, Number(nextParams.release) || 0.22),
+              });
+            } catch {}
+          },
+        };
+      }
+    }
     const shaper = context.createWaveShaper();
     shaper.curve = canvasGateCurve(params.threshold ?? 0.18, params.release ?? 0.22);
-    return { input: shaper, output: shaper, nodes: [shaper] };
+    return {
+      input: shaper,
+      output: shaper,
+      nodes: [shaper],
+      apply(nextParams) {
+        shaper.curve = canvasGateCurve(nextParams.threshold ?? 0.18, nextParams.release ?? 0.22);
+      },
+    };
   }
   return null;
 }
@@ -11380,6 +11763,7 @@ function canvasEnsureNodeAudioGraph(node) {
     const source = node.audioGraph?.source || context.createMediaElementSource(node.audio);
     canvasDisconnectAudioGraph(node.audioGraph);
     const fxUnits = [];
+    const fxUnitsById = new Map();
     let current = source;
     canvasFxNodesForTarget(node).forEach((fxNode) => {
       const unit = canvasBuildFxUnit(context, fxNode);
@@ -11387,24 +11771,34 @@ function canvasEnsureNodeAudioGraph(node) {
       current.connect(unit.input);
       current = unit.output;
       fxUnits.push(unit);
+      fxUnitsById.set(fxNode.id, unit);
     });
     const gain = context.createGain();
+    // Real level metering: a small analyser after the voice gain feeds the
+    // mixer meters (the old meters animated a sine function).
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.55;
     const panner = context.createStereoPanner ? context.createStereoPanner() : null;
     const busInput = canvasMasterBusInput() || context.destination;
     current.connect(gain);
+    gain.connect(analyser);
     if (panner) {
-      gain.connect(panner);
+      analyser.connect(panner);
       panner.connect(busInput);
     } else {
-      gain.connect(busInput);
+      analyser.connect(busInput);
     }
     node.audioGraph = {
       context,
       source,
       gain,
+      analyser,
+      meterData: new Uint8Array(analyser.frequencyBinCount),
       panner,
       fxUnits,
-      nodes: [source, ...fxUnits.flatMap((unit) => unit.nodes || []), gain, panner].filter(Boolean),
+      fxUnitsById,
+      nodes: [source, ...fxUnits.flatMap((unit) => unit.nodes || []), gain, analyser, panner].filter(Boolean),
       signature,
     };
     node.audio.volume = 1;
@@ -11412,6 +11806,20 @@ function canvasEnsureNodeAudioGraph(node) {
     node.audioGraph = null;
   }
   return node.audioGraph;
+}
+
+// Live FX parameter path: find the running unit for this FX module and apply
+// values in place. Only falls back to a structural rebuild when the unit does
+// not exist yet.
+function canvasApplyFxNodeParams(fxNode) {
+  const target = canvasNodes.find((item) => item.id === fxNode?.targetNodeId);
+  if (!target?.audio || !target.audioGraph) return;
+  const unit = target.audioGraph.fxUnitsById?.get(fxNode.id);
+  if (unit?.apply) {
+    try { unit.apply(fxNode.params || {}); } catch {}
+    return;
+  }
+  canvasEnsureNodeAudioGraph(target);
 }
 
 function canvasRebuildActiveAudioGraphs() {
@@ -11433,8 +11841,10 @@ function canvasApplyNodeAudioParams(node) {
   const playbackRate = Math.min(4, Math.max(0.25, canvasRealtimeModulatedValue(node, "playbackRate", Number(node.playbackRate ?? 1))));
   if (node.audioGraph?.gain) {
     node.audio.volume = 1;
-    node.audioGraph.gain.gain.value = volume;
-    if (node.audioGraph.panner) node.audioGraph.panner.pan.value = pan;
+    // Smoothed level/pan: mute, solo, mixer moves, and rAF modulation all land
+    // as short exponential ramps instead of stepping the AudioParam (zipper).
+    smoothSet(node.audioGraph.gain.gain, volume, node.audioGraph.context, SMOOTH_FAST);
+    if (node.audioGraph.panner) smoothSet(node.audioGraph.panner.pan, pan, node.audioGraph.context, SMOOTH_FAST);
   } else {
     node.audio.volume = Math.min(1, volume);
   }
@@ -11582,39 +11992,57 @@ function canvasMasterRecordingParticipants(recording = canvasMasterRecording) {
 
 async function canvasStartMasterRecording() {
   if (canvasMasterRecording) return;
-  if (typeof MediaRecorder === "undefined") throw new Error("Master recording is not available in this browser.");
   const context = canvasPlaybackContext();
-  if (!context?.createMediaStreamDestination) throw new Error("Audio graph recording is not available in this browser.");
+  if (!context) throw new Error("Audio graph recording is not available in this browser.");
   try {
     if (context.state === "suspended") await context.resume();
-    canvasMasterRecordDestination = context.createMediaStreamDestination();
     const masterBus = canvasEnsureMasterBus();
-    if (masterBus?.output) masterBus.output.connect(canvasMasterRecordDestination);
     canvasSoundNodes().forEach((node) => canvasEnsureNodeAudio(node));
     canvasRebuildActiveAudioGraphs();
-    const mimeType = MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    const recorder = new MediaRecorder(canvasMasterRecordDestination.stream, { mimeType });
     const activeNodes = canvasSoundNodes().filter((node) => node.audio && !node.audio.paused).map((node) => node.id);
-    canvasMasterRecording = {
-      startedAt: performance.now(),
-      startedAtIso: new Date().toISOString(),
-      chunks: [],
-      nodeIds: new Set(activeNodes),
-      mimeType,
-    };
-    canvasMasterRecorder = recorder;
-    recorder.addEventListener("dataavailable", (event) => {
-      if (event.data?.size && canvasMasterRecording) canvasMasterRecording.chunks.push(event.data);
-    });
-    recorder.addEventListener("stop", () => {
-      canvasCommitMasterRecording().catch((error) => finishWork("Record Error", "bad", error.message));
-    });
-    recorder.start(250);
+    // Preferred path: lossless PCM tap on the master output → dithered WAV.
+    // The webm/opus MediaRecorder remains only as the no-worklet fallback,
+    // because an opus master defeats the point of a quality chain.
+    const wavRecorder = masterBus?.output ? await createWavRecorder(context, masterBus.output) : null;
+    if (wavRecorder) {
+      canvasMasterRecording = {
+        kind: "wav",
+        startedAt: performance.now(),
+        startedAtIso: new Date().toISOString(),
+        nodeIds: new Set(activeNodes),
+        wavRecorder,
+      };
+      wavRecorder.start();
+    } else {
+      if (typeof MediaRecorder === "undefined" || !context.createMediaStreamDestination) {
+        throw new Error("Master recording is not available in this browser.");
+      }
+      canvasMasterRecordDestination = context.createMediaStreamDestination();
+      if (masterBus?.output) masterBus.output.connect(canvasMasterRecordDestination);
+      const mimeType = MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(canvasMasterRecordDestination.stream, { mimeType });
+      canvasMasterRecording = {
+        kind: "webm",
+        startedAt: performance.now(),
+        startedAtIso: new Date().toISOString(),
+        chunks: [],
+        nodeIds: new Set(activeNodes),
+        mimeType,
+      };
+      canvasMasterRecorder = recorder;
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size && canvasMasterRecording) canvasMasterRecording.chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => {
+        canvasCommitMasterRecording().catch((error) => finishWork("Record Error", "bad", error.message));
+      });
+      recorder.start(250);
+    }
     canvasMasterRecordTimer = window.setInterval(canvasUpdateMasterRecordTime, 100);
     canvasSetMasterRecordingUi(true);
-    setState("Recording", "busy", "Capturing master output.");
+    setState("Recording", "busy", canvasMasterRecording.kind === "wav" ? "Capturing master output (lossless WAV)." : "Capturing master output.");
   } catch (error) {
     if (canvasMasterBus?.output && canvasMasterRecordDestination) {
       try { canvasMasterBus.output.disconnect(canvasMasterRecordDestination); } catch {}
@@ -11632,7 +12060,12 @@ async function canvasStartMasterRecording() {
 }
 
 function canvasStopMasterRecording() {
-  if (!canvasMasterRecorder || !canvasMasterRecording) return;
+  if (!canvasMasterRecording) return;
+  if (canvasMasterRecording.kind === "wav") {
+    canvasCommitMasterRecording().catch((error) => finishWork("Record Error", "bad", error.message));
+    return;
+  }
+  if (!canvasMasterRecorder) return;
   try {
     if (canvasMasterRecorder.state !== "inactive") canvasMasterRecorder.stop();
   } catch (error) {
@@ -11650,25 +12083,36 @@ async function canvasCommitMasterRecording() {
   canvasMasterRecording = null;
   canvasMasterRecorder = null;
   const duration = Math.max(0.1, (performance.now() - recording.startedAt) / 1000);
-  const chunks = recording.chunks || [];
   if (canvasMasterBus?.output && canvasMasterRecordDestination) {
     try { canvasMasterBus.output.disconnect(canvasMasterRecordDestination); } catch {}
   }
   canvasMasterRecordDestination = null;
   canvasRebuildActiveAudioGraphs();
   canvasSetMasterRecordingUi(false);
-  if (!chunks.length) {
+  let blob = null;
+  let extension = "webm";
+  if (recording.kind === "wav") {
+    const captured = await recording.wavRecorder.stop().catch(() => null);
+    if (captured?.blob?.size) {
+      blob = captured.blob;
+      extension = "wav";
+    }
+  } else {
+    const chunks = recording.chunks || [];
+    if (chunks.length) blob = new Blob(chunks, { type: recording.mimeType || "audio/webm" });
+  }
+  if (!blob?.size) {
     setState("Recording Empty", "bad", "No master audio was captured.");
     return;
   }
-  const blob = new Blob(chunks, { type: recording.mimeType || "audio/webm" });
   const participants = canvasMasterRecordingParticipants(recording);
   const parentIds = participants.map((item) => item.soundId).filter(Boolean);
   const parentMetadataPaths = participants.map((item) => item.metadataPath).filter(Boolean);
-  const name = `organism_${recording.startedAtIso.replace(/[:.]/g, "-")}.webm`;
+  const name = `organism_${recording.startedAtIso.replace(/[:.]/g, "-")}.${extension}`;
   const metadata = {
     provider: "mock",
     model: "browser-master-recorder",
+    recording_format: extension === "wav" ? "wav-pcm16" : "webm-opus",
     prompt: "Master output organism recording",
     negative_prompt: "",
     duration,
@@ -11989,34 +12433,75 @@ function canvasLinkedSourceForContinuation(node) {
   return source?.type === "sound" ? source : null;
 }
 
+// Anti-click envelopes around HTMLMediaElement voices: a ~12 ms ramp-in on
+// play and a ~15 ms ramp-out before pause. Media elements themselves cut the
+// waveform mid-sample on play()/pause(), which is audible as a tick.
+function canvasFadeInNode(node) {
+  if (node?._stopTimer) {
+    // A pending fade-out pause must not kill the playback we are starting.
+    clearTimeout(node._stopTimer);
+    node._stopTimer = null;
+  }
+  const graph = node?.audioGraph;
+  if (!graph?.gain) return;
+  try {
+    graph.gain.gain.cancelScheduledValues(graph.context.currentTime);
+    graph.gain.gain.setValueAtTime(0, graph.context.currentTime);
+  } catch {}
+  canvasApplyNodeAudioParams(node);
+}
+
 async function canvasPlayNodeFromStart(node, startSec = null) {
   const audio = await canvasEnsurePlaybackAudio(node);
   if (!audio) return;
   if (node.audioGraph?.context?.state === "suspended") await node.audioGraph.context.resume();
   const range = canvasNodePlaybackRange(node);
   audio.currentTime = canvasAudioStartTimeForRange(node, startSec ?? range.start, range.end);
+  canvasFadeInNode(node);
   await audio.play();
   if (canvasMasterRecording) canvasMasterRecording.nodeIds.add(node.id);
+  canvasUpdateMasterHeadroom();
   startCanvasPlaybackFrame();
 }
 
-function canvasStopNodeAudio(node) {
+function canvasStopNodeAudio(node, { immediate = false } = {}) {
   if (!node?.audio) return;
+  if (node._stopTimer) {
+    clearTimeout(node._stopTimer);
+    node._stopTimer = null;
+  }
+  const graph = node.audioGraph;
+  if (!immediate && graph?.gain && !node.audio.paused) {
+    const now = graph.context.currentTime;
+    try {
+      graph.gain.gain.cancelScheduledValues(now);
+      graph.gain.gain.setValueAtTime(graph.gain.gain.value, now);
+      graph.gain.gain.linearRampToValueAtTime(0, now + 0.015);
+    } catch {}
+    node._stopTimer = window.setTimeout(() => {
+      node._stopTimer = null;
+      node.audio?.pause();
+      if (node.audio) node.audio.currentTime = canvasPlaybackResetTime(node);
+      canvasUpdateMasterHeadroom();
+    }, 26);
+    return;
+  }
   node.audio.pause();
   node.audio.currentTime = canvasPlaybackResetTime(node);
+  canvasUpdateMasterHeadroom();
 }
 
 async function canvasHandlePlaybackRangeEnd(node) {
   if (!node?.audio || node.audio.paused) return;
   const continuation = canvasLinkedContinuationForSource(node);
   if (continuation) {
-    canvasStopNodeAudio(node);
+    canvasStopNodeAudio(node, { immediate: true });
     await canvasPlayNodeFromStart(continuation);
     return;
   }
   const source = canvasLinkedSourceForContinuation(node);
   if (source) {
-    canvasStopNodeAudio(node);
+    canvasStopNodeAudio(node, { immediate: true });
     await canvasPlayNodeFromStart(source, 0);
     return;
   }
@@ -12088,8 +12573,20 @@ function updateCanvasPlayPauseIcons(soundNodes) {
 function updateCanvasMixerMeters(soundNodes = canvasSoundNodes()) {
   soundNodes.forEach((node) => {
     const playing = node.audio && !node.audio.paused;
-    const base = playing ? Math.abs(Math.sin((node.audio.currentTime + node.id.length) * 5.7)) : 0;
-    node.meterLevel = Math.min(1, base * Math.max(0, Number(node.volume ?? 1)));
+    let level = 0;
+    const graph = node.audioGraph;
+    if (playing && graph?.analyser && graph.meterData) {
+      // Real level from the per-voice analyser (peak of the time-domain
+      // block) — the previous meters animated a sine function.
+      graph.analyser.getByteTimeDomainData(graph.meterData);
+      let peak = 0;
+      for (let i = 0; i < graph.meterData.length; i += 1) {
+        const deviation = Math.abs(graph.meterData[i] - 128);
+        if (deviation > peak) peak = deviation;
+      }
+      level = Math.min(1, (peak / 128) * 1.35);
+    }
+    node.meterLevel = level;
     document.querySelectorAll(`.mixer-row[data-target-node-id="${CSS.escape(node.id)}"] .mixer-meter i`).forEach((bar) => {
       bar.style.height = `${Math.round(node.meterLevel * 100)}%`;
     });
@@ -12100,6 +12597,8 @@ function canvasAnyAudioPlaying(soundNodes) {
   return (soundNodes || canvasSoundNodes()).some((node) => node.audio && !node.audio.paused);
 }
 
+let canvasHeadroomTickCounter = 0;
+
 function canvasPlaybackTick() {
   canvasTransportFrame = null;
   const sn = canvasSoundNodes();
@@ -12107,6 +12606,8 @@ function canvasPlaybackTick() {
   drawCanvasWaveforms({ activeOnly: true });
   updateCanvasTimeReadouts(sn);
   updateCanvasMixerMeters(sn);
+  canvasHeadroomTickCounter = (canvasHeadroomTickCounter + 1) % 30;
+  if (canvasHeadroomTickCounter === 0) canvasUpdateMasterHeadroom();
   if (canvasAnyAudioPlaying(sn)) {
     canvasTransportFrame = requestAnimationFrame(canvasPlaybackTick);
   }
@@ -12132,8 +12633,10 @@ async function canvasPlayNode(nodeId) {
     : forwardTime < range.start || forwardTime >= range.end;
   if (audio.ended || outOfRange) audio.currentTime = canvasAudioStartTimeForRange(node, range.start, range.end);
   if (node.audioGraph?.context?.state === "suspended") await node.audioGraph.context.resume();
+  canvasFadeInNode(node);
   await audio.play();
   if (canvasMasterRecording) canvasMasterRecording.nodeIds.add(node.id);
+  canvasUpdateMasterHeadroom();
   startCanvasPlaybackFrame();
 }
 
@@ -12158,7 +12661,7 @@ function canvasToggleLoop(nodeId) {
   node.loop = !node.loop;
   if (node.loop && !canvasGlobalLoop) canvasToggleGlobalLoop();
   const audio = canvasEnsureNodeAudio(node);
-  if (audio) audio.loop = Boolean(node.loop && !canvasLoopRegion(node));
+  if (audio) audio.loop = canvasNativeLoopFlag(node);
   renderCanvas();
   setState(node.loop ? "Loop On" : "Loop Off", "ok", canvasLoopRegion(node) ? "Looping the green section." : node.label || node.id);
 }
@@ -12256,7 +12759,7 @@ function canvasToggleGlobalLoop() {
   canvasSoundNodes().forEach((node) => {
     node.loop = canvasGlobalLoop;
     const audio = canvasEnsureNodeAudio(node);
-    if (audio) audio.loop = Boolean(canvasGlobalLoop && !canvasLoopRegion(node) && !canvasLinkedContinuationForSource(node) && !canvasLinkedSourceForContinuation(node));
+    if (audio) audio.loop = canvasNativeLoopFlag(node, canvasGlobalLoop);
   });
   const button = $("canvasGlobalLoopBtn");
   if (button) {
@@ -12304,6 +12807,13 @@ function canvasDeleteNode(nodeId) {
   if (node.recorder && node.recording) {
     try { node.recorder.stop(); } catch {}
   }
+  if (node.wavRecorder) {
+    // Deleting a module mid-take discards the capture.
+    try { node.wavRecorder.stop(); } catch {}
+    node.wavRecorder = null;
+  }
+  if (node._recSource) { try { node._recSource.disconnect(); } catch {} node._recSource = null; }
+  if (node._recAnalyser) { try { node._recAnalyser.disconnect(); } catch {} node._recAnalyser = null; }
   if (node.type === "audio_snapshot") snapshotStopRuntime(node);
   if (node.recordingStream) {
     node.recordingStream.getTracks().forEach((track) => track.stop());
@@ -12341,35 +12851,68 @@ function canvasDeleteNode(nodeId) {
 async function canvasStartRecording(nodeId) {
   const node = canvasNodes.find((item) => item.id === nodeId);
   if (!node || node.type !== "record") return;
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+  if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("Browser recording is not available in this environment.");
   }
   const stream = await mediaStreamWithPermissionTimeout(
-    navigator.mediaDevices.getUserMedia({ audio: true }),
+    navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    }),
     "Microphone",
   );
-  const recorder = new MediaRecorder(stream);
   node.stream = stream;
-  node.recorder = recorder;
   node.recordedChunks = [];
   node.recording = true;
-  recorder.addEventListener("dataavailable", (event) => {
-    if (event.data?.size) node.recordedChunks.push(event.data);
-  });
-  recorder.addEventListener("stop", () => canvasCommitRecording(node.id));
-  recorder.start();
+  // Lossless path: tap the mic through the shared context and keep raw PCM,
+  // committing a WAV. MediaRecorder webm/opus is only the no-worklet fallback
+  // — hardware takes shouldn't be born lossy.
+  const context = canvasPlaybackContext();
+  let wavRecorder = null;
+  let micSource = null;
+  if (context) {
+    if (context.state === "suspended") await context.resume().catch(() => {});
+    try {
+      micSource = context.createMediaStreamSource(stream);
+      wavRecorder = await createWavRecorder(context, micSource);
+    } catch {
+      micSource = null;
+      wavRecorder = null;
+    }
+  }
+  if (wavRecorder) {
+    node.wavRecorder = wavRecorder;
+    node.recorder = null;
+    node._recSource = micSource;
+    wavRecorder.start();
+  } else {
+    if (typeof MediaRecorder === "undefined") {
+      stream.getTracks().forEach((track) => track.stop());
+      node.stream = null;
+      node.recording = false;
+      throw new Error("Browser recording is not available in this environment.");
+    }
+    const recorder = new MediaRecorder(stream);
+    node.recorder = recorder;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) node.recordedChunks.push(event.data);
+    });
+    recorder.addEventListener("stop", () => canvasCommitRecording(node.id));
+    recorder.start();
+  }
   renderCanvas();
-  setState("Recording", "busy", "Capturing hardware input.");
+  setState("Recording", "busy", node.wavRecorder ? "Capturing hardware input (lossless WAV)." : "Capturing hardware input.");
 
-  // Live waveform visualisation
+  // Live waveform visualisation — reuses the shared playback context instead
+  // of spinning up a dedicated AudioContext per take.
   try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioCtx.createMediaStreamSource(stream);
+    const audioCtx = context || new (window.AudioContext || window.webkitAudioContext)();
+    const source = node._recSource || audioCtx.createMediaStreamSource(stream);
+    node._recSource = source;
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
     source.connect(analyser);
     node._recAnalyser = analyser;
-    node._recAudioCtx = audioCtx;
+    node._recAudioCtx = audioCtx === canvasPlaybackAudioContext ? null : audioCtx;
     const bufLen = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufLen);
     function drawRecWave() {
@@ -12402,11 +12945,20 @@ async function canvasStartRecording(nodeId) {
 
 function canvasStopRecording(nodeId) {
   const node = canvasNodes.find((item) => item.id === nodeId);
-  if (!node || node.type !== "record" || !node.recorder || !node.recording) return;
-  node.recorder.stop();
+  if (!node || node.type !== "record" || !node.recording) return;
+  if (node.wavRecorder) {
+    const recorder = node.wavRecorder;
+    node.wavRecorder = null;
+    recorder.stop()
+      .then((captured) => canvasCommitRecording(node.id, captured))
+      .catch((error) => finishWork("Record Error", "bad", error.message));
+  } else if (node.recorder) {
+    node.recorder.stop();
+  }
   if (node._recFrame) { cancelAnimationFrame(node._recFrame); node._recFrame = null; }
+  if (node._recSource) { try { node._recSource.disconnect(); } catch {} node._recSource = null; }
+  if (node._recAnalyser) { try { node._recAnalyser.disconnect(); } catch {} node._recAnalyser = null; }
   if (node._recAudioCtx) { node._recAudioCtx.close().catch(() => {}); node._recAudioCtx = null; }
-  node._recAnalyser = null;
 }
 
 function snapshotMimeType() {
@@ -12648,13 +13200,17 @@ async function canvasCommitAudioSnapshot(nodeId) {
   finishWork("Snapshot Registered", "ok", `${duration.toFixed(2)}s audio germ`);
 }
 
-function canvasCommitRecording(nodeId) {
+function canvasCommitRecording(nodeId, captured = null) {
   const node = canvasNodes.find((item) => item.id === nodeId);
   if (!node || node.type !== "record") return;
-  const blob = new Blob(node.recordedChunks || [], { type: node.recorder?.mimeType || "audio/webm" });
+  const blob = captured?.blob?.size
+    ? captured.blob
+    : new Blob(node.recordedChunks || [], { type: node.recorder?.mimeType || "audio/webm" });
+  const extension = captured?.blob?.size ? "wav" : "webm";
   node.stream?.getTracks().forEach((track) => track.stop());
   node.recording = false;
   node.recorder = null;
+  node.wavRecorder = null;
   node.stream = null;
   node.recordedChunks = [];
   if (!blob.size) {
@@ -12663,8 +13219,8 @@ function canvasCommitRecording(nodeId) {
     return;
   }
   const objectUrl = URL.createObjectURL(blob);
-  const name = `recording_${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
-  const file = new File([blob], name, { type: blob.type || "audio/webm" });
+  const name = `recording_${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
+  const file = new File([blob], name, { type: blob.type || (extension === "wav" ? "audio/wav" : "audio/webm") });
   const asset = canvasCreateAsset({
     objectUrl,
     file,
@@ -13864,6 +14420,27 @@ async function triggerTimePad(nodeId, padIndex, { fromKeyboard = false } = {}) {
     if (!fromKeyboard) setState("Empty Pad", "muted", "Assign or generate a pad sound first.");
     return;
   }
+  // Pads fire as pooled AudioBufferSource voices: low-latency, polyphonic
+  // with voice stealing, anti-click envelopes, honoring the pad's volume AND
+  // pan, and routed through the master bus (FX-safe, limiter-safe, captured
+  // by master recording). The old path spawned a raw `new Audio()` per hit
+  // that bypassed all of that — and ignored the pan slider entirely.
+  const pool = canvasEnsureTriggerPool();
+  const context = canvasPlaybackContext();
+  if (pool && context) {
+    if (context.state === "suspended") await context.resume().catch(() => {});
+    const buffer = await fetchCanvasAudioBuffer(asset);
+    if (buffer) {
+      pool.trigger(buffer, {
+        gain: Math.min(2, Math.max(0, Number(pad.volume ?? 1))),
+        pan: Math.min(1, Math.max(-1, Number(pad.pan ?? 0))),
+      });
+      canvasUpdateMasterHeadroom();
+      if (node.recording) recordTimePadEvent(node, padIndex);
+      return;
+    }
+  }
+  // Decode failed or Web Audio unavailable: keep the sound alive the old way.
   const audio = new Audio(outputUrl(asset.audioPath));
   audio.volume = Math.min(1, Math.max(0, Number(pad.volume ?? 1)));
   await audio.play();
@@ -16701,6 +17278,23 @@ document.addEventListener("click", async (event) => {
       toggleSnapshotFavorite(button.dataset.snapshotId);
       return;
     }
+    if (action === "session-save-as") {
+      await canvasSaveSessionAs();
+      return;
+    }
+    if (action === "session-load") {
+      await canvasLoadSession(button.dataset.sessionId);
+      return;
+    }
+    if (action === "session-delete") {
+      await canvasDeleteSession(button.dataset.sessionId);
+      return;
+    }
+    if (action === "session-refresh") {
+      await refreshCanvasSessions();
+      setState("Sessions Refreshed", "ok", `${canvasSessions.length} saved`);
+      return;
+    }
     if (action.startsWith("strain-")) {
       if (action === "strain-refresh") {
         await refreshStrains({ render: true });
@@ -18555,6 +19149,15 @@ oneBitDish = initOneBitDish({
   ensureMasterBus: canvasEnsureMasterBus,
   masterBusInput: canvasMasterBusInput,
   importAudioBlob: canvasImportAudioBlob,
+  smoothSet,
+  // Lossless harvest: the dish records the master output as PCM → WAV when
+  // the worklet tap is available (null → dish falls back to MediaRecorder).
+  createMasterWavRecorder: async () => {
+    const context = canvasPlaybackContext();
+    const bus = canvasEnsureMasterBus();
+    if (!context || !bus?.output) return null;
+    return createWavRecorder(context, bus.output);
+  },
   createSoundNode: ({ asset, label, edgeType, x, y, width, parentNodeId, region, metadata }) => {
     const node = canvasCreateSoundNode({ asset, label, edgeType, x, y, width, parentNodeId, region });
     if (node && metadata) {
@@ -18594,7 +19197,7 @@ syncAllRangeFills(document);
 let _germinatorMasterVolume = 1;
 function applyMasterVolume(percent) {
   _germinatorMasterVolume = Math.max(0, Math.min(1, Number(percent) / 100));
-  if (canvasMasterBus?.gain) canvasMasterBus.gain.gain.value = _germinatorMasterVolume;
+  if (canvasMasterBus?.gain) smoothSet(canvasMasterBus.gain.gain, _germinatorMasterVolume, canvasMasterBus.context, SMOOTH_UI);
   document.querySelectorAll("audio").forEach((el) => {
     const own = el.dataset.ownVolume != null ? Number(el.dataset.ownVolume) : 1;
     el.volume = Math.max(0, Math.min(1, own * _germinatorMasterVolume));

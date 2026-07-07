@@ -767,18 +767,8 @@ def test_earworm_sessions_do_not_appear_as_library_items() -> None:
     )
 
 
-def test_earworm_cross_stack_fixture_is_present() -> None:
-    fixture = Path("tests/fixtures/germ-organism-mapping.session.json")
-    session = json.loads(fixture.read_text(encoding="utf-8"))
-    assert session["app_id"] == "germ"
-    assert session["policy"]["local_only"] is True
-    assert {event["type"] for event in session["events"]} >= {
-        "prompt.ingested",
-        "generation.requested",
-        "audio.generated",
-        "analysis.frame",
-        "render.created",
-    }
+def test_earworm_session_trace_fixtures_are_not_committed() -> None:
+    assert not list(Path("tests").rglob("*.session.json"))
 
 
 def test_earworm_export_accepts_legacy_string_source_metadata() -> None:

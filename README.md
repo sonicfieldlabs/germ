@@ -54,6 +54,16 @@ Official Stable Audio references:
 - Shared audio player with waveform drawing, metadata preview, path copy, open, and
   Finder reveal.
 - Diagnostics for provider readiness and Hugging Face access.
+- Realtime Chamber engine with a shared master bus (smoothed gain, automatic
+  voice-count headroom, glue compressor, soft-clip safety), smoothed in-place FX
+  parameter updates, AudioWorklet granular and envelope-follower gate processors,
+  pooled trigger voices for pads, and lossless WAV master/harvest/mic recording.
+- Server-side sessions (`/sessions`): named saves and an autosaved current graph
+  shared by every surface — reopen the same modules and connections from any
+  browser or from the native macOS app.
+- Native macOS shell (`apps/macos`): a WKWebView app embedding the same
+  dashboard the browser shows, with daemon supervision — one instance, one
+  session, two surfaces. See `docs/macos-shell.md`.
 
 ## Micro / Matter Architecture
 
@@ -94,6 +104,12 @@ Server-only launch:
 
 ```bash
 ./scripts/run_server.sh
+```
+
+Native macOS app (embeds the same dashboard, supervises the same daemon):
+
+```bash
+apps/macos/script/build_and_run.sh
 ```
 
 private-network launch for another device in the same private-network:
@@ -294,6 +310,11 @@ GET  /micro/biomes
 POST /micro/biomes
 GET  /micro/biomes/{biome_id}
 DELETE /micro/biomes/{biome_id}
+GET  /sessions
+POST /sessions
+GET/PUT/DELETE /sessions/current
+GET  /sessions/{session_id}
+DELETE /sessions/{session_id}
 GET/POST /wavetables/... (list, detail, data, convert, prompt, mutate, render, import, export)
 GET/POST /control/...  (ports, routes, enable/delete, events, OSC, norns/Fates, MIDI, CV profiles, analyze-audio, render-cv)
 POST /jobs/submit

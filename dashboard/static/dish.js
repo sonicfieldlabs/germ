@@ -435,15 +435,22 @@ function ensureGermAudio(germ) {
 function applyGermFilter(germ, membrane) {
   const graph = germ.audioGraph;
   if (!graph?.filter || !graph?.wet || !graph?.dry) return;
+  // Smoothed per-frame updates: germs drifting across a membrane sweep the
+  // filter instead of stepping it (audible zipper before).
+  const smooth = (param, value, tc = 0.045) => {
+    if (E?.smoothSet) E.smoothSet(param, value, graph.context, tc);
+    else param.value = value;
+  };
   const amount = membrane?.amount || 0;
-  graph.wet.gain.value = amount;
-  graph.dry.gain.value = 1 - amount * 0.7;
+  smooth(graph.wet.gain, amount);
+  smooth(graph.dry.gain, 1 - amount * 0.7);
   if (amount <= 0) return;
   const brightness = Math.max(0, Math.min(1, Number(germ.genome?.traits?.brightness ?? 0.5)));
   const density = Math.max(0, Math.min(1, Number(germ.genome?.traits?.density ?? 0.35)));
-  graph.filter.type = membrane.mode || "bandpass";
-  graph.filter.frequency.value = membrane.frequency || (420 + brightness * 5200);
-  graph.filter.Q.value = membrane.q || (0.7 + density * 5);
+  const mode = membrane.mode || "bandpass";
+  if (graph.filter.type !== mode) graph.filter.type = mode;
+  smooth(graph.filter.frequency, membrane.frequency || (420 + brightness * 5200), 0.06);
+  smooth(graph.filter.Q, membrane.q || (0.7 + density * 5), 0.06);
 }
 
 function attemptGermPlay(germ) {
@@ -3396,27 +3403,21 @@ function recordCameraPathPoint() {
 async function toggleHarvest() {
   if (harvestRec) { stopHarvest(); return; }
   const context = E.playbackContext();
-  if (!context || typeof MediaRecorder === "undefined") { E.finishWork("Harvest Error", "bad", "Recording unavailable."); return; }
+  if (!context) { E.finishWork("Harvest Error", "bad", "Recording unavailable."); return; }
   if (context.state === "suspended") { try { await context.resume(); } catch {} }
   const bus = E.ensureMasterBus();
-  const dest = context.createMediaStreamDestination();
-  (bus.output || bus.gain).connect(dest);
   const scope = currentHarvestScope();
-  const mime = MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-  const recorder = new MediaRecorder(dest.stream, { mimeType: mime });
-  const recordingState = { recorder, dest, scope, cameraPath: [], startedAt: performance.now(), lastCameraAt: 0 };
-  const chunks = [];
-  recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
-  recorder.onstop = async () => {
-    try { (bus.output || bus.gain).disconnect(dest); } catch {}
-    const blob = new Blob(chunks, { type: mime });
-    if (!blob.size) { E.finishWork("Harvest Empty", "bad", "No audio captured."); return; }
+  const recordingState = { scope, cameraPath: [], startedAt: performance.now(), lastCameraAt: 0 };
+
+  const commitHarvest = async (blob, extension) => {
+    if (!blob?.size) { E.finishWork("Harvest Empty", "bad", "No audio captured."); return; }
     try {
       const meta = {
         mode: "microcosmos",
         operation: "microcosmos_harvest",
         source_type: "microcosmos",
         germinator_mode: "harvest",
+        recording_format: extension === "wav" ? "wav-pcm16" : "webm-opus",
         harvest_type: scope.scoped ? "visible_scope" : "whole_world",
         germs: livingGermSummaries(scope),
         modules: modules.map((m) => ({ id: m.id, type: m.type, x: Math.round(m.x), y: Math.round(m.y), radius: m.radius })),
@@ -3428,7 +3429,7 @@ async function toggleHarvest() {
         camera_path: recordingState.cameraPath || [],
         lineage: { operation: "microcosmos_harvest", source_type: "microcosmos", mode: "microcosmos", parents: livingGermSummaries(scope).map((g) => g.assetId).filter(Boolean) },
       };
-      const result = await E.importAudioBlob(blob, meta, `microcosmos_harvest_${Date.now()}.webm`);
+      const result = await E.importAudioBlob(blob, meta, `microcosmos_harvest_${Date.now()}.${extension}`);
       const audioPath = result?.audio_files?.[0];
       if (audioPath) {
         const asset = E.createAsset({ audioPath, metadataPath: result.metadata_files?.[0], metadata: meta, origin: "microcosmos" });
@@ -3441,7 +3442,34 @@ async function toggleHarvest() {
       E.finishWork("Harvest Error", "bad", error.message);
     }
   };
-  recorder.start(250);
+
+  // Lossless-first: PCM tap on the master output → WAV. MediaRecorder
+  // webm/opus remains the fallback when worklets are unavailable.
+  const wavRecorder = E.createMasterWavRecorder ? await E.createMasterWavRecorder().catch(() => null) : null;
+  if (wavRecorder) {
+    recordingState.kind = "wav";
+    recordingState.wavRecorder = wavRecorder;
+    recordingState.commit = commitHarvest;
+    wavRecorder.start();
+  } else if (typeof MediaRecorder !== "undefined") {
+    const dest = context.createMediaStreamDestination();
+    (bus.output || bus.gain).connect(dest);
+    const mime = MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+    const recorder = new MediaRecorder(dest.stream, { mimeType: mime });
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      try { (bus.output || bus.gain).disconnect(dest); } catch {}
+      await commitHarvest(new Blob(chunks, { type: mime }), "webm");
+    };
+    recorder.start(250);
+    recordingState.kind = "webm";
+    recordingState.recorder = recorder;
+    recordingState.dest = dest;
+  } else {
+    E.finishWork("Harvest Error", "bad", "Recording unavailable.");
+    return;
+  }
   harvestRec = recordingState;
   dom.harvestBtn?.classList.add("is-active");
   recordCameraPathPoint();
@@ -3449,9 +3477,16 @@ async function toggleHarvest() {
 }
 function stopHarvest() {
   if (!harvestRec) return;
-  try { if (harvestRec.recorder.state !== "inactive") harvestRec.recorder.stop(); } catch {}
+  const rec = harvestRec;
   harvestRec = null;
   dom.harvestBtn?.classList.remove("is-active");
+  if (rec.kind === "wav" && rec.wavRecorder) {
+    rec.wavRecorder.stop()
+      .then((captured) => rec.commit(captured?.blob, "wav"))
+      .catch((error) => E.finishWork("Harvest Error", "bad", error.message));
+    return;
+  }
+  try { if (rec.recorder && rec.recorder.state !== "inactive") rec.recorder.stop(); } catch {}
 }
 
 function toggleAllLiving() {

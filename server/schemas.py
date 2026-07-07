@@ -188,6 +188,34 @@ class MicroBiomeResult(BaseModel):
     state: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionSaveRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    graph: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionCurrentRequest(BaseModel):
+    graph: dict[str, Any] = Field(default_factory=dict)
+    client_id: str | None = Field(default=None, max_length=64)
+
+
+class SessionSummary(BaseModel):
+    id: str
+    name: str
+    session_file: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    node_count: int = 0
+    edge_count: int = 0
+    asset_count: int = 0
+    client_id: str | None = None
+
+
+class SessionResult(BaseModel):
+    status: Literal["done", "deleted", "empty"]
+    session: SessionSummary | None = None
+    graph: dict[str, Any] = Field(default_factory=dict)
+
+
 class WavetableConvertRequest(BaseModel):
     input_audio_path: str
     metadata_path: str | None = None

@@ -521,6 +521,55 @@ Loads one biome state.
 
 Deletes one saved biome state.
 
+## GET /sessions
+
+Lists named Chamber sessions saved under `output/sessions/`. A session is the
+full serializable module graph (assets, modules, connections, candidates, and
+clock state). Because sessions live on the daemon, the browser dashboard and
+the native macOS shell share one list.
+
+## POST /sessions
+
+Saves (or updates, by name) a named session:
+
+```json
+{
+  "name": "evening drone patch",
+  "graph": {
+    "version": 1,
+    "assets": [],
+    "nodes": [],
+    "edges": [],
+    "timeState": {}
+  }
+}
+```
+
+Graphs are capped at 4 MB and 128 named sessions.
+
+## GET /sessions/current
+
+Returns the autosaved live graph (`status: "empty"` when none exists). The
+dashboard pushes the current graph here on a debounce so any surface can
+restore exactly where the last one left off.
+
+## PUT /sessions/current
+
+Replaces the autosaved live graph. Accepts an optional `client_id` marking
+which surface wrote last.
+
+## DELETE /sessions/current
+
+Clears the autosaved live graph (the dashboard calls this on graph reset).
+
+## GET /sessions/{session_id}
+
+Loads one named session with its full graph.
+
+## DELETE /sessions/{session_id}
+
+Deletes one named session.
+
 ## GET /listener/providers
 
 Lists listener providers: heuristic local scorer/enhancer, optional local Ollama
