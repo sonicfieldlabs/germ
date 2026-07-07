@@ -10,6 +10,7 @@ test-results/
 *.bak
 *.backup
 *.orig
+docs/[a]udit-*.md
 docs/review-*.md
 *.session.json
 
