@@ -60,6 +60,11 @@ def _oida_url() -> str:
     return os.getenv("GERM_OIDA_URL", "http://127.0.0.1:8765").rstrip("/")
 
 
+def _akousmata_url() -> str:
+    """The akousmata listening navigator (github.com/sonicfieldlabs/akousmata)."""
+    return os.getenv("GERM_AKOUSMATA_URL", "http://127.0.0.1:5180").rstrip("/")
+
+
 # ── /import — the three buttons ────────────────────────────────────────────────
 
 
@@ -173,8 +178,12 @@ class GenerationAkousmaRequest(BaseModel):
     operation: str = "generate"
     params: dict[str, Any] = Field(default_factory=dict)
     parent_akousma_ids: list[str] = Field(default_factory=list)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
     listening: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    summary: str = ""
+    session_id: str = ""
+    germ_lineage: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/akousma/generation")
@@ -191,8 +200,12 @@ def write_generation_akousma(request: GenerationAkousmaRequest) -> dict[str, Any
                 operation=request.operation,
                 params=request.params,
                 parent_akousma_ids=request.parent_akousma_ids,
+                relations=request.relations,
                 listening=request.listening,
                 tags=request.tags,
+                summary=request.summary or None,
+                session_id=request.session_id or None,
+                germ_lineage=request.germ_lineage or None,
                 store=store,
             )
         except FileNotFoundError as exc:
@@ -313,6 +326,7 @@ def _page_lineage(record: dict[str, Any], payload: dict[str, Any]) -> str:
         f"<a href='/import?akousma={html.escape(record['akousma_id'])}&mode=sound'>open as sound →</a>"
         f"<a href='/import?akousma={html.escape(record['akousma_id'])}&mode=prompt'>open as prompt →</a>"
         f"<a href='{html.escape(_oida_url())}'>listen with oída →</a>"
+        f"<a href='{html.escape(_akousmata_url())}'>open in akousmata →</a>"
         f"<a href='/dashboard'>germ dashboard →</a></div>"
     )
     return _shell("germ — lineage explorer", body)

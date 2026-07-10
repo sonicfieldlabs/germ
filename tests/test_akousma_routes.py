@@ -138,3 +138,117 @@ def test_generation_rejects_unknown_parent(client, store_path, tmp_path):
         json={"audio_path": str(generated), "parent_akousma_ids": ["akm_missing"]},
     )
     assert response.status_code == 404
+
+
+# ── spec v1.1: envelopes, summaries, kinship, and the SA lineage bridge ──────
+
+
+def test_prompt_derivation_reads_v11_envelopes(client, store_path):
+    with akousma.AkousmataStore(store_path) as store:
+        record = akousma.new_akousma(
+            audio={"asset_id": "cap_env"},
+            originating_app="oida",
+            summary="harbor at dusk, machinery keynote",
+            listening={
+                "oida.signal": {
+                    "created_at": "2026-07-10T00:00:00Z",
+                    "payload": {"caption": "low machinery tone"},
+                }
+            },
+        )
+        store.put(record)
+    response = client.get(f"/import?akousma={record['akousma_id']}&mode=prompt&format=json")
+    assert response.status_code == 200
+    # the record's own skimmable summary leads the prompt
+    assert response.json()["prompt"].startswith("harbor at dusk")
+
+    with akousma.AkousmataStore(store_path) as store:
+        stored = store.get(record["akousma_id"])
+        stored.pop("summary")
+        store.put(stored)
+    response = client.get(f"/import?akousma={record['akousma_id']}&mode=prompt&format=json")
+    assert "low machinery tone" in response.json()["prompt"]
+
+
+def test_generation_writes_v11_record_with_sa_lineage_bridge(client, seeded, store_path, tmp_path):
+    audio_file = tmp_path / "organism.wav"
+    audio_file.write_bytes(_wav_bytes())
+    organism_metadata = {
+        "sound_id": "organism_007",
+        "lineage": {"operation": "mutate", "parents": ["organism_003"]},
+        "model": "stable-audio-3",
+        "provider": "stable_audio_mlx",
+        "seed": 42,
+        "operation_params": {"strength": 0.6},
+        "latents": {"path": "somewhere"},
+    }
+    from server.akousma_store import organism_lineage_extension
+
+    response = client.post("/akousma/generation", json={
+        "audio_path": str(audio_file),
+        "prompt": "metallic harbor bloom",
+        "model": "stable-audio-3",
+        "operation": "mutate",
+        "parent_akousma_ids": [seeded["akousma_id"]],
+        "listening": {"germ.listen": {"notes": "brighter than its parent"}},
+        "tags": ["cultivated"],
+        "summary": "metallic harbor bloom",
+        "session_id": "sess_organism_007",
+        "germ_lineage": organism_lineage_extension(organism_metadata),
+    })
+    assert response.status_code == 200, response.text
+    record = response.json()["record"]
+
+    # skimmable summary + earworm session link
+    assert record["summary"] == "germ mutate: metallic harbor bloom"
+    assert record["session_id"] == "sess_organism_007"
+
+    # akousma lineage carries id-level genealogy only
+    assert record["lineage"]["parent_akousma_ids"] == [seeded["akousma_id"]]
+
+    # the SA cultivation detail lives ONCE in the extension (non-redundant)
+    sa = record["extensions"]["germ.lineage"]
+    assert sa["organism_id"] == "organism_007"
+    assert sa["organism_parents"] == ["organism_003"]
+    assert sa["operation"] == "mutate"
+    assert sa["generation_index"] == 2
+    assert sa["seed"] == 42
+    assert sa["has_latents"] is True
+
+    # listening entries arrive enveloped with the germ contract pin
+    entry = record["listening"]["germ.listen"]
+    assert entry["contract"] == "germ/v0.1"
+    assert entry["payload"] == {"notes": "brighter than its parent"}
+    assert entry["summary"] == "brighter than its parent"
+
+
+def test_generation_recurrence_links_same_source(client, seeded, store_path, tmp_path):
+    audio_file = tmp_path / "same.wav"
+    audio_file.write_bytes(_wav_bytes(seconds=0.07))
+    first = client.post("/akousma/generation", json={
+        "audio_path": str(audio_file), "prompt": "first pass", "summary": "first pass",
+    }).json()["record"]
+    second = client.post("/akousma/generation", json={
+        "audio_path": str(audio_file), "prompt": "second pass", "summary": "second pass",
+    }).json()["record"]
+    relations = second["lineage"].get("relations") or []
+    assert any(
+        rel["type"] == "same_source_as" and rel["target_akousma_id"] == first["akousma_id"]
+        for rel in relations
+    )
+
+
+def test_generation_accepts_explicit_relations(client, seeded, store_path, tmp_path):
+    audio_file = tmp_path / "variant.wav"
+    audio_file.write_bytes(_wav_bytes(seconds=0.09))
+    response = client.post("/akousma/generation", json={
+        "audio_path": str(audio_file),
+        "prompt": "a sibling take",
+        "relations": [{"type": "variant_of", "target_akousma_id": seeded["akousma_id"]}],
+    })
+    assert response.status_code == 200, response.text
+    record = response.json()["record"]
+    assert {"type": "variant_of", "target_akousma_id": seeded["akousma_id"]} in record["lineage"]["relations"]
+    with akousma.AkousmataStore(store_path) as store:
+        incoming = store.related(seeded["akousma_id"])
+    assert any(link["akousma_id"] == record["akousma_id"] for link in incoming)
