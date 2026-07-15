@@ -2642,6 +2642,37 @@ def test_files_route_refuses_to_serve_metadata_json() -> None:
     assert client.get(f"/files/{audio_file}").status_code == 200
     assert client.get(f"/files/{metadata_file}").status_code == 404
 
+    metadata_response = client.post("/metadata/read", json={"path": metadata_file})
+    assert metadata_response.status_code == 200
+    assert metadata_response.json()["prompt"] == "servable extension guard"
+
+
+def test_metadata_read_route_restricts_paths_and_foreign_origins() -> None:
+    response = client.post(
+        "/generate",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "protected metadata reader",
+            "duration": 0.25,
+            "output_name": "pytest_metadata_reader",
+        },
+    )
+    assert response.status_code == 200
+    audio_file = response.json()["audio_files"][0]
+    metadata_file = response.json()["metadata_files"][0]
+
+    assert client.post("/metadata/read", json={"path": audio_file}).status_code == 422
+    assert client.post("/metadata/read", json={"path": "pyproject.toml"}).status_code == 403
+    assert (
+        client.post(
+            "/metadata/read",
+            headers={"origin": "https://example.invalid"},
+            json={"path": metadata_file},
+        ).status_code
+        == 403
+    )
+
 
 def test_audio_to_audio_invalid_json_returns_400() -> None:
     response = client.post(

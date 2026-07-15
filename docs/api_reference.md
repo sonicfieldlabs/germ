@@ -732,6 +732,20 @@ Serves generated media files (audio and images) under `output/` so the local das
 can preview them. Only media extensions are served — metadata JSON and other files are
 not exposed over GET. Requests outside the configured output directory are rejected.
 
+## POST /metadata/read
+
+Reads one metadata JSON object for the local dashboard without exposing prompts and
+lineage records through the public file GET route:
+
+```json
+{
+  "path": "output/metadata/example.json"
+}
+```
+
+The path must identify a JSON file under `output/`. Browser requests from foreign
+origins are rejected by the local-origin middleware.
+
 ## POST /files/reveal
 
 macOS-only helper for the local dashboard:

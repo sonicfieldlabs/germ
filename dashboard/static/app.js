@@ -2138,9 +2138,10 @@ async function decodeAudioArrayBuffer(buffer) {
 
 async function loadMetadata(path) {
   if (!path) return null;
-  const response = await fetch(outputUrl(path));
-  if (!response.ok) throw new Error(`Metadata not found: ${path}`);
-  return response.json();
+  return api("/metadata/read", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
 }
 
 function displayNameFromPath(path) {

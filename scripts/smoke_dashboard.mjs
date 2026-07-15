@@ -45,10 +45,15 @@ function checkResponsiveAssetContracts() {
   );
   assert.match(
     html,
-    /app\.js\?v=20260706-engine-p1/,
+    /app\.js\?v=20260714-metadata-p1/,
     "Dashboard should request the current app script cache key",
   );
   const appSource = read("dashboard/static/app.js");
+  assert.match(
+    appSource,
+    /api\("\/metadata\/read",/,
+    "Dashboard metadata reads should use the origin-protected API route",
+  );
   assert.match(
     appSource,
     /audio_engine\.js\?v=20260706-engine-p1/,
@@ -191,6 +196,11 @@ function checkListenerContracts() {
 function checkMicrocosmosContracts() {
   const html = read("dashboard/static/index.html");
   const dish = read("dashboard/static/dish.js");
+  assert.doesNotMatch(
+    html,
+    /class="transport-icon-button nav-item"[^>]+data-tab="onebit"/,
+    "Toolbar should not expose the retired Open Microcosmos button",
+  );
   assert.match(html, /id="dishBiomeBtn"/, "Microcosmos biome action should be present");
   assert.match(html, /id="dishSpectatorBtn"/, "Microcosmos spectator action should be present");
   assert.match(dish, /\/micro\/biomes/, "Microcosmos should call biome routes");

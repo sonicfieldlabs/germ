@@ -29,6 +29,10 @@ class RevealRequest(BaseModel):
     path: str
 
 
+class MetadataReadRequest(BaseModel):
+    path: str
+
+
 class RenameRequest(BaseModel):
     audio_path: str
     metadata_path: str | None = None
@@ -66,6 +70,31 @@ def _resolve_output_file(file_path: str) -> Path:
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
     return target
+
+
+@router.post("/metadata/read")
+def read_output_metadata(request: MetadataReadRequest) -> dict:
+    """Read one metadata object without exposing JSON on the public GET route.
+
+    POST is intentional: LocalOriginAndHeadersMiddleware rejects browser requests
+    from foreign origins for non-safe methods, while CLI clients without an Origin
+    header remain usable.
+    """
+    target = _resolve_output_file(request.path)
+    if target.suffix.lower() != ".json":
+        raise HTTPException(status_code=422, detail="Metadata path must point to a JSON file.")
+    try:
+        metadata = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Metadata is not valid JSON: {request.path}",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read metadata file: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=422, detail="Metadata JSON must contain an object.")
+    return metadata
 
 
 @router.post("/files/reveal")
