@@ -1,13 +1,71 @@
 # GERM
 
-GERM is a local-first modular laboratory for generative microsound. It treats
-sound as matter that can be generated, granulated, mutated, routed, listened
-to, cultivated, and traced through lineage.
+> **Public alpha · Open research release · Local-first · Open-source · Under active development**
+
+GERM is a local cultivation environment for generative microsound. It treats
+sound as material that can be generated, granulated, grafted, mutated,
+listened to, and traced through lineage. A listening from Oída can become a
+prompt or source in GERM; a successful render can become a descendant in
+Akousmata and return to Oída for another listening.
 
 Current release: `0.2.0`.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
+
+![GERM dashboard with a prompt module in the cultivation graph](docs/assets/germ-dashboard.png)
+
+## Try It Without a Model
+
+The default mock provider exercises the dashboard, graph, jobs, metadata,
+lineage, and WAV-writing path without downloading a model:
+
+```bash
+uv sync --extra dev
+./launch_germ.command
+```
+
+Open `http://127.0.0.1:5178/dashboard`. The mock provider emits a test signal,
+not model-generated sound, so it is safe for installation and integration
+checks but not a creative quality demonstration.
+
+## What You Can Do
+
+- Generate or transform sound through mock, local Stable Audio 3 Python,
+  Apple Silicon MLX, or opt-in Stability API providers.
+- Build a modular graph across grains, cells, swarms, tissues, controls,
+  effects, and a realtime Chamber.
+- Graft, inpaint, continue, compare, mutate, record, and collect sound while
+  retaining prompts, seeds, models, parameters, parents, and operations.
+- Import an Oída listening as sound, prompt, or lineage and ask Oída to listen
+  to a cultivated result again.
+- Write a successful generation to the shared Akousmata store only when
+  requested.
+
+## Requirements
+
+| Path | Operating system | Hardware and software |
+| --- | --- | --- |
+| Mock service | macOS or Linux | Python 3.10+, `uv`; CPU only; no weights |
+| Stable Audio 3 MLX | Apple Silicon macOS | Official `sa3` MLX tools and separately accepted model weights |
+| Stable Audio 3 Python | Upstream-compatible macOS or Linux | Optional Python provider and hardware appropriate to the chosen checkpoint; a supported GPU is strongly recommended |
+| Stability API | Any service-supported system | Network access, an operator-owned account, API key, and acceptance of service terms |
+| Native shell | macOS 13+ | Swift 5.9/Xcode command-line tools; the Python service still performs all audio work |
+
+Model access, RAM or VRAM use, and generation time vary substantially by
+checkpoint and provider. GERM reports provider diagnostics rather than
+promising one universal hardware minimum.
+
+## Release Guide
+
+| Question | Where to begin |
+| --- | --- |
+| How does it work? | [Micro/Matter architecture](docs/germ_micro_architecture.md) and [provider design](docs/provider_design.md) |
+| How does it connect? | [The Listening Stack](https://sonicfield.org/stack) and [Oída integration](docs/oida-integration.md) |
+| Which models and licenses apply? | [Models and licensing](docs/models-and-licensing.md) |
+| What is unfinished? | [Known limitations](#known-limitations) and [roadmap](ROADMAP.md) |
+| How can I help? | [Contribution guide](CONTRIBUTING.md) |
+| How should I cite it? | [CITATION.cff](CITATION.cff) |
 
 ## What works
 
@@ -47,6 +105,11 @@ library, and lineage model.
 
 ## Listening Stack integration
 
+**Oída hears. GERM cultivates. Akousmata remembers. AKOÚŌ structures. Earworm
+routes.** Together they form
+[The Listening Stack](https://sonicfield.org/stack), open infrastructure for
+listening, re-listening, sonic memory, and cultivation.
+
 | Component | Version / contract | GERM integration |
 | --- | --- | --- |
 | [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.6.0 / `oida/gateway/v0.2` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
@@ -59,9 +122,12 @@ library, and lineage model.
 The core handoff is:
 
 ```text
-OÍDA listens → Akousmata remembers → GERM cultivates
-       ^                                  |
-       +----------- listen again --------+
+Sound → Oída hears → GERM cultivates → Akousmata remembers
+          ↑                 |                    |
+          +------------- listen again -----------+
+
+AKOÚŌ structures claims and routes. Earworm routes events,
+provenance, retention, and lineage between the organs.
 ```
 
 ## Install
@@ -164,6 +230,27 @@ curl -X POST http://127.0.0.1:5178/generate \
 - A generation written to Akousmata records only portable identifiers and
   relative/protocol-safe provenance. Machine-specific paths stay local.
 
+## Known Limitations
+
+- This is a public alpha. Session, graph, and provider interfaces can still
+  change before 1.0 even though public contracts are documented.
+- Jobs are held in memory. A server restart loses job state, while completed
+  WAV and metadata files remain on disk.
+- A queued Python-provider job can be cancelled, but an in-process render may
+  finish because the upstream API has no safe mid-render interrupt. MLX
+  subprocess jobs support active cancellation.
+- Real-model access is separately licensed and may be gated. Output quality,
+  latency, determinism, and hardware use vary by provider and checkpoint.
+- The native macOS shell is built locally and is unsigned by default.
+- Physical CV output is disabled. MIDI may use browser Web MIDI or an optional
+  configured local backend; otherwise the server records intent only.
+- Hosted routes are explicit opt-ins and can send prompts, source audio, or
+  derived material to their provider. The default mock route stays local.
+- GERM performs bounded signal checks but does not replace Oída's listening and
+  claim-accountability layer.
+
+The [roadmap](ROADMAP.md) identifies current research priorities and non-goals.
+
 ## Development
 
 ```bash
@@ -184,6 +271,8 @@ node scripts/smoke_dashboard.mjs
 - [Local setup](docs/local_setup.md)
 - [Native macOS shell](docs/macos-shell.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Models and licensing](docs/models-and-licensing.md)
+- [Public roadmap](ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

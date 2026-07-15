@@ -18,5 +18,13 @@ stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git
 That dependency is not vendored in this repository. Install it only if your use
 case and environment are compatible with the upstream project and model terms.
 
+The upstream Stable Audio 3 code repository currently identifies an MIT code
+license. Stable Audio model weights use separate model terms, including the
+Stability AI Community License for published Stable Audio 3 checkpoints. Those
+terms are not replaced by GERM's MPL-2.0 license.
+
 Earworm integration surfaces map germ metadata into Earworm 0.4-compatible
 sessions for local provenance, consent, retention, and lineage workflows.
+
+See docs/models-and-licensing.md for direct upstream references and the full
+operator responsibility boundary.

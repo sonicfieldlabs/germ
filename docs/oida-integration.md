@@ -1,19 +1,19 @@
-# germ ↔ oída integration (akousma bridge)
+# GERM ↔ Oída Integration (Akousma Bridge)
 
-**oída is generative ears; germ is generative voice.** They meet at the shared **akousma**
-sonic-memory protocol (see `earworm/docs/akousma_spec_v1.md`) and the shared
-**Akousmata** store configured by `AKOUSMATA_PATH`.
+**Oída hears. GERM cultivates.** They meet through the shared **akousma**
+sonic-memory protocol and the **Akousmata** store configured by
+`AKOUSMATA_PATH`.
 
-## oída → germ: the three buttons
+## Oída → GERM: the Three Buttons
 
-After a listen, oída persists an akousma to the shared store and opens germ with a deep link
+After a listen, Oída persists an akousma to the shared store and opens GERM with a deep link
 (`oida/oida/akousma_bridge.py`; endpoints `POST /germ/handoff`, `GET /germ/link`):
 
 ```
 {germ}/import?akousma=<akousma_id>&mode=sound|prompt|lineage
 ```
 
-germ must implement `/import` to read the akousma from the shared store and act on `mode`:
+GERM implements `/import` to read the akousma from the shared store and act on `mode`:
 
 | mode | germ behavior |
 |---|---|
@@ -21,7 +21,7 @@ germ must implement `/import` to read the akousma from the shared store and act 
 | `prompt` | render the akousma's `listening` result as a **generation prompt**. |
 | `lineage` | open the **genetic-ancestry explorer** focused on this `akousma_id`. |
 
-## germ → shared store: what germ writes
+## GERM → Shared Store: What GERM Writes
 
 Generation remains local to germ by default. When `remember_to_akousmata=true`, germ writes a
 **new** akousma after a successful render whose `lineage.parent_akousma_ids` point at the source

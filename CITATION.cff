@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use germ in research, please cite the companion Sonic Field Labs papers."
+message: "If you use GERM in research, please cite this software release."
 title: "germ: a lineage-aware cultivation environment for generative microsound"
 authors:
   - family-names: "Isaza"
@@ -10,21 +10,4 @@ date-released: "2026-07-02"
 license: "MPL-2.0"
 repository-code: "https://github.com/sonicfieldlabs/germ"
 abstract: "germ is a local generative microsound environment whose generated sounds retain prompts, parents, mutations, listening metadata, and Earworm-compatible lineage."
-preferred-citation:
-  type: article
-  title: "The Listening Stack: Agentic Sonic Computation for Hybrid Listening Ecologies"
-  authors:
-    - family-names: "Isaza"
-      given-names: "eme"
-      affiliation: "Sonic Field Labs"
-  year: 2026
-  notes: "Submission draft prepared for the Agentworld special issue of Antikythera: Journal for the Philosophy of Planetary Computation."
-references:
-  - type: article
-    title: "germ: Generative Cultivation and Sonic Lineage"
-    authors:
-      - family-names: "Isaza"
-        given-names: "eme"
-        affiliation: "Sonic Field Labs"
-    year: 2026
-    notes: "Companion paper in preparation."
+url: "https://sonicfield.org/stack"
