@@ -9,7 +9,7 @@ import httpx
 DEFAULT_BASE_URL = "http://127.0.0.1:5178"
 
 
-class GerminatorClient:
+class GermClient:
     def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = 600.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.client = httpx.Client(timeout=timeout)
@@ -119,6 +119,10 @@ class GerminatorClient:
         return self.client.post(f"{self.base_url}/continue", json=payload).raise_for_status().json()
 
 
+# Backward-compatible import for clients built before the public rename.
+GerminatorClient = GermClient
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -127,7 +131,7 @@ def main() -> int:
     parser.add_argument("--model", default="mock-sine")
     args = parser.parse_args()
 
-    client = GerminatorClient(args.base_url)
+    client = GermClient(args.base_url)
     print(client.health())
     print(client.generate(args.prompt, provider=args.provider, model=args.model))
     return 0

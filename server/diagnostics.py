@@ -21,12 +21,12 @@ def provider_install_commands(settings: Settings) -> dict[str, list[str]]:
         "stable_audio_mlx": [
             "cd " + str(settings.project_root),
             "./scripts/install_mlx_provider.sh",
-            "./launch_germinator.command",
+            "./launch_germ.command",
         ],
         "stable_audio_python": [
             "cd " + str(settings.project_root),
             "./scripts/install_python_provider.sh",
-            "./launch_germinator.command",
+            "./launch_germ.command",
         ],
         "stability_api": [
             "Set STABILITY_API_KEY for hosted Stable Audio 3 generation.",

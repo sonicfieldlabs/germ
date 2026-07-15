@@ -47,7 +47,7 @@ app = FastAPI(
         f"{PRODUCT_NAME} FastAPI sidecar for local Stable Audio 3 providers, "
         f"{PRODUCT_DESCRIPTION}, and legacy {LEGACY_ENGINE_NAME} clients."
     ),
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -60,7 +60,7 @@ app.add_middleware(
 )
 
 # Validate the Host header to block DNS-rebinding / cross-origin side-effect
-# requests against this local server. Override with GERMINATOR_ALLOWED_HOSTS.
+# requests against this local server. Override with GERM_ALLOWED_HOSTS.
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     LocalOriginAndHeadersMiddleware,

@@ -1,7 +1,7 @@
 """germ ↔ akousmata: access to the shared sonic-memory store.
 
 The akousma protocol (earworm/docs/akousma_spec_v1.md) gives every sound one memory
-record; the shared store (``~/workspace/akousmata``, ``$AKOUSMATA_PATH``) spans
+record; the shared platform-data store (or ``$AKOUSMATA_PATH``) spans
 oída, germ, and algophony. germ reads records handed over by oída ("open as sound /
 prompt / explore lineage") and writes a new akousma for material it generates, with
 ``lineage.parent_akousma_ids`` pointing at the sources.
@@ -30,7 +30,7 @@ def _akousma():
     except ModuleNotFoundError as exc:  # pragma: no cover - environment-dependent
         raise AkousmaUnavailable(
             "the 'akousma' package is not installed; "
-            "pip install -e <SFL>/earworm/packages/py-akousma"
+            "reinstall germ with its declared dependencies"
         ) from exc
     return akousma
 

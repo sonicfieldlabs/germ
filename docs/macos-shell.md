@@ -55,9 +55,9 @@ subject to the normal macOS Screen Recording permission.
 
 ## Supervision
 
-If no daemon is reachable at launch, the shell locates the repository root
-(walking up from the bundle, falling back to `~/workspace/germ`) and
-starts one:
+If no daemon is reachable at launch, the shell locates the repository root by
+walking up from the bundle/current directory or by reading
+`GERM_REPOSITORY_ROOT`, then starts one:
 
 ```bash
 uv run uvicorn server.main:app --host 127.0.0.1 --port 5178
@@ -75,7 +75,7 @@ already running outside the shell is observed over HTTP and never owned.
 
 The menu bar extra shows daemon status (`/health`: provider, device, loaded
 models) plus open-window / open-in-browser / start / stop / quit. Settings
-exposes the daemon base URL (for a private-network or alternate-port daemon),
+exposes the daemon base URL (for an alternate-port daemon),
 launch-at-login through `SMAppService.mainApp`, and the managed daemon's
 recent log lines.
 

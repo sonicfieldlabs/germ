@@ -19341,7 +19341,7 @@ canvasLoadState();
 consumeAkousmaPromptHandoff();
 // Microcosmos: hand the scope/world layer a curated slice of the shared engine so germs
 // reuse the same assets, audio graph, master bus, generation, harvest, and
-// lineage as the Chamber (see docs/one_bit_dish_plan.md).
+// lineage as the Chamber.
 oneBitDish = initOneBitDish({
   api,
   buildPayload: canvasBuildPayload,

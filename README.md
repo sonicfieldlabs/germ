@@ -1,343 +1,137 @@
-# germ
+# GERM
 
-germ is an open-source modular lab for generative microsound. It treats sound as
-living matter: grains, cells, cultures, strains, control signals, and lineages that
-can be generated, granulated, mutated, routed, listened to, and traced.
+GERM is a local-first modular laboratory for generative microsound. It treats
+sound as matter that can be generated, granulated, mutated, routed, listened
+to, cultivated, and traced through lineage.
 
-Germinator remains the legacy/internal engine name for the prototype generation
-system. The public environment is now `germ`.
+Current release: `0.2.0`.
 
-germ belongs to the open/research/community side of Sonic Field Labs: a tool
-for listening agents, public repositories, experimental frameworks, and emerging
-audio technologies. It is not a commercial product shell and it is not just a model
-loader.
+GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
+providers, but it is not an official Stability AI product.
 
-germ is not an official Stability AI product. It is an independent open
-exploration tool for working with Stable Audio 3 workflows.
+## What works
 
-## Stable Audio 3 Focus
+- Text-to-audio generation, seed/batch variation, audio-to-audio grafting,
+  inpainting, continuation, layer comparison, and source handoff.
+- Mock, Stable Audio 3 Python, Stable Audio 3 MLX, and Stability API provider
+  routes with readiness diagnostics and cancellable jobs.
+- A browser dashboard and native macOS shell over the same FastAPI server and
+  server-owned session graph.
+- Realtime Chamber audio with granular and envelope-follower AudioWorklets,
+  pooled trigger voices, smoothed master gain/FX updates, headroom management,
+  compression, soft clipping, and WAV recording.
+- Micro/Matter modules for grains, cells, swarms, membranes, spectral tissue,
+  quanta, microscope analysis, saved matter profiles, biomes, and incubated
+  evolution.
+- Wavetable Forge conversion, prompt, mutation, render, import/export, and
+  audition routes.
+- LoRA loading and a persistent Strain registry for adapter identity,
+  intensity, tags, licensing, and provenance.
+- Audio-to-control analysis, bounded OSC, MIDI intent, CV-safe exports, and a
+  norns/Fates bridge.
+- Local library, Herbarium, waveform player, metadata preview, path-safe file
+  operations, and generation lineage.
+- OÍDA re-listening and prompt derivation. GERM performs bounded local signal
+  checks; OÍDA owns machine listening and audio understanding.
 
-The app exposes a local FastAPI server, a browser dashboard, generated WAV files,
-metadata JSON, and provider switching across mock, Python, MLX, and Stability API
-routes. It keeps technical Stable Audio controls visible while adding a germ workflow
-layer for sound matter, micro modules, culture, strain, mutation, pruning,
-propagation, listening, curation, and harvest.
+## Scales
 
-Official Stable Audio references:
-
-- https://github.com/Stability-AI/stable-audio-3
-- https://github.com/Stability-AI/stable-audio-3/blob/main/docs/workflows/inference.md
-- https://github.com/Stability-AI/stable-audio-3/tree/main/optimized/mlx
-- https://github.com/Stability-AI/stable-audio-3/blob/main/docs/workflows/lora.md
-
-## Current Capabilities
-
-- Text-to-audio generation through `POST /generate`.
-- Audio-to-audio mutation/grafting through `POST /audio-to-audio`.
-- Region pruning/healing through `POST /inpaint`.
-- Continuation/propagation through `POST /continue`.
-- Batch and seed variations.
-- Layer comparison and source handoff.
-- Library and Herbarium-style archive views over generated metadata.
-- Wavetable Forge routes for conversion, prompt generation, mutation, rendering,
-  import, export, and Petri audition.
-- LoRA loading, strength control, and a persistent Strain registry surfaced in
-  Thermostat and Culture Mix workflows.
-- Micro/Matter module family for grains, cells, swarms, membranes, spectral tissue,
-  quanta, microscope analysis, persisted matter profiles, biome save/load, and
-  incubated evolution.
-- Control layer for audio-to-control, safe OSC, MIDI intent, CV-safe exports, and
-  control ancestry, including the norns/Fates OSC bridge.
-- Neutral, editable prompt compilation through `/listener/enhance`, local DSP-only
-  signal checks through `/listener/score`, and explicit re-listening through oída at
-  `/listener/relisten`. Machine listening and audio understanding stay in oída.
-- Earworm 0.4-compatible export of generated metadata into local context-chain
-  sessions, plus Akousma spec v1.3 lineage, kinship, and covenant-aware handoffs.
-- Shared audio player with waveform drawing, metadata preview, path copy, open, and
-  Finder reveal.
-- Diagnostics for provider readiness and Hugging Face access.
-- Realtime Chamber engine with a shared master bus (smoothed gain, automatic
-  voice-count headroom, glue compressor, soft-clip safety), smoothed in-place FX
-  parameter updates, AudioWorklet granular and envelope-follower gate processors,
-  pooled trigger voices for pads, and lossless WAV master/harvest/mic recording.
-- Server-side sessions (`/sessions`): named saves and an autosaved current graph
-  shared by every surface — reopen the same modules and connections from any
-  browser or from the native macOS app.
-- Native macOS shell (`apps/macos`): a WKWebView app embedding the same
-  dashboard the browser shows, with daemon supervision — one instance, one
-  session, two surfaces. See `docs/macos-shell.md`.
-
-## Micro / Matter Architecture
-
-germ works across three scales:
-
-| Scale | Unit | Modules |
+| Scale | Unit | Representative modules |
 | --- | --- | --- |
-| Micro | grain / cell / quanta | Grain Culture, Cell Splitter, Quanta, Microscope |
-| Meso | colony / tissue / swarm | Particle Engine, Swarm, Colony, Spectral Tissue |
-| Macro | organism / culture / graph | Canvas, Genetic Matrix, Controllers, Performance |
+| Micro | grain, cell, quanta | Grain Culture, Cell Splitter, Quanta, Microscope |
+| Meso | colony, tissue, swarm | Particle Engine, Swarm, Colony, Spectral Tissue |
+| Macro | organism, culture, graph | Chamber, Genetic Matrix, controllers, performance |
 
-The Micro palette is additive. It uses the existing canvas module system and semantic
-FX bridge, so the current generation, library, control, and lineage flows stay intact.
+All three scales use the same module graph, semantic FX bridge, sessions,
+library, and lineage model.
+
+## Listening Stack integration
+
+| Component | Version / contract | GERM integration |
+| --- | --- | --- |
+| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.6.0 / `oida/gateway/v0.2` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
+| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.4.0 / akousma spec v1.3 | Export generation context and preserve provenance, lineage, location/capture, and covenants. |
+| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.4.0 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata. |
+| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | `akouo/v0.7` | Keeps listening claims, evidence permissions, apparatus, and covenants consistent across the stack. |
+| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.0 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
+| [ORAM](https://github.com/sonicfieldlabs/oram) | 0.4.0 | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
+
+The core handoff is:
+
+```text
+OÍDA listens → Akousmata remembers → GERM cultivates
+       ^                                  |
+       +----------- listen again --------+
+```
 
 ## Install
 
+Requirements: Python 3.10+ and `uv`.
+
 ```bash
-uv sync --extra dev --extra python-provider
+uv sync --extra dev
 ```
 
-Copy `.env.example` to `.env` if you want to override defaults.
+Install a local Stable Audio provider only when needed:
+
+```bash
+uv sync --extra python-provider
+./scripts/install_mlx_provider.sh       # Apple Silicon route
+```
+
+Provider model repositories and weights remain outside Git. See
+[local setup](docs/local_setup.md) and
+[provider design](docs/provider_design.md).
 
 ## Run
-
-Double-click in Finder or run:
 
 ```bash
 ./launch_germ.command
 ```
 
-The dashboard opens at:
+Open `http://127.0.0.1:5178/dashboard`.
 
-```text
-http://127.0.0.1:5178/dashboard
-```
-
-Server-only launch:
+Server only:
 
 ```bash
 ./scripts/run_server.sh
 ```
 
-Native macOS app (embeds the same dashboard, supervises the same daemon):
+Native macOS shell:
 
 ```bash
 apps/macos/script/build_and_run.sh
 ```
 
-The build stages the runnable bundle at `apps/germ.app`. To build it without
-launching it, use `apps/macos/script/build_and_run.sh --build-only`.
+The shell embeds the same dashboard and supervises the same daemon. It does
+not maintain a second session or generation state.
 
-private-network launch for another device in the same private-network:
-
-```bash
-./scripts/run_private-network.sh
-```
-
-Open the printed `http://<private-network-ip>:5178/dashboard` URL from the other device.
-The script binds to the detected private-network IP by default and allowlists localhost,
-the detected private-network IP, the local host name, and private-network MagicDNS host names
-in `GERM_ALLOWED_HOSTS`.
-`GERM_ALLOWED_HOSTS` is the preferred name; `GERMINATOR_ALLOWED_HOSTS` remains a
-legacy fallback. The private-network launcher now fails closed if no private-network IP is
-detected, instead of binding to all interfaces.
-
-Health check:
+Health and diagnostics:
 
 ```bash
 curl http://127.0.0.1:5178/health
+curl http://127.0.0.1:5178/diagnostics
 ```
 
-## Python And MLX Runtimes
+## Core API
 
-The Python provider wraps the official `stable_audio_3` Python API. The MLX provider
-wraps the official Apple Silicon `optimized/mlx/sa3` CLI.
+The complete request and response contract is in
+[docs/api_reference.md](docs/api_reference.md). Principal route groups:
 
-Install the Python provider route:
-
-```bash
-./scripts/install_python_provider.sh
-```
-
-Install the Apple Silicon MLX route:
-
-```bash
-./scripts/install_mlx_provider.sh
-```
-
-Useful environment variables:
-
-```text
-GERM_HOST=127.0.0.1
-GERM_PORT=5178
-GERM_ACTIVE_PROVIDER=mock
-GERM_OUTPUT_DIR=output
-GERM_ALLOWED_INPUT_ROOTS=output
-GERM_OFFICIAL_REPO_DIR=vendor/stable-audio-3
-GERM_MLX_REPO_DIR=vendor/stable-audio-3
-GERM_ALLOWED_MODEL_ROOTS=vendor/stable-audio-3,output
-GERM_DEFAULT_MODEL=small-sfx
-GERM_DEFAULT_DEVICE=auto
-GERM_MLX_DECODER=same-s
-GERM_PROVIDER_TIMEOUT_SECONDS=1800
-GERM_JOB_WORKERS=1
-GERM_MAX_UPLOAD_MB=100
-GERM_MAX_IMAGE_MB=8
-GERM_ENABLE_CLOUD_VISION=0
-GERM_LISTENER_MAX_AUDIO_MB=50
-GERM_LISTENER_MAX_DURATION_SECONDS=600
-STABILITY_API_KEY=        # optional: hosted Stable Audio 3
-GERM_STABILITY_API_URL=https://api.stability.ai
-GERM_STABILITY_POLL_SECONDS=10
-GERM_OIDA_URL=http://127.0.0.1:8765
-GERM_OIDA_TIMEOUT_SECONDS=1800
-GERM_RELOAD=1            # launch_germ.command only: start uvicorn with --reload
-GERM_private-network_IP=...    # scripts/run_private-network.sh only: override the auto-detected IP
-```
-
-The older `GERMINATOR_*` names are still accepted as fallbacks for compatibility.
-
-The Stable Audio 3 Python provider uses gated Hugging Face model repositories. Accept
-the model terms and log in when needed:
-
-```bash
-uv run hf auth login
-curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
-```
-
-Cancellation note: queued jobs can always be cancelled. MLX jobs terminate the
-`sa3` subprocess group on cancellation. The Python provider uses the in-process
-Stable Audio API, which does not expose a reliable mid-render interrupt; a cancel
-request is recorded, but a render already inside the model call may finish normally.
-
-## germ Vocabulary
-
-| germ term | Stable Audio meaning |
+| Group | Routes |
 | --- | --- |
-| Seed | Prompt, random seed, source audio, initial idea |
-| Germinate | Text-to-audio generation |
-| Sprout | First generated sound |
-| Colony | Batch or group of generated candidates |
-| Culture | Session/workspace/group of related sounds |
-| Strain | LoRA adapter, style, sonic identity, or sound family |
-| Grain / Cell | Micro-event, transient, short sound particle |
-| Tissue | Spectral or textural layer built from grains |
-| Metabolism | Audio feature flow converted into control behavior |
-| Membrane | Filtering or gating boundary between source and output |
-| Mutation | Variation or audio-to-audio transformation |
-| Graft | Source-audio transformation with prompt guidance |
-| Prune / Heal | Inpainting, repair, or region replacement |
-| Propagate | Continuation or extension |
-| Sterilize | Negative prompt |
-| Petri | Candidate grid and audition board |
-| Herbarium | Saved library/archive |
-| Harvest | Export or final selection |
-| Listener | Agentic listening, curation, and repair suggestions |
+| Generation | `/generate`, `/audio-to-audio`, `/inpaint`, `/continue`, `/jobs/*` |
+| Models | `/models`, `/models/load`, `/diagnostics`, `/huggingface/status` |
+| Listening | `/listener/enhance`, `/listener/score`, `/listener/relisten` |
+| Memory | `/earworm/export`, `/import`, `/akousma/*` |
+| Micro/Matter | `/micro/matter-profile`, `/micro/biomes/*` |
+| Strains | `/strains/*`, `/lora/load`, `/lora/strength` |
+| Wavetables | `/wavetables/*` |
+| Control | `/control/*` |
+| Sessions | `/sessions`, `/sessions/current`, `/sessions/{id}` |
+| Files/library | `/library`, `/files/*` |
 
-## Existing App Sections Preserved
-
-- Generate
-- Edit Source
-- Variations
-- Layers
-- Library
-- LoRA
-- Status
-- Model picker
-- Python and MLX runtime support
-- WAV output and current audio player
-
-## Current Sections
-
-- Home/About: germ overview and workflow map.
-- Seeds: prompt/source/random seed presets and germination entry point.
-- Petri: candidate colony grid over generated library metadata.
-- Culture: local session metadata scaffold for grouped sound work.
-- Micro: granular and microsound modules for sound matter work.
-- Mutations: audio-to-audio workflow with Morph Depth.
-- Pruning: inpainting workflow with numeric region controls.
-- Propagation: continuation workflow for loops, tails, beds, and textures.
-- Strains: creative LoRA palette and Culture Mix scaffold.
-- Herbarium: archive view over saved outputs.
-- Listener: a neutral prompt compiler, local signal checks, repair proposals, and
-  the oída re-listening bridge. **Oída hears. germ cultivates.**
-- Lab: placeholders for SAME latents, dataset prep, model comparison, benchmarks,
-  and agent experiments.
-
-## LoRA Strains
-
-The existing LoRA manager is still present under Thermostat. Strain cards add a
-creative control layer on top of adapter paths:
-
-- LoRA = Strain
-- LoRA Stack = Culture Mix
-- LoRA Strength = Strain Intensity
-
-Saved strain cards live in `output/strains/strains.json` and can carry adapter
-paths, strength ranges, tags, prompt vocabulary, recommended Micro modules,
-licensing, authorship, and provenance. Technical labels remain visible in tooltips
-and metadata.
-
-## Petri Candidate Explorer
-
-Petri reuses generated library metadata and gives each candidate actions for preview,
-favorite, use as source, mutate, prune, propagate, and harvest. It is experimental
-and intentionally additive; it does not replace the existing Variations or Library
-sections.
-
-## Listener
-
-Listener normalizes a rough idea without injecting a modality, scores WAV files with
-bounded local DSP features, and proposes measured loop-seam repairs. Re-listening and
-prompt derivation are delegated to oída; germ does not embed a listening or
-audio-understanding model and requires no general-purpose LLM API.
-
-## API
-
-Core endpoints:
-
-```text
-GET  /health
-GET  /models
-GET  /diagnostics
-GET  /performance
-GET  /huggingface/status
-POST /earworm/export
-POST /models/load
-POST /generate
-POST /audio-to-audio
-POST /inpaint
-POST /continue
-POST /audio/import
-POST /audio/process
-POST /audio-tools/operate
-POST /image-to-audio/analyze
-POST /time/render
-POST /lora/load
-POST /lora/strength
-GET  /listener/providers
-POST /listener/enhance
-POST /listener/score
-POST /listener/relisten
-GET  /strains
-POST /strains
-GET  /strains/{strain_id}
-DELETE /strains/{strain_id}
-POST /strains/load
-POST /micro/matter-profile
-GET  /micro/matter-profiles
-GET  /micro/biomes
-POST /micro/biomes
-GET  /micro/biomes/{biome_id}
-DELETE /micro/biomes/{biome_id}
-GET  /sessions
-POST /sessions
-GET/PUT/DELETE /sessions/current
-GET  /sessions/{session_id}
-DELETE /sessions/{session_id}
-GET/POST /wavetables/... (list, detail, data, convert, prompt, mutate, render, import, export)
-GET/POST /control/...  (ports, routes, enable/delete, events, OSC, norns/Fates, MIDI, CV profiles, analyze-audio, render-cv)
-POST /jobs/submit
-GET  /jobs/{job_id}
-POST /jobs/{job_id}/cancel
-WS   /jobs/{job_id}/events
-GET  /library
-GET  /files/{file_path}
-POST /files/rename
-POST /files/delete
-POST /files/reveal
-```
-
-Example germination request:
+Example mock generation:
 
 ```bash
 curl -X POST http://127.0.0.1:5178/generate \
@@ -356,55 +150,42 @@ curl -X POST http://127.0.0.1:5178/generate \
   }'
 ```
 
-## Metadata
+## Provider and data boundaries
 
-Generated metadata keeps existing compatibility fields and adds germ identity fields:
+- The default provider is `mock`; no model or weight is downloaded
+  implicitly.
+- Local input, output, model, upload, and duration limits are configured in
+  `.env.example`.
+- Hosted generation and cloud vision remain opt-in. Credentials are read from
+  the process environment and are never stored in generation metadata.
+- The server binds to loopback and validates Host/Origin headers by default.
+- Generated audio, metadata, uploads, sessions, strains, model weights, build
+  products, and local app state are ignored by Git.
+- A generation written to Akousmata records only portable identifiers and
+  relative/protocol-safe provenance. Machine-specific paths stay local.
 
-```json
-{
-  "app": "germ",
-  "product": "germ",
-  "legacy_app": "Germinator",
-  "concept": "sound_matter",
-  "engine": "stable-audio-3",
-  "germinator_mode": "mutate",
-  "technical_mode": "audio-to-audio",
-  "runtime": "mlx",
-  "model": "sm-sfx",
-  "prompt": "...",
-  "negative_prompt": "...",
-  "seed": 12345,
-  "duration": 8.0,
-  "init_noise_level": 0.42,
-  "morph_depth": 0.42,
-  "source_audio_path": "...",
-  "lora_strains": [],
-  "culture_id": null,
-  "tags": [],
-  "created_at": "..."
-}
-```
-
-Each generated metadata record also includes an `earworm` block with deterministic
-session, asset, and provenance IDs. Use `POST /earworm/export` to write a local
-Earworm context-session JSON from a metadata path. The export shape remains
-compatible with Earworm's current v0.4 session schema contract.
-
-## Development Notes
-
-Run tests:
+## Development
 
 ```bash
-.venv/bin/pytest
+uv run pytest -q
+uv run ruff check server tests
+node --check dashboard/static/app.js
+node --check dashboard/static/dish.js
+node scripts/smoke_dashboard.mjs
 ```
 
-Run the environment report:
+## Documentation
 
-```bash
-.venv/bin/python scripts/check_environment.py
-```
+- [API reference](docs/api_reference.md)
+- [Architecture of Micro/Matter](docs/germ_micro_architecture.md)
+- [Stable Audio integration](docs/stable-audio-integration.md)
+- [OÍDA and Akousmata integration](docs/oida-integration.md)
+- [Provider design](docs/provider_design.md)
+- [Local setup](docs/local_setup.md)
+- [Native macOS shell](docs/macos-shell.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
 
-Current follow-up work is tracked in `germ-future.md`. The core review path now has
-route tests, cache-aware library refreshes, cancellation propagation, Microcosmos
-state recovery, and generated-output ignores in place; larger feature work should
-start from the future plan rather than stale in-UI TODO labels.
+## License
+
+MPL-2.0. See [LICENSE](LICENSE).

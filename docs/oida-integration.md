@@ -1,8 +1,8 @@
 # germ ↔ oída integration (akousma bridge)
 
 **oída is generative ears; germ is generative voice.** They meet at the shared **akousma**
-sonic-memory protocol (see `earworm/docs/akousma_spec_v1.md`) and the shared **akousmata** store
-(`~/workspace/akousmata`, `$AKOUSMATA_PATH`).
+sonic-memory protocol (see `earworm/docs/akousma_spec_v1.md`) and the shared
+**Akousmata** store configured by `AKOUSMATA_PATH`.
 
 ## oída → germ: the three buttons
 

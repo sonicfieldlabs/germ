@@ -2,7 +2,7 @@
    Microcosmos render toolkit — procedural-form sprite cache + LOD.
 
    This is the rendering engine the Microcosmos visual overhaul draws
-   through (see docs/microcosmos_visual_overhaul.md). Detailed germ and
+   through the Micro/Matter module contract. Detailed germ and
    module forms are authored as vector paths, rasterised ONCE into an
    offscreen sprite cache, then blitted each frame with cheap transforms.
    That keeps the one-bit canvas crisp at every zoom (0.24x-2.6x) while

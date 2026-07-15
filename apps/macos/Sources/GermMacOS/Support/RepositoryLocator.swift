@@ -1,15 +1,15 @@
 import Foundation
 
-/// Locates the germ repository root so the shell can supervise a daemon even
-/// when launched as a packaged .app from /Applications.
+/// Locates the germ repository root so the shell can supervise its daemon.
 func findGermRepositoryRoot() -> URL? {
     let fileManager = FileManager.default
     let candidates = [
+        ProcessInfo.processInfo.environment["GERM_REPOSITORY_ROOT"].map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+        },
         Bundle.main.executableURL,
         Bundle.main.bundleURL,
-        URL(fileURLWithPath: fileManager.currentDirectoryPath),
-        // Known checkout location for packaged builds.
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("workspace/germ", isDirectory: true)
+        URL(fileURLWithPath: fileManager.currentDirectoryPath)
     ].compactMap { $0 }
 
     for candidate in candidates {

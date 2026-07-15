@@ -479,7 +479,7 @@ class StabilityAPIProvider(AudioGenerationProvider):
             "authorization": f"Bearer {self.settings.stability_api_key.strip()}",
             "accept": "audio/*",
             "stability-client-id": "germ",
-            "stability-client-version": "0.1.0",
+            "stability-client-version": "0.2.0",
         }
 
     def _resolve_model(self, model_id: str) -> str:

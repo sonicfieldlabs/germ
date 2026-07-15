@@ -14,25 +14,8 @@ docs/[a]udit-*.md
 docs/review-*.md
 *.session.json
 
-output/audio/*
-!output/audio/.gitkeep
-output/metadata/*
-!output/metadata/.gitkeep
-output/uploads/*
-!output/uploads/.gitkeep
-output/wavetables/metadata/*
-!output/wavetables/metadata/.gitkeep
-output/wavetables/tables/*
-!output/wavetables/tables/.gitkeep
-output/wavetables/previews/*
-!output/wavetables/previews/.gitkeep
-output/control/
-output/micro/
-output/intermediate/
-output/lora/
-output/playwright/
-output/scratch/
-output/sessions/
+# Runtime-generated audio, metadata, models, sessions, and previews
+output/
 
 apps/macos/.build/
 apps/macos/dist/

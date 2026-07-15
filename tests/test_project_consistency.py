@@ -16,7 +16,7 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
         ".env.example",
         "scripts/run_server.sh",
         "scripts/run_dashboard.sh",
-        "scripts/run_private-network.sh",
+        "launch_germ.command",
         "clients/curl_examples.sh",
         "dashboard/static/index.html",
         "dashboard/static/dish.js",

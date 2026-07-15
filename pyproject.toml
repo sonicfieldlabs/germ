@@ -1,10 +1,11 @@
 [project]
 name = "germ"
-version = "0.1.0"
-description = "Local Stable Audio 3 server and dashboard for germ."
+version = "0.2.0"
+description = "Local-first modular laboratory for generative microsound, Stable Audio workflows, and lineage-aware cultivation."
 readme = "README.md"
 license = "MPL-2.0"
 requires-python = ">=3.10"
+authors = [{ name = "Sonic Field Labs" }]
 dependencies = [
     "akousma>=0.4.0",
     "fastapi>=0.111.0",
@@ -17,6 +18,11 @@ dependencies = [
 
 [tool.uv.sources]
 akousma = { git = "https://github.com/sonicfieldlabs/earworm.git", tag = "v0.4.0", subdirectory = "packages/py-akousma" }
+
+[project.urls]
+Homepage = "https://github.com/sonicfieldlabs/germ"
+Repository = "https://github.com/sonicfieldlabs/germ"
+Issues = "https://github.com/sonicfieldlabs/germ/issues"
 
 [project.optional-dependencies]
 python-provider = [
