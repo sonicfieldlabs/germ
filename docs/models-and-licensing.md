@@ -17,11 +17,26 @@ The optional Python provider references the official
 Its repository [code license](https://github.com/Stability-AI/stable-audio-3/blob/main/LICENSE)
 is MIT at the time of this release.
 
-Stable Audio 3 model weights are separately licensed. For example, the
-[Stable Audio 3 Small SFX model card](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
-identifies the Stability AI Community License and may identify additional
-component terms. Some checkpoints are gated. The upstream model card and terms
-for the exact checkpoint always control.
+GERM's first developed local generation path uses three post-trained
+checkpoints:
+
+- [Stable Audio 3 Small SFX](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)
+- [Stable Audio 3 Small Music](https://huggingface.co/stabilityai/stable-audio-3-small-music)
+- [Stable Audio 3 Medium](https://huggingface.co/stabilityai/stable-audio-3-medium)
+
+Stable Audio 3 model weights are separately licensed. These model cards are
+gated and currently identify the Stability AI Community License plus
+additional component terms. The exact page and terms for the downloaded
+checkpoint always control. Locally runnable or downloadable weights should not
+be described as unrestricted open-source software solely because the code
+repository is MIT.
+
+The upstream release supplies text-to-audio, audio-to-audio editing,
+inpainting and continuation, variable-length generation, and LoRA
+personalization. GERM places those primitives inside its graph, Micro/Matter
+modules, job system, source handling, comparison, metadata, and sonic-lineage
+workflows. The wider Listening Stack remains model-agnostic even though this
+first GERM provider is intentionally designed around Stable Audio 3.
 
 GERM does not redistribute weights or accept upstream terms for the operator.
 Before installing a model:
@@ -33,6 +48,11 @@ Before installing a model:
 
 The MLX installer prepares the official provider path on Apple Silicon; it
 does not change the model's license.
+
+See [Local setup](local_setup.md) for explicit `hf download` commands and the
+[Listening Stack installer](https://github.com/sonicfieldlabs/listening-stack)
+for the guided route. Neither path redistributes weights or records a Hugging
+Face token in Git.
 
 ## Stability API and Other Providers
 

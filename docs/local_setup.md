@@ -75,7 +75,21 @@ in or have not accepted the Stability AI model terms.
    uv run hf auth login
    ```
 
-3. Start the server and verify access:
+3. Download the exact checkpoint. Stable Audio's loader also downloads on first
+   use, but an explicit download makes storage and access failures visible before
+   a generation job:
+
+   ```bash
+   uv run hf download stabilityai/stable-audio-3-small-sfx
+   uv run hf download stabilityai/stable-audio-3-small-music
+   uv run hf download stabilityai/stable-audio-3-medium
+   ```
+
+   Download only the models you intend to use. The Hugging Face API currently
+   reports approximately 3.49 GB for each Small post-trained repository and
+   10.45 GB for Medium.
+
+4. Start the server and verify access:
 
    ```bash
    ./launch_germ.command
@@ -83,6 +97,23 @@ in or have not accepted the Stability AI model terms.
    ```
 
 You can run the same check from the dashboard Status section with `HF Check`.
+
+The exact model page controls. At the time of this public-alpha release, the
+three pages are gated and identify the Stability AI Community License plus
+additional component terms. GERM cannot accept those terms for an operator.
+
+### Guided Listening Stack Install
+
+The separate installer can prepare GERM or both main applications, show the
+combined disk and RAM plan, authenticate Hugging Face, download only selected
+models, and leave the gateways ready to start:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sonicfieldlabs/listening-stack/main/install.sh | bash
+```
+
+It keeps model caches, state, logs, outputs, and local paths outside this Git
+repository.
 
 ## Apple Silicon MLX Provider
 

@@ -13,6 +13,13 @@ Current release: `0.2.0`.
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
 
+The Listening Stack remains model-agnostic at its contracts. GERM's first
+fully developed local generation path is more specific: it is designed around
+Stable Audio 3 and uses its text-to-audio, audio-to-audio, inpainting,
+continuation, variable-length, and LoRA primitives as material for cultivation.
+The upstream code is MIT; the currently released local weights are gated and
+carry separate Stability AI and component terms.
+
 ![GERM dashboard with a prompt module in the cultivation graph](docs/assets/germ-dashboard.png)
 
 ## Try It Without a Model
@@ -47,8 +54,9 @@ checks but not a creative quality demonstration.
 | Path | Operating system | Hardware and software |
 | --- | --- | --- |
 | Mock service | macOS or Linux | Python 3.10+, `uv`; CPU only; no weights |
-| Stable Audio 3 MLX | Apple Silicon macOS | Official `sa3` MLX tools and separately accepted model weights |
-| Stable Audio 3 Python | Upstream-compatible macOS or Linux | Optional Python provider and hardware appropriate to the chosen checkpoint; a supported GPU is strongly recommended |
+| Stable Audio 3 Small, MLX | Apple Silicon macOS | Official `sa3` optimized tools and separately accepted Small SFX or Small Music weights |
+| Stable Audio 3 Small, Python | macOS or Linux | Upstream CPU path or compatible acceleration; 8 GB minimum and 16 GB system RAM suggested |
+| Stable Audio 3 Medium, Python | Linux/NVIDIA | Compatible CUDA GPU; upstream reports about 6.52 GB peak VRAM, while GERM suggests 24 GB system RAM |
 | Stability API | Any service-supported system | Network access, an operator-owned account, API key, and acceptance of service terms |
 | Native shell | macOS 13+ | Swift 5.9/Xcode command-line tools; the Python service still performs all audio work |
 
@@ -62,6 +70,7 @@ promising one universal hardware minimum.
 | --- | --- |
 | How does it work? | [Micro/Matter architecture](docs/germ_micro_architecture.md) and [provider design](docs/provider_design.md) |
 | How does it connect? | [The Listening Stack](https://sonicfield.org/stack) and [Oída integration](docs/oida-integration.md) |
+| How do I install a tested model? | [Local model setup](docs/local_setup.md) |
 | Which models and licenses apply? | [Models and licensing](docs/models-and-licensing.md) |
 | What is unfinished? | [Known limitations](#known-limitations) and [roadmap](ROADMAP.md) |
 | How can I help? | [Contribution guide](CONTRIBUTING.md) |
@@ -131,6 +140,18 @@ provenance, retention, and lineage between the organs.
 ```
 
 ## Install
+
+For a guided GERM or complete Listening Stack installation, including model
+choice, storage and memory guidance, gated-access checks, downloads, and local
+gateway configuration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sonicfieldlabs/listening-stack/main/install.sh | bash
+```
+
+Choose **GERM only** or **Oída + GERM** in the terminal assistant. GERM remains
+in this repository; the installer only coordinates its source, dependencies,
+provider, models, and local configuration.
 
 Requirements: Python 3.10+ and `uv`.
 
