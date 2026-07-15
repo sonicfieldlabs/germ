@@ -250,8 +250,8 @@ const MICRO_ICON_TEXT = {
 export function microIconSvg(name) {
   const glyph = MICRO_ICON_TEXT[name];
   if (!glyph) return "";
-  const escaped = glyph.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  return `<span class="micro-unicode-icon" aria-hidden="true">${escaped}</span>`;
+  // Glyphs come only from the closed constant table above, never from runtime input.
+  return `<span class="micro-unicode-icon" aria-hidden="true">${glyph}</span>`;
 }
 
 export function hydrateMicroIcons(root) {

@@ -3602,11 +3602,19 @@ function canvasModulatorNodes() {
 }
 
 function objectPathParts(path = "") {
-  return String(path || "").split(".").filter(Boolean).map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+  const blocked = new Set(["__proto__", "prototype", "constructor"]);
+  const parts = String(path || "").split(".").filter(Boolean).map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+  return parts.some((part) => typeof part === "string" && blocked.has(part)) ? [] : parts;
+}
+
+function objectOwnValue(target, part) {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(target, part);
+  return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
 
 function objectGetPath(target, path = "") {
-  return objectPathParts(path).reduce((value, part) => (value == null ? undefined : value[part]), target);
+  return objectPathParts(path).reduce((value, part) => objectOwnValue(value, part), target);
 }
 
 function objectSetPath(target, path = "", value = "") {
@@ -3614,11 +3622,20 @@ function objectSetPath(target, path = "", value = "") {
   if (!target || !parts.length) return false;
   let cursor = target;
   for (let index = 0; index < parts.length - 1; index++) {
-    cursor = cursor?.[parts[index]];
+    cursor = objectOwnValue(cursor, parts[index]);
     if (cursor == null) return false;
   }
-  cursor[parts[parts.length - 1]] = value;
-  return true;
+  if ((typeof cursor !== "object" && typeof cursor !== "function") || cursor === null) return false;
+  const finalPart = parts[parts.length - 1];
+  const descriptor = Object.getOwnPropertyDescriptor(cursor, finalPart);
+  if (descriptor && (!Object.hasOwn(descriptor, "value") || descriptor.writable === false)) return false;
+  if (descriptor) return Reflect.set(cursor, finalPart, value);
+  return Reflect.defineProperty(cursor, finalPart, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 function timePromptPathForKind(kind, index = 0) {
@@ -4282,8 +4299,26 @@ function modulationComposeText(baseText = "", fragment = "", mode = "append") {
   }
   if (mode === "substitute") {
     const knownTerms = [...MODULATOR_WORD_BANKS.materials, ...MODULATOR_WORD_BANKS.adjectives, ...MODULATOR_WORD_BANKS.nouns];
-    const match = knownTerms.find((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(base));
-    return match ? base.replace(new RegExp(`\\b${match.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"), text.split(/\s+/)[0]) : `${base}, ${text}`;
+    const wordCharacter = /[\p{L}\p{N}_]/u;
+    const lowerBase = base.toLocaleLowerCase();
+    let match = null;
+    for (const term of knownTerms) {
+      const lowerTerm = term.toLocaleLowerCase();
+      let offset = lowerBase.indexOf(lowerTerm);
+      while (offset >= 0) {
+        const before = offset > 0 ? lowerBase[offset - 1] : "";
+        const after = lowerBase[offset + lowerTerm.length] || "";
+        if (!wordCharacter.test(before) && !wordCharacter.test(after)) {
+          match = { offset, length: term.length };
+          break;
+        }
+        offset = lowerBase.indexOf(lowerTerm, offset + 1);
+      }
+      if (match) break;
+    }
+    if (!match) return base + ", " + text;
+    const replacement = text.split(/\s+/)[0];
+    return base.slice(0, match.offset) + replacement + base.slice(match.offset + match.length);
   }
   if (mode === "blend") return `${base}, blended with ${text}`;
   return `${base}, ${text}`;
