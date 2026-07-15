@@ -11,10 +11,12 @@ struct GermMacOSApp: App {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 980, minHeight: 640)
+                .ignoresSafeArea(.container, edges: .top)
                 .task {
                     await store.bootstrap()
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu("germ") {
                 Button("Open Dashboard in Browser") {

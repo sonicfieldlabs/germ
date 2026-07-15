@@ -18,5 +18,5 @@ stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git
 That dependency is not vendored in this repository. Install it only if your use
 case and environment are compatible with the upstream project and model terms.
 
-Earworm integration surfaces map germ metadata into Earworm 0.1 protocol-shaped
+Earworm integration surfaces map germ metadata into Earworm 0.4-compatible
 sessions for local provenance, consent, retention, and lineage workflows.

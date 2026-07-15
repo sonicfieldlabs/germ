@@ -26,7 +26,7 @@ Returns recent request timings recorded by the in-process performance middleware
 
 ## POST /earworm/export
 
-Exports one generated metadata JSON file into an Earworm 0.1 session with prompt,
+Exports one generated metadata JSON file into an Earworm 0.4-compatible session with prompt,
 generation request, optional expanded-sensorium metadata packet, generated-audio,
 analysis, render, provenance, and retention records.
 
@@ -46,8 +46,11 @@ The oída→germ handoff (the three buttons). Query params: `akousma` (record id
 shared akousmata store), `mode` (`sound` | `prompt` | `lineage`), `format`
 (`html` default, or `json`). `sound` imports the record's audio into germ's library
 via the standard audio-import flow and stamps `extensions["germ.import"]` back onto
-the shared record; `prompt` derives a generation prompt from the record's listening
-block; `lineage` opens the lineage explorer (parents, children, ancestry).
+the shared record; `prompt` derives a structured `oida-germ.prompt/v0.1` handoff from
+the record's listening block (editable prompt, provenance, evidence, covenant, and
+parent id); `lineage` opens the lineage explorer (parents, children, ancestry). The
+HTML prompt handoff places that structure in browser storage and opens the main prompt
+canvas, where the text remains editable before cultivation.
 
 ## GET /akousma/record/{akousma_id}
 
@@ -104,14 +107,21 @@ never returns or logs token values.
 Loads a provider/model lazily. The MLX provider records the selected model because
 the CLI loads weights in its subprocess.
 
+For hosted generation use provider `stability_api`, model `stable-audio-3`, and set
+`STABILITY_API_KEY`. The hosted route accepts 1–380 second outputs, 4–8 steps, CFG
+1–25, and uses asynchronous submit/poll. Its editing modes accept WAV or MP3 sources
+between 6 and 380 seconds (maximum 100 MB) and require `batch_size=1`. Local LoRA is
+rejected for this provider; a supplied negative prompt is retained in metadata as an
+ignored control because the hosted endpoint has no negative-prompt field.
+
 ## POST /generate
 
 ```json
 {
   "provider": "stable_audio_python",
   "model": "small-sfx",
-  "prompt": "TrackType: SFX, close microphone recording of dry gravel footsteps",
-  "negative_prompt": "music, vocals, speech, melody",
+  "prompt": "close microphone recording of dry gravel footsteps",
+  "negative_prompt": "",
   "duration": 4.0,
   "steps": 8,
   "cfg_scale": 1.0,
@@ -121,6 +131,28 @@ the CLI loads weights in its subprocess.
   "output_name": "gravel_footsteps"
 }
 ```
+
+All four generation routes also accept the neutral/effective prompt fields
+`base_prompt`, `modulated_prompt`, `base_negative_prompt`, and
+`modulated_negative_prompt`. Providers receive the effective text; metadata preserves
+both versions and the applied modulators under `germ.prompt/v0.1`.
+
+To register a successful derived sound in Akousmata in the same workflow, add:
+
+```json
+{
+  "remember_to_akousmata": true,
+  "parent_akousma_ids": ["akm_..."],
+  "akousma_relations": [],
+  "listening_context": {},
+  "covenant": {},
+  "akousma_summary": "optional concise memory summary"
+}
+```
+
+Retention is opt-in. The created Akousma id and state are written into generation
+metadata. If memory registration fails, the audio generation remains successful and
+the failure is reported under its Akousmata metadata block.
 
 ## POST /audio-to-audio
 
@@ -208,6 +240,12 @@ resample fallback otherwise). Returns the rendered file plus metadata with event
   "paths": ["/path/to/your_style.safetensors"]
 }
 ```
+
+This primes a Python model with reusable adapter weights. A generation's `lora` array
+is still authoritative: loaded adapters absent from that request are set to strength
+zero for that render. Include the adapters and strengths you want in every generation
+request. MLX accepts request-local `.safetensors` paths plus optional `step_range`;
+the Python provider rejects step-gated ranges.
 
 ## POST /lora/strength
 
@@ -572,18 +610,40 @@ Deletes one named session.
 
 ## GET /listener/providers
 
-Lists listener providers: heuristic local scorer/enhancer, optional local Ollama
-fallback, and unavailable API placeholder.
+Describes the integration boundary: Germ's neutral prompt compiler, its measured
+local signal check, and the Oída-owned re-listening bridge. Germ does not load an
+audio-understanding model.
 
 ## POST /listener/enhance
 
-Enhances a rough prompt, merges negative-prompt defaults, and returns local
-suggestions without requiring a cloud key.
+Normalizes an editable prompt and returns non-destructive suggestions. It never
+injects SFX/music/voice assumptions or silently expands the negative prompt.
 
 ## POST /listener/score
 
 Scores a WAV file inside `GERM_ALLOWED_INPUT_ROOTS` using bounded local DSP
-features and returns tags, warnings, and repair proposals.
+features and returns measured warnings and repair proposals. This endpoint is a
+signal check, not semantic listening.
+
+## POST /listener/relisten
+
+Uses Oída's `/generation/relisten` route when the sound metadata carries an earlier
+Oída generation id, preserving Oída's source/output route comparison. Otherwise it
+starts with `/gateway/listen`. It then asks the prompt-only generation bridge for the
+next editable prompt. Germ stores a compact derived result under
+`extensions["germ.relisten"]`; all audio understanding remains owned by Oída.
+`remember=true` calls Oída's explicit `/memory/remember` route and returns its shared
+Akousma id. Without that opt-in, germ does not append the result to shared Akousmata.
+
+```json
+{
+  "audio_path": "output/audio/cultivated.wav",
+  "metadata_path": "output/metadata/cultivated.json",
+  "route_preset": "generative",
+  "intent": "variation",
+  "remember": false
+}
+```
 
 ## GET /wavetables
 

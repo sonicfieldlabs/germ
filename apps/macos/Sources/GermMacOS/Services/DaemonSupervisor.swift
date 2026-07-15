@@ -41,20 +41,43 @@ final class DaemonSupervisor {
             throw DaemonSupervisorError.repositoryRootNotFound
         }
 
+        let helper = root
+            .appendingPathComponent("apps", isDirectory: true)
+            .appendingPathComponent("macos", isDirectory: true)
+            .appendingPathComponent("script", isDirectory: true)
+            .appendingPathComponent("managed_daemon.py", isDirectory: false)
+        guard FileManager.default.isReadableFile(atPath: helper.path) else {
+            throw DaemonSupervisorError.launchFailed("Missing \(helper.path)")
+        }
+
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = [
-            "uv",
-            "run",
-            "uvicorn",
+        let helperArguments = [
+            "-u",
+            helper.path,
+            "--parent-pid",
+            "\(ProcessInfo.processInfo.processIdentifier)",
             "server.main:app",
             "--host",
             host,
             "--port",
             "\(port)"
         ]
+        let venvPython = root
+            .appendingPathComponent(".venv", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("python3", isDirectory: false)
+        if FileManager.default.isExecutableFile(atPath: venvPython.path) {
+            proc.executableURL = venvPython
+            proc.arguments = helperArguments
+        } else {
+            // Bootstrap through uv only when no synced environment exists. The
+            // helper still watches the app PID and tears down its whole
+            // uvicorn process group if the app disappears.
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            proc.arguments = ["uv", "run", "--frozen", "python"] + helperArguments
+        }
         proc.currentDirectoryURL = root
         proc.standardOutput = outputPipe
         proc.standardError = errorPipe

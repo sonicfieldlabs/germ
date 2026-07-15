@@ -58,7 +58,7 @@ const providerModels = {
     "small-music-base",
     "medium-base",
   ],
-  stability_api: ["large"],
+  stability_api: ["stable-audio-3"],
 };
 
 const LIBRARY_REFRESH_COALESCE_MS = 350;
@@ -86,6 +86,7 @@ let strainStack = [];
 let strainRegistry = [];
 let microMatterProfile = null;
 let providerStatusById = {};
+let activeAkousmaPromptHandoff = null;
 let petriState = loadPetriState();
 let petriPage = 0;
 const PETRI_PAGE_SIZE = 9;
@@ -980,6 +981,7 @@ function setBusy(isBusy) {
     "seedGerminateBtn",
     "listenerEnhanceBtn",
     "listenerScoreBtn",
+    "listenerRelistenBtn",
 
   ].forEach((id) => {
     if ($(id)) $(id).disabled = isBusy;
@@ -1961,8 +1963,81 @@ function loraPayload() {
   });
 }
 
-function payloadBase(overrides = {}) {
+function promptBridgeFields({ handoff = null, relisten = null } = {}) {
+  if (handoff && typeof handoff === "object") {
+    const source = handoff.source && typeof handoff.source === "object" ? handoff.source : {};
+    const evidence = Array.isArray(handoff.evidence) ? handoff.evidence.slice(0, 8) : [];
+    return {
+      base_prompt: typeof handoff.base_prompt === "string" ? handoff.base_prompt : handoff.prompt || "",
+      base_negative_prompt: typeof handoff.base_negative_prompt === "string" ? handoff.base_negative_prompt : "",
+      source: { ...source, prompt_handoff_contract: handoff.contract || "oida-germ.prompt/v0.1" },
+      parent_akousma_ids: Array.isArray(handoff.parent_akousma_ids) ? handoff.parent_akousma_ids : [],
+      remember_to_akousmata: handoff.remember_to_akousmata !== false,
+      covenant: handoff.covenant && typeof handoff.covenant === "object" ? handoff.covenant : {},
+      akousma_summary: String(handoff.prompt || "").slice(0, 500) || null,
+      listening_context: {
+        prompt_handoff: {
+          contract: handoff.contract || "oida-germ.prompt/v0.1",
+          source,
+          evidence,
+        },
+      },
+      generation_context: {
+        prompt_handoff: {
+          contract: handoff.contract || "oida-germ.prompt/v0.1",
+          source,
+          evidence,
+          ...(handoff.generation_context || {}),
+        },
+      },
+    };
+  }
+  if (relisten && typeof relisten === "object") {
+    const akousmaId = String(relisten.akousma_id || "");
+    const compact = {
+      contract: relisten.contract || "germ.oida-relisten/v0.1",
+      provider: "oida",
+      listening_event_id: relisten.listening_event_id || null,
+      generation_id: relisten.generation_id || null,
+      source_generation_id: relisten.source_generation_id || null,
+      relisten_mode: relisten.relisten_mode || "gateway_listen",
+      route_preset: relisten.route_preset || "generative",
+      source_summary: relisten.source_summary || "",
+      listening_result: relisten.listening_result || {},
+      route_comparison: relisten.route_comparison || {},
+    };
+    return {
+      source: { kind: "oida-relisten", akousma_id: akousmaId || null, event_id: relisten.listening_event_id || null },
+      parent_akousma_ids: akousmaId ? [akousmaId] : [],
+      remember_to_akousmata: Boolean(relisten.remembered && akousmaId),
+      listening_context: { oida_relisten: compact },
+      generation_context: { oida_relisten: compact },
+    };
+  }
+  return {};
+}
+
+function applyPromptBridgeFields(payload, context = {}) {
+  const fields = promptBridgeFields(context);
+  if (!Object.keys(fields).length) return payload;
+  const parentIds = [...new Set([
+    ...(fields.parent_akousma_ids || []),
+    ...(Array.isArray(payload.parent_akousma_ids) ? payload.parent_akousma_ids : []),
+  ].filter(Boolean))];
   return {
+    ...fields,
+    ...payload,
+    source: { ...(fields.source || {}), ...(payload.source || {}) },
+    parent_akousma_ids: parentIds,
+    covenant: { ...(fields.covenant || {}), ...(payload.covenant || {}) },
+    listening_context: { ...(fields.listening_context || {}), ...(payload.listening_context || {}) },
+    generation_context: { ...(fields.generation_context || {}), ...(payload.generation_context || {}) },
+    remember_to_akousmata: payload.remember_to_akousmata ?? fields.remember_to_akousmata,
+  };
+}
+
+function payloadBase(overrides = {}) {
+  const payload = {
     provider: $("provider").value,
     model: $("model").value,
     prompt: $("prompt").value,
@@ -1980,6 +2055,11 @@ function payloadBase(overrides = {}) {
     ...controlMetadataPayload(),
     ...overrides,
   };
+  const skipActive = Boolean(payload._skipActivePromptContext);
+  delete payload._skipActivePromptContext;
+  return skipActive
+    ? payload
+    : applyPromptBridgeFields(payload, { handoff: activeAkousmaPromptHandoff });
 }
 
 function appendPayloadToForm(form, payload) {
@@ -2008,6 +2088,10 @@ function appendPayloadToForm(form, payload) {
     "silence_ranges",
     "genetic_identities",
     "generation_sequences",
+    "parent_akousma_ids",
+    "akousma_relations",
+    "listening_context",
+    "covenant",
   ]);
   for (const [key, value] of Object.entries(payload)) {
     if (value === null || value === undefined) continue;
@@ -5994,7 +6078,7 @@ function canvasIsLegacyStarterNode(node) {
   );
 }
 
-function canvasCreatePromptNode({ text = "", negative = "", x = 80, y = 88 } = {}) {
+function canvasCreatePromptNode({ text = "", negative = "", x = 80, y = 88, handoff = null, relisten = null } = {}) {
   pushUndo();
   const node = {
     id: canvasId("node"),
@@ -6014,11 +6098,66 @@ function canvasCreatePromptNode({ text = "", negative = "", x = 80, y = 88 } = {
     seed: -1,
     mutation: 0.5,
     selectedRegionIds: [],
+    akousmaHandoff: handoff && typeof handoff === "object" ? handoff : null,
+    oidaRelisten: relisten && typeof relisten === "object" ? relisten : null,
   };
   canvasNodes.push(node);
   selectedCanvasNodeId = node.id;
   renderCanvas();
   return node;
+}
+
+function consumeAkousmaPromptHandoff() {
+  const storageKey = "germ.akousma.prompt-handoff";
+  const raw = localStorage.getItem(storageKey);
+  const legacyPrompt = localStorage.getItem("germ.akousma.prompt");
+  if (!raw && !legacyPrompt) return false;
+  let handoff;
+  try {
+    handoff = raw
+      ? JSON.parse(raw)
+      : {
+          contract: "oida-germ.prompt/v0.1",
+          editable: true,
+          prompt: legacyPrompt || "",
+          base_prompt: legacyPrompt || "",
+          negative_prompt: "",
+          source: { kind: "akousma-legacy-handoff" },
+          parent_akousma_ids: [],
+          remember_to_akousmata: false,
+        };
+  } catch {
+    localStorage.removeItem(storageKey);
+    setState("Prompt Handoff", "bad", "The saved Akousma prompt handoff was invalid JSON.");
+    return false;
+  }
+  localStorage.removeItem(storageKey);
+  localStorage.removeItem("germ.akousma.prompt");
+  if (!handoff || typeof handoff !== "object" || typeof handoff.prompt !== "string") {
+    setState("Prompt Handoff", "bad", "The Akousma handoff did not contain an editable prompt.");
+    return false;
+  }
+  activeAkousmaPromptHandoff = handoff;
+  const prompt = handoff.prompt;
+  const negative = typeof handoff.negative_prompt === "string" ? handoff.negative_prompt : "";
+  if ($("prompt")) $("prompt").value = prompt;
+  if ($("negativePrompt")) $("negativePrompt").value = negative;
+  if ($("listenerPrompt")) $("listenerPrompt").value = prompt;
+  if ($("listenerNegative")) $("listenerNegative").value = negative;
+  const point = canvasBoardDefaultPoint();
+  const node = canvasCreatePromptNode({
+    text: prompt,
+    negative,
+    x: point.x,
+    y: point.y,
+    handoff,
+  });
+  node.label = "Oída listening prompt";
+  canvasSaveState();
+  renderCanvas();
+  const akousmaId = handoff.source?.akousma_id || "Akousma";
+  setState("Prompt Received", "ok", `${akousmaId} · editable and lineage-aware`);
+  return true;
 }
 
 function canvasCreateImageNode({ file = null, dataUrl = "", mode = "vision", x = 92, y = 96 } = {}) {
@@ -13262,6 +13401,7 @@ function canvasBuildPayload(overrides = {}) {
   const sourceRegionNode = canvasNodes.find((item) => item.id === sourcePromptNodeId && item.type === "sound") || null;
   const geneticPayload = canvasGeneticPayloadForTarget(sourceNode);
   const payload = payloadBase({
+    _skipActivePromptContext: true,
     ...rest,
     prompt: resolved.prompt || $("prompt")?.value || "",
     negative_prompt: resolved.negativePrompt || $("negativePrompt")?.value || "",
@@ -13298,7 +13438,10 @@ function canvasBuildPayload(overrides = {}) {
   });
   if (Object.prototype.hasOwnProperty.call(rest, "init_noise_level")) payload.init_noise_level = resolved.mutation;
   delete payload.skip_modulation;
-  return payload;
+  return applyPromptBridgeFields(payload, {
+    handoff: resolved.promptNode?.akousmaHandoff || null,
+    relisten: resolved.promptNode?.oidaRelisten || null,
+  });
 }
 
 function canvasEdgeTypeForOperation(operation) {
@@ -14287,8 +14430,8 @@ async function runListenerEnhance() {
   const result = await api("/listener/enhance", {
     method: "POST",
     body: JSON.stringify({
-      provider: $("listenerProvider")?.value || "mock",
-      model: $("listenerModel")?.value || "heuristic-listener",
+      provider: $("listenerProvider")?.value || "neutral",
+      model: $("listenerModel")?.value || "neutral-compiler",
       prompt: listenerPromptValue(),
       negative_prompt: listenerNegativeValue(),
     }),
@@ -14310,8 +14453,8 @@ async function runListenerScoreSelected() {
   const result = await api("/listener/score", {
     method: "POST",
     body: JSON.stringify({
-      provider: $("listenerProvider")?.value || "mock",
-      model: $("listenerModel")?.value || "heuristic-listener",
+      provider: $("listenerProvider")?.value || "neutral",
+      model: "local-signal-check",
       prompt: listenerPromptValue(),
       audio_path: asset.audioPath,
       metadata_path: asset.metadataPath || "",
@@ -14326,6 +14469,65 @@ async function runListenerScoreSelected() {
     renderHerbarium();
   }
   finishWork("Listener Score", result.score >= 0.42 ? "ok" : "muted", result.rating);
+}
+
+async function runListenerRelistenSelected() {
+  const asset = selectedAudioAssetForTimeline();
+  if (!asset?.audioPath) throw new Error("Select a saved generated sound first.");
+  timeEnsureWavAsset(asset);
+  beginWork("Oída Re-listen", timeAssetLabel(asset));
+  const result = await api("/listener/relisten", {
+    method: "POST",
+    body: JSON.stringify({
+      audio_path: asset.audioPath,
+      metadata_path: asset.metadataPath || null,
+      route_preset: $("listenerRoutePreset")?.value || "generative",
+      intent: "variation",
+      privacy_mode: "session",
+      remember: Boolean($("listenerRemember")?.checked),
+    }),
+  });
+  if ($("listenerPrompt")) $("listenerPrompt").value = result.prompt || "";
+  if ($("listenerNegative")) $("listenerNegative").value = result.negative_prompt || "";
+  if ($("prompt")) $("prompt").value = result.prompt || "";
+  if ($("negativePrompt")) $("negativePrompt").value = result.negative_prompt || "";
+  renderListenerSummary({ ...result, provider: "oida" });
+  if ($("listenerResult")) showJson($("listenerResult"), result);
+
+  const sourceNode = canvasSelectedSoundNode()
+    || canvasNodes.find((node) => node.id === canvasLastSelectedSoundNodeId && node.type === "sound")
+    || null;
+  const point = sourceNode ? canvasConnectPointFor(sourceNode, { x: 56, y: 8 }) : canvasBoardDefaultPoint();
+  const promptNode = canvasCreatePromptNode({
+    text: result.prompt || "",
+    negative: result.negative_prompt || "",
+    x: point.x,
+    y: point.y,
+    relisten: result,
+  });
+  promptNode.label = "Oída re-listening prompt";
+  if (sourceNode) {
+    canvasEdges.push({
+      id: canvasId("edge"),
+      projectId: activeCulture.id,
+      fromNodeId: sourceNode.id,
+      toNodeId: promptNode.id,
+      type: "listening_prompt",
+      metadata: {
+        provider: "oida",
+        event_id: result.listening_event_id,
+        generation_id: result.generation_id,
+        route_preset: result.route_preset,
+      },
+    });
+  }
+  canvasSaveState();
+  renderCanvas();
+  finishWork(
+    "Oída Heard It",
+    "ok",
+    `${result.route_preset} · next prompt ready${result.remembered ? " · remembered" : ""}`,
+  );
 }
 
 function saveIncubationTimelineNode(node) {
@@ -16039,7 +16241,7 @@ async function runModelTest() {
     outputName: $("outputName").value,
     batchSize: $("batchSize").value,
   };
-  $("prompt").value = $("testPrompt").value || "TrackType: SFX, short dry wood impact, close microphone";
+  $("prompt").value = $("testPrompt").value || "short dry wood impact, close microphone";
   $("duration").value = "1";
   $("batchSize").value = "1";
   $("outputName").value = `model_test_${$("provider").value}_${$("model").value}`;
@@ -18363,6 +18565,9 @@ if ($("listenerEnhanceBtn")) $("listenerEnhanceBtn").addEventListener("click", (
 if ($("listenerScoreBtn")) $("listenerScoreBtn").addEventListener("click", () => {
   runListenerScoreSelected().catch((error) => finishWork("Listener Error", "bad", error.message));
 });
+if ($("listenerRelistenBtn")) $("listenerRelistenBtn").addEventListener("click", () => {
+  runListenerRelistenSelected().catch((error) => finishWork("Oída Error", "bad", error.message));
+});
 if ($("canvasMasterRecordBtn")) $("canvasMasterRecordBtn").addEventListener("click", () => {
   canvasToggleMasterRecording().catch((error) => finishWork("Record Error", "bad", error.message));
 });
@@ -19132,6 +19337,7 @@ localStorage.removeItem("germinator-right-sidebar");
 if (typeof setLeftSidebarCollapsed === "function") setLeftSidebarCollapsed(false);
 setRightSidebarCollapsed(false);
 canvasLoadState();
+consumeAkousmaPromptHandoff();
 // Microcosmos: hand the scope/world layer a curated slice of the shared engine so germs
 // reuse the same assets, audio graph, master bus, generation, harvest, and
 // lineage as the Chamber (see docs/one_bit_dish_plan.md).

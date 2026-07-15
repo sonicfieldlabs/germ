@@ -26,7 +26,8 @@ Build and launch:
 apps/macos/script/build_and_run.sh
 ```
 
-`--build-only` stages `apps/macos/dist/germ.app` without launching it. The
+`--build-only` stages `apps/germ.app` without launching it, so the runnable
+bundle is visible beside the repository's app sources. The
 icon is generated deterministically by `script/make_icon.py` (stdlib-only
 Python + `iconutil`); the script is the icon's source of truth.
 
@@ -46,9 +47,11 @@ connections. Both surfaces write last-writer-wins; the `client_id` field
 records which surface saved last.
 
 The WKWebView grants microphone capture natively (macOS permission still
-applies) so the Chamber's Record module works in-app, and `target="_blank"`
-links open in the default browser. The Audio Snapshot module's
-display-audio capture is browser-only; use a browser tab for that module.
+applies) so the Chamber's Record module works in-app, saves the dashboard's
+WAV/JSON/GWT downloads to the user's Downloads folder, and opens
+`target="_blank"` links in the default browser. Audio Snapshot uses WebKit's
+native display-sharing picker; choose a display or app and include its audio,
+subject to the normal macOS Screen Recording permission.
 
 ## Supervision
 
@@ -63,8 +66,9 @@ uv run uvicorn server.main:app --host 127.0.0.1 --port 5178
 Common development paths are appended to `PATH` so a GUI-launched app can
 find `uv`, and Homebrew dylib paths are exported for the audio toolchain.
 The shell stops only processes it started itself — on explicit Stop Managed
-Daemon and on app quit (the managed daemon's stdout/stderr are pipes into
-the app, so an orphan would die on its next log write anyway). A daemon
+Daemon and on app quit. A small standard-library process supervisor watches
+the owning app PID and tears down the uvicorn process group if the app exits
+unexpectedly, so managed daemons cannot be orphaned. A daemon
 already running outside the shell is observed over HTTP and never owned.
 
 ## Menu Bar & Settings
@@ -80,6 +84,5 @@ recent log lines.
 - The shell is unsigned by default; see oída's
   `docs/macos-signing-notarization.md` for the Developer ID flow (the same
   script layout applies).
-- Display-audio capture (Audio Snapshot module) needs a real browser.
 - The shell adds no audio processing of its own — everything sonic stays in
   the dashboard's engine and the Python DSP routes.

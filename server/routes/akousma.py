@@ -15,6 +15,7 @@ JSON surface for the dashboard and agents:
     GET  /akousma/lineage/{id}    record + resolved parents/children + ancestor ids
     POST /akousma/generation      write a germ generation as a new akousma
 """
+
 from __future__ import annotations
 
 import html
@@ -30,10 +31,12 @@ from pydantic import BaseModel, Field
 from server.akousma_store import (
     AkousmaUnavailable,
     derive_prompt,
+    derive_prompt_contract,
     open_store,
     record_generation,
     resolve_audio_path,
 )
+from server.registry import storage
 from server.routes.import_audio import import_audio
 from server.storage import utc_now_iso
 
@@ -84,10 +87,16 @@ async def import_akousma(akousma: str, mode: str = "sound", format: str = "html"
             return HTMLResponse(_page_imported(record, payload))
 
         if mode == "prompt":
-            prompt = derive_prompt(record)
+            contract = derive_prompt_contract(record)
             if format == "json":
-                return JSONResponse({"akousma_id": record["akousma_id"], "prompt": prompt})
-            return HTMLResponse(_page_prompt(record, prompt))
+                return JSONResponse(
+                    {
+                        "akousma_id": record["akousma_id"],
+                        "prompt": contract["prompt"],
+                        "handoff": contract,
+                    }
+                )
+            return HTMLResponse(_page_prompt(record, contract))
 
         payload = _lineage_payload(store, record)
         if format == "json":
@@ -107,14 +116,27 @@ async def _import_as_sound(store, record: dict[str, Any]) -> dict[str, Any]:
 
     data = path.read_bytes()
     lineage = record.get("lineage") or {}
+    provenance = record.get("provenance") or {}
+    source: dict[str, Any] = {
+        "type": "imported",
+        "kind": "akousma",
+        "akousma_id": record["akousma_id"],
+        "schema_version": record.get("schema_version"),
+        "originating_app": provenance.get("originating_app"),
+    }
+    covenant = record.get("covenant")
+    if isinstance(covenant, dict):
+        # Covenant identity and attributed absence travel with the source. The
+        # consent-scoped location block deliberately does not get duplicated.
+        source["covenant"] = covenant
     metadata = {
         "prompt": derive_prompt(record),
         "output_name": record["akousma_id"].lower(),
         "tags": [str(t) for t in record.get("tags") or []],
-        "source_type": "oida-akousma",
-        "source": {"type": "oida-akousma", "akousma_id": record["akousma_id"]},
+        "source_type": "imported",
+        "source": source,
         "lineage": {
-            "operation": "oida-import",
+            "operation": "akousma-import",
             "akousma_id": record["akousma_id"],
             "parents": list(lineage.get("parent_akousma_ids") or []),
         },
@@ -154,10 +176,21 @@ def _lineage_payload(store, record: dict[str, Any]) -> dict[str, Any]:
     akousma_id = record["akousma_id"]
     parents = [store.get(pid) or {"akousma_id": pid} for pid in store.parents(akousma_id)]
     children = [store.get(cid) or {"akousma_id": cid} for cid in store.children(akousma_id)]
+    related = []
+    for relation in store.related(akousma_id):
+        related_record = store.get(relation["akousma_id"])
+        related.append(
+            {
+                **relation,
+                "record": related_record or {"akousma_id": relation["akousma_id"]},
+                "missing": related_record is None,
+            }
+        )
     return {
         "record": record,
         "parents": parents,
         "children": children,
+        "related": related,
         "ancestor_ids": store.ancestors(akousma_id),
     }
 
@@ -184,6 +217,7 @@ class GenerationAkousmaRequest(BaseModel):
     summary: str = ""
     session_id: str = ""
     germ_lineage: dict[str, Any] = Field(default_factory=dict)
+    covenant: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/akousma/generation")
@@ -193,8 +227,12 @@ def write_generation_akousma(request: GenerationAkousmaRequest) -> dict[str, Any
         for pid in request.parent_akousma_ids:
             _get_record(store, pid)
         try:
+            audio_path = storage.resolve_existing_input_audio_path(
+                request.audio_path,
+                label="akousma generation audio",
+            )
             record = record_generation(
-                audio_path=request.audio_path,
+                audio_path=audio_path,
                 prompt=request.prompt,
                 model=request.model,
                 operation=request.operation,
@@ -206,10 +244,17 @@ def write_generation_akousma(request: GenerationAkousmaRequest) -> dict[str, Any
                 summary=request.summary or None,
                 session_id=request.session_id or None,
                 germ_lineage=request.germ_lineage or None,
+                covenant=request.covenant or None,
                 store=store,
             )
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=400, detail=f"audio_path does not exist: {exc}") from exc
+            raise HTTPException(
+                status_code=400, detail=f"audio_path does not exist: {exc}"
+            ) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"akousma_id": record["akousma_id"], "record": record}
     finally:
         store.close()
@@ -255,20 +300,53 @@ def _record_summary_html(record: dict[str, Any]) -> str:
     songid = (record.get("extensions") or {}).get("songid") or {}
     rows = [
         ("akousma", record.get("akousma_id", "")),
-        ("origin", f"{prov.get('originating_app','?')} · {prov.get('origin','?')} · {prov.get('source_type','?')}"),
+        (
+            "origin",
+            f"{prov.get('originating_app', '?')} · {prov.get('origin', '?')} · {prov.get('source_type', '?')}",
+        ),
         ("created", record.get("created_at", "")),
         ("tags", ", ".join(str(t) for t in record.get("tags") or []) or "—"),
     ]
     if songid.get("matched"):
-        rows.append(("song id", f"{songid.get('title','?')} — {songid.get('artist','?')}"))
+        rows.append(("song id", f"{songid.get('title', '?')} — {songid.get('artist', '?')}"))
     cells = "".join(
         f"<div><span class='k'>{html.escape(k)}</span><br><span class='v'>{html.escape(str(v))}</span></div>"
         for k, v in rows
     )
     listening_html = (
-        f"<pre>{html.escape(json.dumps(listening, indent=2, ensure_ascii=False))}</pre>" if listening else ""
+        f"<pre>{html.escape(json.dumps(listening, indent=2, ensure_ascii=False))}</pre>"
+        if listening
+        else ""
     )
-    return f"<div class='card'><div class='row'>{cells}</div>{listening_html}</div>"
+    covenant_html = _covenant_summary_html(record)
+    return f"<div class='card'><div class='row'>{cells}</div>{listening_html}</div>{covenant_html}"
+
+
+def _covenant_summary_html(record: dict[str, Any]) -> str:
+    covenant = record.get("covenant")
+    if not isinstance(covenant, dict) or not covenant.get("id"):
+        return ""
+    withheld = covenant.get("withheld") or []
+    absences = []
+    for item in withheld:
+        if not isinstance(item, dict) or not item.get("subject"):
+            continue
+        count = item.get("count")
+        suffix = f" × {count}" if isinstance(count, int) else ""
+        absences.append(f"{item['subject']}{suffix}")
+    rows = [
+        f"<span class='k'>listening covenant</span><br><span class='v'>{html.escape(str(covenant['id']))}</span>"
+    ]
+    if covenant.get("contract"):
+        rows.append(
+            f"<br><span class='k'>contract</span> <span class='v'>{html.escape(str(covenant['contract']))}</span>"
+        )
+    if absences:
+        rows.append(
+            "<br><span class='k'>withheld under its rules</span> "
+            f"<span class='v'>{html.escape(', '.join(absences))}</span>"
+        )
+    return f"<div class='card'>{''.join(rows)}</div>"
 
 
 def _page_imported(record: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -276,22 +354,27 @@ def _page_imported(record: dict[str, Any], payload: dict[str, Any]) -> str:
     body = (
         f"<h1>opened as sound</h1>{_record_summary_html(record)}"
         f"<div class='card'><span class='k'>imported into germ</span><ul>{files}</ul>"
-        f"<span class='k'>job</span> <span class='v'>{html.escape(payload.get('job_id',''))}</span></div>"
+        f"<span class='k'>job</span> <span class='v'>{html.escape(payload.get('job_id', ''))}</span></div>"
         f"<div class='row'><a href='/dashboard'>open the germ dashboard →</a>"
         f"<a href='/import?akousma={html.escape(record['akousma_id'])}&mode=lineage'>explore lineage →</a></div>"
     )
     return _shell("germ — opened as sound", body)
 
 
-def _page_prompt(record: dict[str, Any], prompt: str) -> str:
+def _page_prompt(record: dict[str, Any], contract: dict[str, Any]) -> str:
+    prompt = str(contract.get("prompt") or "")
+    contract_json = json.dumps(contract, ensure_ascii=False).replace("<", "\\u003c")
     body = (
         f"<h1>opened as prompt</h1>{_record_summary_html(record)}"
-        f"<div class='card'><span class='k'>generation prompt (from the listening result)</span>"
-        f"<textarea id='p' readonly>{html.escape(prompt)}</textarea>"
-        "<div class='row'><button onclick=\"navigator.clipboard.writeText(document.getElementById('p').value);"
-        "localStorage.setItem('germ.akousma.prompt', document.getElementById('p').value);"
-        "this.textContent='copied'\">copy prompt</button>"
-        "<a href='/dashboard'>open the germ dashboard →</a></div></div>"
+        f"<div class='card'><span class='k'>editable generation prompt (from Oída's listening result)</span>"
+        f"<textarea id='p'>{html.escape(prompt)}</textarea>"
+        f"<script id='handoff' type='application/json'>{contract_json}</script>"
+        "<div class='row'><button onclick=\"const h=JSON.parse(document.getElementById('handoff').textContent);"
+        "h.prompt=document.getElementById('p').value;"
+        "localStorage.setItem('germ.akousma.prompt-handoff',JSON.stringify(h));"
+        "window.location='/dashboard?tab=chamber'\">cultivate in germ</button>"
+        "<button onclick=\"navigator.clipboard.writeText(document.getElementById('p').value);"
+        "this.textContent='copied'\">copy</button></div></div>"
         f"<div class='row'><a href='/import?akousma={html.escape(record['akousma_id'])}&mode=sound'>also open as sound →</a>"
         f"<a href='/import?akousma={html.escape(record['akousma_id'])}&mode=lineage'>explore lineage →</a></div>"
     )
@@ -302,13 +385,36 @@ def _lineage_list(title: str, records: list[dict[str, Any]]) -> str:
     if not records:
         return f"<div class='card'><span class='k'>{html.escape(title)}</span><br><span class='v'>—</span></div>"
     items = "".join(
-        f"<li><a href='/import?akousma={html.escape(r.get('akousma_id',''))}&mode=lineage'>"
-        f"{html.escape(r.get('akousma_id',''))}</a>"
+        f"<li><a href='/import?akousma={html.escape(r.get('akousma_id', ''))}&mode=lineage'>"
+        f"{html.escape(r.get('akousma_id', ''))}</a>"
         f" <span class='k'>{html.escape(((r.get('provenance') or {}).get('originating_app') or '?'))}"
         f" · {html.escape(((r.get('lineage') or {}).get('operation') or ''))}</span></li>"
         for r in records
     )
     return f"<div class='card'><span class='k'>{html.escape(title)}</span><ul>{items}</ul></div>"
+
+
+def _relation_list(relations: list[dict[str, Any]]) -> str:
+    if not relations:
+        return (
+            "<div class='card'><span class='k'>kinship (0)</span><br><span class='v'>—</span></div>"
+        )
+    items = []
+    for relation in relations:
+        record = relation.get("record") or {}
+        relation_id = str(record.get("akousma_id") or relation.get("akousma_id") or "")
+        relation_type = str(relation.get("type") or "other")
+        direction = str(relation.get("direction") or "")
+        missing = " · missing record" if relation.get("missing") else ""
+        items.append(
+            f"<li><a href='/import?akousma={html.escape(relation_id)}&mode=lineage'>"
+            f"{html.escape(relation_id)}</a> <span class='k'>"
+            f"{html.escape(relation_type)} · {html.escape(direction + missing)}</span></li>"
+        )
+    return (
+        f"<div class='card'><span class='k'>kinship ({len(relations)})</span>"
+        f"<ul>{''.join(items)}</ul></div>"
+    )
 
 
 def _page_lineage(record: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -318,9 +424,14 @@ def _page_lineage(record: dict[str, Any], payload: dict[str, Any]) -> str:
     )
     body = (
         f"<h1>lineage explorer</h1>{_record_summary_html(record)}"
-        + (f"<div class='card'><span class='k'>this sound came from</span><br><span class='v'>{html.escape(op)}</span></div>" if op else "")
+        + (
+            f"<div class='card'><span class='k'>this sound came from</span><br><span class='v'>{html.escape(op)}</span></div>"
+            if op
+            else ""
+        )
         + _lineage_list(f"parents ({len(payload['parents'])})", payload["parents"])
         + _lineage_list(f"children ({len(payload['children'])})", payload["children"])
+        + _relation_list(payload["related"])
         + f"<div class='card'><span class='k'>ancestors</span><br><span class='v'>{len(payload['ancestor_ids'])} in chain</span></div>"
         f"<div class='row'>"
         f"<a href='/import?akousma={html.escape(record['akousma_id'])}&mode=sound'>open as sound →</a>"

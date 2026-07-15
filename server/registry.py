@@ -75,7 +75,8 @@ class ProviderRegistry:
     def load_model(self, provider_id: str, model_id: str, device: str = "auto") -> dict:
         provider = self.get(provider_id)
         result = provider.load_model(model_id, device)
-        self.set_active(provider_id)
+        if str(result.get("status") or "").lower() not in {"error", "unavailable"}:
+            self.set_active(provider_id)
         self._status_cache = None
         self._status_cache_at = 0.0
         return result

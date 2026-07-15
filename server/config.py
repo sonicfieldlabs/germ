@@ -125,6 +125,22 @@ class Settings:
             int(_env("GERM_JOB_WORKERS", "1", legacy="GERMINATOR_JOB_WORKERS") or "1"),
         )
         self.stability_api_key = os.getenv("STABILITY_API_KEY", "")
+        self.stability_api_url = (
+            _env("GERM_STABILITY_API_URL", "https://api.stability.ai")
+            or "https://api.stability.ai"
+        ).rstrip("/")
+        self.stability_poll_seconds = max(
+            0.0,
+            float(_env("GERM_STABILITY_POLL_SECONDS", "10") or "10"),
+        )
+        self.oida_url = (
+            _env("GERM_OIDA_URL", "http://127.0.0.1:8765")
+            or "http://127.0.0.1:8765"
+        ).rstrip("/")
+        self.oida_timeout_seconds = max(
+            1.0,
+            float(_env("GERM_OIDA_TIMEOUT_SECONDS", "1800") or "1800"),
+        )
         self.allowed_hosts = self._parse_allowed_hosts()
         self.max_upload_bytes = int(
             float(_env("GERM_MAX_UPLOAD_MB", "100", legacy="GERMINATOR_MAX_UPLOAD_MB") or "100")

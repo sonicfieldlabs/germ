@@ -18,7 +18,7 @@ exploration tool for working with Stable Audio 3 workflows.
 ## Stable Audio 3 Focus
 
 The app exposes a local FastAPI server, a browser dashboard, generated WAV files,
-metadata JSON, and provider switching across mock, Python, MLX, and future API
+metadata JSON, and provider switching across mock, Python, MLX, and Stability API
 routes. It keeps technical Stable Audio controls visible while adding a germ workflow
 layer for sound matter, micro modules, culture, strain, mutation, pruning,
 propagation, listening, curation, and harvest.
@@ -48,9 +48,11 @@ Official Stable Audio references:
   incubated evolution.
 - Control layer for audio-to-control, safe OSC, MIDI intent, CV-safe exports, and
   control ancestry, including the norns/Fates OSC bridge.
-- Listener prompt enhancement and heuristic scoring through `/listener/enhance`
-  and `/listener/score`, with optional local Ollama fallback.
-- Earworm 0.1 export of generated metadata into local context-chain sessions.
+- Neutral, editable prompt compilation through `/listener/enhance`, local DSP-only
+  signal checks through `/listener/score`, and explicit re-listening through oída at
+  `/listener/relisten`. Machine listening and audio understanding stay in oída.
+- Earworm 0.4-compatible export of generated metadata into local context-chain
+  sessions, plus Akousma spec v1.3 lineage, kinship, and covenant-aware handoffs.
 - Shared audio player with waveform drawing, metadata preview, path copy, open, and
   Finder reveal.
 - Diagnostics for provider readiness and Hugging Face access.
@@ -112,6 +114,9 @@ Native macOS app (embeds the same dashboard, supervises the same daemon):
 apps/macos/script/build_and_run.sh
 ```
 
+The build stages the runnable bundle at `apps/germ.app`. To build it without
+launching it, use `apps/macos/script/build_and_run.sh --build-only`.
+
 private-network launch for another device in the same private-network:
 
 ```bash
@@ -170,10 +175,13 @@ GERM_MAX_IMAGE_MB=8
 GERM_ENABLE_CLOUD_VISION=0
 GERM_LISTENER_MAX_AUDIO_MB=50
 GERM_LISTENER_MAX_DURATION_SECONDS=600
+STABILITY_API_KEY=        # optional: hosted Stable Audio 3
+GERM_STABILITY_API_URL=https://api.stability.ai
+GERM_STABILITY_POLL_SECONDS=10
+GERM_OIDA_URL=http://127.0.0.1:8765
+GERM_OIDA_TIMEOUT_SECONDS=1800
 GERM_RELOAD=1            # launch_germ.command only: start uvicorn with --reload
 GERM_private-network_IP=...    # scripts/run_private-network.sh only: override the auto-detected IP
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=llama3.2
 ```
 
 The older `GERMINATOR_*` names are still accepted as fallbacks for compatibility.
@@ -240,8 +248,8 @@ request is recorded, but a render already inside the model call may finish norma
 - Propagation: continuation workflow for loops, tails, beds, and textures.
 - Strains: creative LoRA palette and Culture Mix scaffold.
 - Herbarium: archive view over saved outputs.
-- Listener: prompt enhancer, heuristic scorer, repair proposals, and optional
-  local Ollama prompt enhancement with no mandatory cloud key.
+- Listener: a neutral prompt compiler, local signal checks, repair proposals, and
+  the oída re-listening bridge. **Oída hears. germ cultivates.**
 - Lab: placeholders for SAME latents, dataset prep, model comparison, benchmarks,
   and agent experiments.
 
@@ -268,10 +276,10 @@ sections.
 
 ## Listener
 
-Listener can enhance a rough idea into a Stable Audio prompt, merge a negative
-prompt, score WAV files with bounded local DSP features, propose loop-seam repair
-ranges, and fall back to local Ollama when available. It does not require a cloud
-LLM API for the app to run.
+Listener normalizes a rough idea without injecting a modality, scores WAV files with
+bounded local DSP features, and proposes measured loop-seam repairs. Re-listening and
+prompt derivation are delegated to oída; germ does not embed a listening or
+audio-understanding model and requires no general-purpose LLM API.
 
 ## API
 
@@ -299,6 +307,7 @@ POST /lora/strength
 GET  /listener/providers
 POST /listener/enhance
 POST /listener/score
+POST /listener/relisten
 GET  /strains
 POST /strains
 GET  /strains/{strain_id}
@@ -336,7 +345,7 @@ curl -X POST http://127.0.0.1:5178/generate \
   -d '{
     "provider": "mock",
     "model": "mock-sine",
-    "prompt": "TrackType: SFX, dry close-microphone loop of metallic friction",
+    "prompt": "dry close-microphone loop of metallic friction",
     "negative_prompt": "speech, vocals, melody, long reverb",
     "duration": 3.0,
     "steps": 8,
@@ -378,8 +387,8 @@ Generated metadata keeps existing compatibility fields and adds germ identity fi
 
 Each generated metadata record also includes an `earworm` block with deterministic
 session, asset, and provenance IDs. Use `POST /earworm/export` to write a local
-Earworm 0.1 session JSON from a metadata path. The cross-stack fixture lives at
-`tests/fixtures/germ-organism-mapping.session.json`.
+Earworm context-session JSON from a metadata path. The export shape remains
+compatible with Earworm's current v0.4 session schema contract.
 
 ## Development Notes
 

@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from server.listener import enhance_prompt, score_audio
-from server.schemas import ListenerEnhanceRequest, ListenerEnhanceResult, ListenerScoreRequest, ListenerScoreResult
+from server.listener import enhance_prompt, relisten_with_oida, score_audio
+from server.schemas import (
+    ListenerEnhanceRequest,
+    ListenerEnhanceResult,
+    ListenerRelistenRequest,
+    ListenerRelistenResult,
+    ListenerScoreRequest,
+    ListenerScoreResult,
+)
 
 
 router = APIRouter(prefix="/listener", tags=["listener"])
@@ -14,25 +21,29 @@ def providers() -> dict[str, object]:
     return {
         "providers": [
             {
-                "id": "mock",
-                "label": "Heuristic Listener",
+                "id": "neutral",
+                "label": "Neutral Prompt Compiler",
                 "available": True,
                 "requires_key": False,
+                "performs_listening": False,
             },
             {
-                "id": "local",
-                "label": "Local Ollama Listener",
+                "id": "local_signal",
+                "label": "Local Signal Check",
                 "available": True,
                 "requires_key": False,
-                "fallback": "heuristic",
+                "performs_listening": False,
             },
             {
-                "id": "api",
-                "label": "API Listener",
-                "available": False,
-                "requires_key": True,
+                "id": "oida",
+                "label": "Oída Re-listening Bridge",
+                "available": True,
+                "requires_key": False,
+                "performs_listening": True,
+                "ownership": "oida",
             },
-        ]
+        ],
+        "boundary": "Oída hears. Germ cultivates.",
     }
 
 
@@ -44,3 +55,8 @@ def enhance(request: ListenerEnhanceRequest) -> ListenerEnhanceResult:
 @router.post("/score", response_model=ListenerScoreResult)
 def score(request: ListenerScoreRequest) -> ListenerScoreResult:
     return score_audio(request)
+
+
+@router.post("/relisten", response_model=ListenerRelistenResult)
+def relisten(request: ListenerRelistenRequest) -> ListenerRelistenResult:
+    return relisten_with_oida(request)

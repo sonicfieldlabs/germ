@@ -82,7 +82,12 @@ class LoraSpec(BaseModel):
     path: str
     id: str | None = None
     name: str | None = None
+    enabled: bool = True
     strength: float | None = Field(default=None, ge=0.0, le=10.0)
+    step_range: str | None = Field(
+        default=None,
+        description="Optional MLX diffusion-step range, for example '2-8', '2-', or '-4'.",
+    )
     tags: list[str] = Field(default_factory=list)
     author: str | None = None
     license: str | None = None
@@ -91,6 +96,34 @@ class LoraSpec(BaseModel):
     recommended_modules: list[str] = Field(default_factory=list)
     provenance_notes: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("LoRA path is required")
+        return cleaned
+
+    @field_validator("step_range")
+    @classmethod
+    def validate_step_range(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        import re
+
+        if not re.fullmatch(r"(?:[1-9]\d*|[1-9]\d*-[1-9]\d*|[1-9]\d*-|-[1-9]\d*)", cleaned):
+            raise ValueError(
+                "step_range must be a 1-based step or range such as '3', '2-8', '2-', or '-4'"
+            )
+        if "-" in cleaned and not cleaned.startswith("-") and not cleaned.endswith("-"):
+            start, end = (int(part) for part in cleaned.split("-", 1))
+            if start > end:
+                raise ValueError("step_range start must be less than or equal to end")
+        return cleaned
 
 
 class StrainCard(BaseModel):
@@ -391,12 +424,12 @@ class WavetableOperationResult(BaseModel):
 class BaseGenerationRequest(BaseModel):
     provider: ProviderId = "mock"
     model: str = "mock-sine"
-    prompt: str = ""
-    negative_prompt: str = ""
-    base_prompt: str | None = None
-    modulated_prompt: str | None = None
-    base_negative_prompt: str | None = None
-    modulated_negative_prompt: str | None = None
+    prompt: str = Field(default="", max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
+    base_prompt: str | None = Field(default=None, max_length=10_000)
+    modulated_prompt: str | None = Field(default=None, max_length=10_000)
+    base_negative_prompt: str | None = Field(default=None, max_length=10_000)
+    modulated_negative_prompt: str | None = Field(default=None, max_length=10_000)
     modulators: list[dict[str, Any]] = Field(default_factory=list)
     semantic_layers: list[dict[str, Any]] = Field(default_factory=list)
     semantic_effects: list[dict[str, Any]] = Field(default_factory=list)
@@ -423,8 +456,8 @@ class BaseGenerationRequest(BaseModel):
     generation_sequences: list[dict[str, Any]] = Field(default_factory=list)
     duration: float = Field(default=4.0, gt=0.0, le=380.0)
     steps: int = Field(default=8, ge=1, le=250)
-    cfg_scale: float = Field(default=1.0, ge=0.0, le=20.0)
-    seed: int = -1
+    cfg_scale: float = Field(default=1.0, ge=0.0, le=25.0)
+    seed: int = Field(default=-1, ge=-1, le=4_294_967_294)
     batch_size: int = Field(default=1, ge=1, le=16)
     lora: list[LoraSpec] = Field(default_factory=list)
     output_name: str | None = None
@@ -442,7 +475,65 @@ class BaseGenerationRequest(BaseModel):
     latent_fingerprint: str | None = None
     chunked_decode: bool = True
     lineage: dict[str, Any] = Field(default_factory=dict)
+    remember_to_akousmata: bool = False
+    parent_akousma_ids: list[str] = Field(default_factory=list, max_length=64)
+    akousma_relations: list[dict[str, Any]] = Field(default_factory=list, max_length=128)
+    listening_context: dict[str, Any] = Field(default_factory=dict)
+    covenant: dict[str, Any] = Field(default_factory=dict)
+    akousma_summary: str | None = Field(default=None, max_length=500)
     job_id: str | None = Field(default=None, exclude=True)
+
+    @field_validator("parent_akousma_ids")
+    @classmethod
+    def validate_parent_akousma_ids(cls, values: list[str]) -> list[str]:
+        cleaned = [str(value).strip() for value in values if str(value).strip()]
+        return list(dict.fromkeys(cleaned))
+
+    @model_validator(mode="after")
+    def resolve_effective_prompts(self) -> "BaseGenerationRequest":
+        """Keep the user's neutral prompt and make the effective modulated text explicit.
+
+        Providers consume ``prompt`` and ``negative_prompt``.  The dashboard also
+        sends base/modulated variants, so resolve those fields here once instead
+        of letting an adapter accidentally generate from the stale base text.
+        """
+        raw_prompt = self.prompt.strip()
+        raw_negative = self.negative_prompt.strip()
+        base_prompt = self.base_prompt.strip() if self.base_prompt is not None else raw_prompt
+        base_negative = (
+            self.base_negative_prompt.strip()
+            if self.base_negative_prompt is not None
+            else raw_negative
+        )
+        effective_prompt = (
+            self.modulated_prompt.strip() if self.modulated_prompt is not None else raw_prompt
+        )
+        effective_negative = (
+            self.modulated_negative_prompt.strip()
+            if self.modulated_negative_prompt is not None
+            else raw_negative
+        )
+        self.base_prompt = base_prompt
+        self.modulated_prompt = effective_prompt
+        self.base_negative_prompt = base_negative
+        self.modulated_negative_prompt = effective_negative
+        self.prompt = effective_prompt
+        self.negative_prompt = effective_negative
+        if "prompt_contract" not in self.generation_context:
+            self.generation_context = {
+                **self.generation_context,
+                "prompt_contract": {
+                    "contract": "germ.prompt/v0.1",
+                    "neutral": True,
+                    "base_prompt": base_prompt,
+                    "effective_prompt": effective_prompt,
+                    "base_negative_prompt": base_negative,
+                    "effective_negative_prompt": effective_negative,
+                    "modulated": self.modulated_prompt != base_prompt
+                    or self.modulated_negative_prompt != base_negative,
+                },
+            }
+        return self
 
 
 class GenerateRequest(BaseGenerationRequest):
@@ -469,6 +560,12 @@ class InpaintRequest(BaseGenerationRequest):
             if end <= start:
                 raise ValueError("each inpaint range end must be greater than start")
         return ranges
+
+    @model_validator(mode="after")
+    def validate_ranges_within_duration(self) -> "InpaintRequest":
+        if any(end > self.duration for _, end in self.inpaint_ranges):
+            raise ValueError("inpaint range end cannot exceed duration")
+        return self
 
 
 class ContinueRequest(BaseGenerationRequest):
@@ -659,16 +756,16 @@ class TimeRenderRequest(BaseModel):
         return self
 
 
-ListenerProvider = Literal["mock", "local", "api"]
+ListenerProvider = Literal["neutral", "mock", "local", "oida", "api"]
 ListenerTask = Literal["prompt_enhance", "negative_prompt", "curate", "repair"]
 
 
 class ListenerEnhanceRequest(BaseModel):
-    provider: ListenerProvider = "mock"
+    provider: ListenerProvider = "neutral"
     task: ListenerTask = "prompt_enhance"
-    prompt: str = Field(default="", max_length=2000)
-    negative_prompt: str = Field(default="", max_length=2000)
-    model: str = "heuristic-listener"
+    prompt: str = Field(default="", max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
+    model: str = "neutral-compiler"
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -685,11 +782,11 @@ class ListenerEnhanceResult(BaseModel):
 
 
 class ListenerScoreRequest(BaseModel):
-    provider: ListenerProvider = "mock"
-    prompt: str = Field(default="", max_length=2000)
+    provider: ListenerProvider = "neutral"
+    prompt: str = Field(default="", max_length=10_000)
     audio_path: str
     metadata_path: str | None = None
-    model: str = "heuristic-listener"
+    model: str = "local-signal-check"
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -705,6 +802,38 @@ class ListenerScoreResult(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     repair_proposals: list[dict[str, Any]] = Field(default_factory=list)
     features: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListenerRelistenRequest(BaseModel):
+    audio_path: str
+    metadata_path: str | None = None
+    prompt: str = Field(default="", max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
+    route_preset: str = Field(default="generative", min_length=1, max_length=80)
+    intent: Literal["transform", "variation", "counterpoint", "sonification"] = "variation"
+    privacy_mode: Literal["session", "incognito"] = "session"
+    remember: bool = False
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListenerRelistenResult(BaseModel):
+    provider: Literal["oida"] = "oida"
+    contract: str = "germ.oida-relisten/v0.1"
+    audio_path: str
+    metadata_path: str | None = None
+    route_preset: str
+    relisten_mode: Literal["generation_relisten", "gateway_listen"] = "gateway_listen"
+    source_generation_id: str | None = None
+    listening_event_id: str
+    generation_id: str
+    prompt: str
+    negative_prompt: str
+    source_summary: str = ""
+    listening_result: dict[str, Any] = Field(default_factory=dict)
+    route_comparison: dict[str, Any] = Field(default_factory=dict)
+    remembered: bool = False
+    akousma_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class JobStatus(BaseModel):
@@ -756,7 +885,11 @@ class ControlTransform(BaseModel):
     def validate_ranges(self) -> "ControlTransform":
         if self.min is not None and self.max is not None and self.max < self.min:
             raise ValueError("max must be greater than or equal to min")
-        if self.clamp_min is not None and self.clamp_max is not None and self.clamp_max < self.clamp_min:
+        if (
+            self.clamp_min is not None
+            and self.clamp_max is not None
+            and self.clamp_max < self.clamp_min
+        ):
             raise ValueError("clamp_max must be greater than or equal to clamp_min")
         return self
 

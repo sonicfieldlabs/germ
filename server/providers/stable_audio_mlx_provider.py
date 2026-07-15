@@ -33,10 +33,10 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             self.last_error = "MLX provider requires Apple Silicon."
             return False
-        if not self.sa3_binary().exists():
+        if not self.sa3_binary().is_file() or not os.access(self.sa3_binary(), os.X_OK):
             self.last_error = (
-                "MLX sa3 binary was not found. Run scripts/install_mlx_provider.sh "
-                "or set GERMINATOR_MLX_REPO_DIR."
+                "MLX sa3 binary was not found or is not executable. "
+                "Run scripts/install_mlx_provider.sh or set GERM_MLX_REPO_DIR."
             )
             return False
         self.last_error = None
@@ -48,6 +48,14 @@ class StableAudioMLXProvider(AudioGenerationProvider):
     def load_model(self, model_id: str, device: str = "auto") -> dict:
         if self._map_model(model_id) not in {"sm-music", "sm-sfx", "medium"}:
             raise ValueError(f"unknown MLX model: {model_id}")
+        if not self.is_available():
+            return {
+                "provider": self.provider_id,
+                "model": model_id,
+                "device": self.current_device,
+                "status": "error",
+                "detail": self.last_error,
+            }
         self.loaded_model_id = model_id
         self.current_device = "mlx"
         return {
@@ -85,6 +93,16 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         count = request.batch_size if mode == "text-to-audio" else 1
         paths = self.storage.reserve_paths(request=request, mode=mode, job_id=job_id, count=count)
         first_seed = request.seed if request.seed >= 0 else self.storage.random_seed()
+
+        if mode != "text-to-audio" and request.batch_size != 1:
+            return self.storage.write_error_metadata(
+                request=request,
+                mode=mode,
+                job_id=job_id,
+                error="MLX editing modes currently require batch_size=1",
+                provider=self.provider_id,
+                model=request.model,
+            )
 
         if not self.is_available():
             return self.storage.write_error_metadata(
@@ -142,7 +160,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     seed=seed,
                     output_audio_path=audio_path if audio_path.exists() else None,
                     sample_rate=self.sample_rate if audio_path.exists() else None,
-                    status="error",
+                    status=status,
                     error=error,
                     extra={
                         "batch_index": index,
@@ -208,6 +226,43 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                 self.storage.record_result(result)
                 return result
 
+            if not audio_path.is_file() or audio_path.stat().st_size == 0:
+                error = "MLX sa3 exited successfully but did not write a non-empty output file."
+                self.storage.write_metadata(
+                    metadata_path=metadata_path,
+                    request=request,
+                    mode=mode,
+                    provider=self.provider_id,
+                    model=request.model,
+                    seed=seed,
+                    output_audio_path=None,
+                    sample_rate=None,
+                    status="error",
+                    error=error,
+                    extra={
+                        "batch_index": index,
+                        "command": command_text,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "returncode": returncode,
+                    },
+                )
+                result = GenerationResult(
+                    job_id=job_id,
+                    status="error",
+                    audio_files=audio_files,
+                    metadata_files=metadata_files + [self.storage.relative_path(metadata_path)],
+                    seed=first_seed,
+                    duration=request.duration,
+                    sample_rate=None,
+                    error=error,
+                    provider=self.provider_id,
+                    model=request.model,
+                    mode=mode,
+                )
+                self.storage.record_result(result)
+                return result
+
             self.storage.write_metadata(
                 metadata_path=metadata_path,
                 request=request,
@@ -246,6 +301,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
     def _build_command(self, request, audio_path: Path, seed: int) -> list[str]:
         if self._map_model(request.model) not in {"sm-music", "sm-sfx", "medium"}:
             raise ValueError(f"unknown MLX model: {request.model}")
+        if self._map_model(request.model) in {"sm-music", "sm-sfx"} and request.duration > 120:
+            raise ValueError("Stable Audio 3 small models support at most 120 seconds")
         if isinstance(request, InpaintRequest) and len(request.inpaint_ranges) > 1:
             raise ValueError(
                 "Build one MLX inpaint command per range, then run them sequentially."
@@ -272,7 +329,23 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         ]
         if request.negative_prompt:
             command.extend(["--negative-prompt", request.negative_prompt])
+        for lora in request.lora:
+            if not lora.enabled:
+                continue
+            lora_path = self.storage.resolve_existing_model_file_path(
+                lora.path,
+                label="LoRA checkpoint",
+            )
+            if lora_path.suffix.lower() != ".safetensors":
+                raise ValueError("MLX LoRA adapters must be .safetensors files")
+            command.extend(["--lora", str(lora_path)])
+            if lora.strength is not None:
+                command.append(f"strength={lora.strength}")
+            if lora.step_range:
+                command.append(f"steps={lora.step_range}")
         if isinstance(request, AudioToAudioRequest):
+            if request.init_noise_level < 0.01:
+                raise ValueError("MLX init_noise_level must be at least 0.01")
             input_path = self._resolve_input(request.input_audio_path)
             command.extend(["--init-audio", input_path])
             command.extend(["--init-noise-level", str(request.init_noise_level)])
@@ -349,6 +422,11 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     f"MLX sa3 exited with code {process['returncode']} on range "
                     f"{index + 1}/{len(request.inpaint_ranges)}. "
                     f"stderr: {process['stderr'].strip() or 'empty'}"
+                )
+            if error is None and (not target_path.is_file() or target_path.stat().st_size == 0):
+                error = (
+                    "MLX sa3 exited successfully but did not write a non-empty output "
+                    f"for range {index + 1}/{len(request.inpaint_ranges)}."
                 )
             if error is not None:
                 status = "cancelled" if process.get("cancelled") else "error"

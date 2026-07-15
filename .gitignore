@@ -36,6 +36,8 @@ output/sessions/
 
 apps/macos/.build/
 apps/macos/dist/
+apps/germ.app/
+.codex/
 
 /*.png
 /*.jpg

@@ -34,9 +34,24 @@ struct SettingsView: View {
                     Button("Enable") {
                         store.setLaunchAtLogin(true)
                     }
+                    .disabled(!LaunchAtLoginManager.canEnable)
+
                     Button("Disable") {
                         store.setLaunchAtLogin(false)
                     }
+                    .disabled(!LaunchAtLoginManager.canDisable)
+
+                    if LaunchAtLoginManager.requiresApproval {
+                        Button("Open Login Items…") {
+                            LaunchAtLoginManager.openSystemSettings()
+                        }
+                    }
+                }
+
+                if LaunchAtLoginManager.isUnavailable {
+                    Text("Launch at login becomes available in a signed, installed build.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 

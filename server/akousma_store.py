@@ -10,11 +10,14 @@ The ``akousma`` package is the Python reference implementation that lives in the
 earworm repo (``earworm/packages/py-akousma``). It is imported lazily so the server
 still boots without it; the routes degrade to 503.
 """
+
 from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 
 class AkousmaUnavailable(RuntimeError):
@@ -46,88 +49,245 @@ def resolve_audio_path(store, record: dict[str, Any]) -> Path | None:
         return None
     if uri.startswith("akousmata://"):
         path = store.resolve_uri(uri)
-        return path if path and path.exists() else None
+        return path if path and path.is_file() else None
     if uri.startswith("file://"):
-        path = Path(uri[len("file://"):])
-        return path if path.exists() else None
+        parsed = urlsplit(uri)
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            return None
+        path = Path(url2pathname(parsed.path))
+        return path if path.is_file() else None
     path = Path(uri).expanduser()
-    return path if path.is_absolute() and path.exists() else None
+    return path if path.is_absolute() and path.is_file() else None
 
 
-_PROMPT_KEYS = ("summary", "caption", "description", "text", "prompt", "main_reading", "notes")
-_PREFERRED_NAMESPACES = ("akouo.describe", "oida.moss", "oida.signal", "human.note")
+_PROMPT_KEYS = (
+    "generative_prompt",
+    "transformation_prompt",
+    "prompt",
+    "main_reading",
+    "brief",
+    "summary",
+    "short_summary",
+    "detailed_summary",
+    "caption",
+    "description",
+    "notes",
+    "text",
+)
+_NESTED_PROMPT_KEYS = (
+    "akouo_output",
+    "generative",
+    "aggregate",
+    "structured",
+    "output",
+    "result",
+)
+_PREFERRED_NAMESPACES = (
+    "akouo.generative",
+    "akouo.describe",
+    "oida.generative",
+    "oida.listen",
+    "oida.moss",
+    "oida.signal",
+    "human.note",
+)
 
 GERM_CONTRACT = "germ/v0.1"
+AKOUO_CONTRACT = "akouo/v0.7"
+PROMPT_HANDOFF_CONTRACT = "oida-germ.prompt/v0.1"
 
 
-def _entry_payload(block: dict[str, Any]) -> dict[str, Any]:
+def _is_listening_envelope(block: Any) -> bool:
+    return (
+        isinstance(block, dict)
+        and "payload" in block
+        and ("created_at" in block or "contract" in block)
+    )
+
+
+def _entry_payload(block: dict[str, Any]) -> Any:
     """Unwrap the akousma spec v1.1 listening envelope
     (``{contract?, created_at, summary?, payload}``); raw entries pass through."""
-    payload = block.get("payload")
-    if isinstance(payload, dict) and ("created_at" in block or "contract" in block):
-        return payload
+    if _is_listening_envelope(block):
+        return block["payload"]
     return block
 
 
-def derive_prompt(record: dict[str, Any]) -> str:
-    """Turn a record's memory into a generation prompt for germ. Prefers the
-    record's own skimmable summary (spec v1.1), then listening entries (both
-    raw v1.0 and enveloped v1.1 shapes)."""
-    fragments: list[str] = []
-    record_summary = record.get("summary")
-    if isinstance(record_summary, str) and record_summary.strip():
-        fragments.append(record_summary.strip())
+def _prompt_text(value: Any, *, depth: int = 0) -> str | None:
+    if depth > 4:
+        return None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if not isinstance(value, dict):
+        return None
+    envelope_summary = value.get("summary")
+    if isinstance(envelope_summary, str) and envelope_summary.strip() and "payload" in value:
+        return envelope_summary.strip()
+    payload = _entry_payload(value)
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()
+    if not isinstance(payload, dict):
+        return None
+    for key in _PROMPT_KEYS:
+        text = payload.get(key)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    for key in _NESTED_PROMPT_KEYS:
+        text = _prompt_text(payload.get(key), depth=depth + 1)
+        if text:
+            return text
+    return None
 
+
+def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
+    """Build the editable, provenance-preserving Oída → Germ prompt handoff."""
+    evidence: list[dict[str, Any]] = []
     listening = record.get("listening") or {}
+    record_summary = record.get("summary")
 
-    def collect(block: Any) -> None:
-        if isinstance(block, str) and block.strip():
-            fragments.append(block.strip())
-        elif isinstance(block, dict):
-            envelope_summary = block.get("summary")
-            if isinstance(envelope_summary, str) and envelope_summary.strip() and "payload" in block:
-                fragments.append(envelope_summary.strip())
-                return
-            payload = _entry_payload(block)
-            for key in _PROMPT_KEYS:
-                value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    fragments.append(value.strip())
-                    return
+    # A producer may use versioned/dynamic AKOÚŌ namespace names. Prefer an
+    # explicit generative/transformation result over a general record summary,
+    # then retain the summary as supporting evidence.
+    generative_namespaces = [
+        str(namespace)
+        for namespace in listening
+        if any(
+            token in str(namespace).casefold() for token in ("generative", "transform", "prompt")
+        )
+    ]
+    for namespace in generative_namespaces:
+        block = listening.get(namespace)
+        text = _prompt_text(block)
+        if text:
+            item: dict[str, Any] = {"namespace": namespace, "text": text}
+            if isinstance(block, dict) and block.get("contract"):
+                item["contract"] = block["contract"]
+            evidence.append(item)
+    if not evidence and isinstance(record_summary, str) and record_summary.strip():
+        evidence.append({"namespace": "record.summary", "text": record_summary.strip()})
 
     for namespace in _PREFERRED_NAMESPACES:
-        collect(listening.get(namespace))
-    if not fragments:
-        for value in listening.values():
-            collect(value)
-            if fragments:
+        if namespace in generative_namespaces:
+            continue
+        block = listening.get(namespace)
+        text = _prompt_text(block)
+        if text:
+            item: dict[str, Any] = {"namespace": namespace, "text": text}
+            if isinstance(block, dict) and block.get("contract"):
+                item["contract"] = block["contract"]
+            evidence.append(item)
+    if (
+        evidence
+        and generative_namespaces
+        and isinstance(record_summary, str)
+        and record_summary.strip()
+    ):
+        evidence.append({"namespace": "record.summary", "text": record_summary.strip()})
+    if not evidence:
+        for namespace, value in listening.items():
+            text = _prompt_text(value)
+            if text:
+                evidence.append({"namespace": str(namespace), "text": text})
                 break
 
-    if not fragments:
+    if not evidence:
         tags = [str(t) for t in record.get("tags") or []]
         if tags:
-            fragments.append(", ".join(tags))
+            evidence.append({"namespace": "record.tags", "text": ", ".join(tags)})
 
     seen: set[str] = set()
-    unique = [f for f in fragments if not (f in seen or seen.add(f))]
-    return ". ".join(unique[:2])
+    unique_evidence = []
+    for item in evidence:
+        normalized = " ".join(str(item["text"]).split())
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        unique_evidence.append({**item, "text": normalized})
+    prompt = ". ".join(item["text"] for item in unique_evidence[:3])[:10_000]
+
+    provenance = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    lineage = record.get("lineage") if isinstance(record.get("lineage"), dict) else {}
+    source_id = str(record.get("akousma_id") or "")
+    source = {
+        "kind": "akousma",
+        "akousma_id": source_id,
+        "schema_version": record.get("schema_version"),
+        "originating_app": provenance.get("originating_app"),
+        "source_type": provenance.get("source_type"),
+        "origin": provenance.get("origin"),
+        "session_id": record.get("session_id"),
+    }
+    source = {key: value for key, value in source.items() if value not in (None, "")}
+    covenant = record.get("covenant") if isinstance(record.get("covenant"), dict) else {}
+    safe_covenant = {
+        key: covenant.get(key)
+        for key in (
+            "id",
+            "name",
+            "version",
+            "contract",
+            "sha256",
+            "extends",
+            "rules_applied",
+            "withheld",
+            "commitments",
+            "note",
+        )
+        if covenant.get(key) not in (None, "", [], {})
+    }
+    return {
+        "contract": PROMPT_HANDOFF_CONTRACT,
+        "editable": True,
+        "source": source,
+        "base_prompt": prompt,
+        "prompt": prompt,
+        "negative_prompt": "",
+        "evidence": unique_evidence[:8],
+        "generation_context": {
+            "bridge": "oida-hears-germ-cultivates",
+            "source_operation": lineage.get("operation"),
+            "source_model": lineage.get("model"),
+            "listening_namespaces": [item["namespace"] for item in unique_evidence[:8]],
+        },
+        "parent_akousma_ids": [source_id] if source_id else [],
+        "remember_to_akousmata": True,
+        "covenant": safe_covenant,
+    }
+
+
+def derive_prompt(record: dict[str, Any]) -> str:
+    """Compatibility helper returning only the editable prompt text."""
+    return str(derive_prompt_contract(record)["prompt"])
 
 
 def _envelope_listening(listening: dict[str, Any]) -> dict[str, Any]:
-    """Wrap raw producer payloads in the spec v1.1 envelope; germ.* entries get
-    the germ contract pin. Pre-enveloped entries pass through untouched."""
+    """Envelope listening output without rewriting foreign producer blocks.
+
+    germ-authored entries receive the germ contract and raw AKOÚŌ output receives
+    the installed v0.7 contract pin. Existing envelopes and other producers'
+    entries pass through unchanged, preserving the additive ownership rule.
+    """
     from server.storage import utc_now_iso
 
     wrapped: dict[str, Any] = {}
     for namespace, value in (listening or {}).items():
-        if isinstance(value, dict) and "payload" in value and set(value) <= {"contract", "created_at", "summary", "payload"}:
+        if _is_listening_envelope(value):
             wrapped[namespace] = value
             continue
-        entry: dict[str, Any] = {"created_at": utc_now_iso(), "payload": value}
+
         if namespace.startswith("germ."):
-            entry["contract"] = GERM_CONTRACT
+            contract = GERM_CONTRACT
+        elif namespace.startswith("akouo."):
+            contract = AKOUO_CONTRACT
+        else:
+            wrapped[namespace] = value
+            continue
+
+        entry: dict[str, Any] = {"created_at": utc_now_iso(), "payload": value}
+        entry["contract"] = contract
         if isinstance(value, dict):
-            for key in ("summary", "caption", "notes", "main_reading"):
+            for key in ("summary", "caption", "brief", "main_reading", "notes", "description"):
                 text = value.get(key)
                 if isinstance(text, str) and text.strip():
                     entry["summary"] = text.strip()
@@ -151,7 +311,12 @@ def organism_lineage_extension(metadata: dict[str, Any]) -> dict[str, Any]:
     parents = lineage.get("parents") or metadata.get("parents") or []
     extension: dict[str, Any] = {
         "organism_id": str(metadata.get("sound_id") or metadata.get("id") or ""),
-        "operation": str(lineage.get("operation") or metadata.get("operation") or metadata.get("mode") or "generate"),
+        "operation": str(
+            lineage.get("operation")
+            or metadata.get("operation")
+            or metadata.get("mode")
+            or "generate"
+        ),
         "organism_parents": [str(p) for p in parents if p],
         "generation_index": len(parents) + 1 if isinstance(parents, list) else 1,
     }
@@ -167,21 +332,71 @@ def organism_lineage_extension(metadata: dict[str, Any]) -> dict[str, Any]:
 
 def _maybe_link_recurrence(store, record: dict[str, Any]) -> None:
     """Same audio content already in the store → ``same_source_as`` kinship to
-    the most recent holder (spec v1.1 relations). Best-effort."""
-    try:
-        akousma = _akousma()
-        content_hash = str(record.get("audio", {}).get("content_hash") or "")
-        if not content_hash or not hasattr(store, "find_by_hash") or not hasattr(akousma, "relation"):
-            return
-        matches = [r for r in store.find_by_hash(content_hash) if r.get("akousma_id") != record.get("akousma_id")]
-        if not matches:
-            return
-        relations = record.setdefault("lineage", {}).setdefault("relations", [])
-        newest = matches[0]
-        if not any(rel.get("target_akousma_id") == newest["akousma_id"] for rel in relations):
-            relations.append(akousma.relation("same_source_as", newest["akousma_id"], note="Same audio content hash already in the akousmata."))
-    except Exception:
-        pass
+    the most recent holder (spec v1.1 relations)."""
+    akousma = _akousma()
+    content_hash = str(record.get("audio", {}).get("content_hash") or "")
+    if not content_hash:
+        return
+    matches = [
+        candidate
+        for candidate in store.find_by_hash(content_hash)
+        if candidate.get("akousma_id") != record.get("akousma_id")
+    ]
+    if not matches:
+        return
+    relations = record.setdefault("lineage", {}).setdefault("relations", [])
+    newest = matches[0]
+    if not any(
+        relation.get("type") == "same_source_as"
+        and relation.get("target_akousma_id") == newest["akousma_id"]
+        for relation in relations
+    ):
+        relations.append(
+            akousma.relation(
+                "same_source_as",
+                newest["akousma_id"],
+                note="Same audio content hash already in the akousmata.",
+            )
+        )
+
+
+_COVENANT_FIELDS = {
+    "id",
+    "name",
+    "version",
+    "contract",
+    "sha256",
+    "extends",
+    "rules_applied",
+    "withheld",
+    "commitments",
+    "note",
+}
+
+
+def _normalize_covenant(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validate known v1.3 fields while preserving future covenant vocabulary."""
+    if not value:
+        return None
+    covenant_id = value.get("id")
+    if not isinstance(covenant_id, str) or not covenant_id.strip():
+        raise ValueError("covenant.id must be a non-empty string")
+
+    akousma = _akousma()
+    normalized = akousma.covenant(
+        covenant_id.strip(),
+        name=value.get("name"),
+        version=value.get("version"),
+        contract=value.get("contract") or AKOUO_CONTRACT,
+        sha256_hex=value.get("sha256"),
+        extends=value.get("extends"),
+        rules_applied=value.get("rules_applied"),
+        withheld=value.get("withheld"),
+        commitments=value.get("commitments"),
+        note=value.get("note"),
+    )
+    extras = {key: item for key, item in value.items() if key not in _COVENANT_FIELDS}
+    return {**extras, **normalized}
 
 
 def record_generation(
@@ -199,10 +414,11 @@ def record_generation(
     summary: str | None = None,
     session_id: str | None = None,
     germ_lineage: dict[str, Any] | None = None,
+    covenant: dict[str, Any] | None = None,
     store=None,
 ) -> dict[str, Any]:
     """Write a germ generation into the shared store as a new akousma
-    (spec v1.1).
+    (spec v1.3).
 
     The audio stays where germ wrote it (referenced by ``file://`` uri +
     content hash); ``lineage.parent_akousma_ids`` points at the source
@@ -214,7 +430,9 @@ def record_generation(
     the same audio content links back as ``same_source_as`` kinship.
     """
     akousma = _akousma()
-    path = Path(audio_path).expanduser().resolve()
+    path = Path(audio_path).expanduser().resolve(strict=True)
+    if not path.is_file():
+        raise ValueError(f"audio_path must point to a file: {audio_path}")
     data = path.read_bytes()
 
     all_extensions = dict(extensions or {})
@@ -224,59 +442,41 @@ def record_generation(
     record_summary = (summary or "").strip() or (prompt or "").strip()
     if record_summary:
         record_summary = f"germ {operation}: {record_summary}"[:200]
+    normalized_covenant = _normalize_covenant(covenant)
 
     owns_store = store is None
     store = store or open_store()
     try:
-        kwargs: dict[str, Any] = {}
-        if record_summary:
-            kwargs["summary"] = record_summary
-        if relations:
-            kwargs["relations"] = relations
-        try:
-            record = akousma.new_akousma(
-                audio={
-                    "asset_id": path.stem,
-                    "type": "generation",
-                    "uri": f"file://{path}",
-                    "content_hash": f"sha256:{sha256(data).hexdigest()}",
-                },
-                originating_app="germ",
-                source_type="generated",
-                origin="generated",
-                listening=_envelope_listening(listening or {}),
-                parent_akousma_ids=parent_akousma_ids or [],
-                operation=operation,
-                prompt=prompt or None,
-                model=model or None,
-                params=params,
-                tags=tags,
-                extensions=all_extensions,
-                session_id=session_id,
-                **kwargs,
+        missing_parents = [
+            parent_id for parent_id in (parent_akousma_ids or []) if store.get(parent_id) is None
+        ]
+        if missing_parents:
+            raise ValueError(
+                "unknown parent akousma id(s): " + ", ".join(sorted(set(missing_parents)))
             )
-        except TypeError:
-            # pre-v0.2 py-akousma without summary/relations keywords
-            record = akousma.new_akousma(
-                audio={
-                    "asset_id": path.stem,
-                    "type": "generation",
-                    "uri": f"file://{path}",
-                    "content_hash": f"sha256:{sha256(data).hexdigest()}",
-                },
-                originating_app="germ",
-                source_type="generated",
-                origin="generated",
-                listening=listening,
-                parent_akousma_ids=parent_akousma_ids or [],
-                operation=operation,
-                prompt=prompt or None,
-                model=model or None,
-                params=params,
-                tags=tags,
-                extensions=all_extensions,
-                session_id=session_id,
-            )
+        record = akousma.new_akousma(
+            audio={
+                "asset_id": path.stem,
+                "type": "generation",
+                "uri": path.as_uri(),
+                "content_hash": f"sha256:{sha256(data).hexdigest()}",
+            },
+            originating_app="germ",
+            source_type="generated",
+            origin="generated",
+            listening=_envelope_listening(listening or {}),
+            parent_akousma_ids=parent_akousma_ids or [],
+            operation=operation,
+            prompt=prompt or None,
+            model=model or None,
+            params=params,
+            relations=relations or None,
+            tags=tags,
+            extensions=all_extensions,
+            session_id=session_id,
+            summary=record_summary or None,
+            covenant=normalized_covenant,
+        )
         _maybe_link_recurrence(store, record)
         store.put(record)
         return record

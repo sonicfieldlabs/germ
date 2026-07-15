@@ -212,7 +212,7 @@
                         <option value="cuda">cuda</option>
                       </select>
                     </label>
-                    <label>Server <input id="serverUrl" placeholder="http://127.0.0.1:8765" data-help="The API server address." /></label>
+                    <label>Server <input id="serverUrl" placeholder="http://127.0.0.1:5178" data-help="The API server address." /></label>
                   </div>
                   <div class="topbar-nav-entries">
                     <button id="aboutAppModalBtn" class="topbar-nav-entry" type="button" aria-label="About germ" title="About" data-help="Open the germ system overview.">
@@ -1295,30 +1295,40 @@
           <section class="tab-panel" id="tab-listener">
             <div class="panel-head">
               <div>
-                <span class="eyebrow">Listener</span>
-                <h2>Prompt & Audio Critic</h2>
+                <span class="eyebrow">Oída ↔ Germ</span>
+                <h2>Prompt Handoff & Re-listening</h2>
               </div>
               <div class="button-row">
-                <button id="listenerEnhanceBtn" class="secondary" type="button" data-help="Enhance the prompt and suggest a negative prompt.">Enhance</button>
-                <button id="listenerScoreBtn" type="button" data-help="Score the selected saved WAV against the prompt.">Score Selected</button>
+                <button id="listenerEnhanceBtn" class="secondary" type="button" data-help="Compile the editable prompt without adding modality assumptions.">Compile Prompt</button>
+                <button id="listenerScoreBtn" class="secondary" type="button" data-help="Run a measured local WAV signal check; this is not machine listening.">Signal Check</button>
+                <button id="listenerRelistenBtn" type="button" data-help="Send the selected generated sound to Oída and return its next editable prompt.">Re-listen with Oída</button>
                 <button class="secondary module-close" data-action="floating-panel-close" type="button" aria-label="Close Listener">Close</button>
               </div>
             </div>
+            <p class="control-readout">Oída hears. Germ cultivates. Audio understanding stays in Oída; Germ receives editable prompts and can return generated sounds for another listen.</p>
             <div class="listener-grid">
-              <label>Provider
+              <label>Prompt compiler
                 <select id="listenerProvider">
-                  <option value="mock">mock</option>
-                  <option value="local">local</option>
+                  <option value="neutral">neutral</option>
                 </select>
               </label>
               <label>Model
-                <input id="listenerModel" value="heuristic-listener" />
+                <input id="listenerModel" value="neutral-compiler" readonly />
               </label>
+              <label>Oída route
+                <select id="listenerRoutePreset">
+                  <option value="generative">generative</option>
+                  <option value="basic">basic</option>
+                  <option value="signal">signal</option>
+                  <option value="music">music</option>
+                </select>
+              </label>
+              <label><input id="listenerRemember" type="checkbox" /> Remember re-listen in Akousmata</label>
               <label class="listener-wide">Prompt
                 <textarea id="listenerPrompt" rows="4">wet glass insects</textarea>
               </label>
               <label class="listener-wide">Negative
-                <textarea id="listenerNegative" rows="3">speech, vocals, music</textarea>
+                <textarea id="listenerNegative" rows="3"></textarea>
               </label>
             </div>
             <div id="listenerSummary" class="listener-summary"></div>
@@ -1340,7 +1350,7 @@
               </div>
             </div>
             <span id="statusHint" class="module-hint floating-hint">Hover a Status action for details.</span>
-            <textarea id="testPrompt" rows="3">TrackType: SFX, short dry wood impact, close microphone, no music, no voice</textarea>
+            <textarea id="testPrompt" rows="3">short dry wood impact, close microphone</textarea>
             <div class="status-grid" id="readinessCards"></div>
             <pre id="diagnosticsText" class="log"></pre>
             <pre id="statusJson" class="log slim"></pre>
@@ -1408,8 +1418,8 @@
     <span id="cultureLayerCount" style="display:none">0</span>
     <span id="cultureStrainCount" style="display:none">0</span>
     <div id="seedCompatFields" hidden>
-      <textarea id="prompt">TrackType: SFX, short dry ceramic tap, close microphone, no music, no voice</textarea>
-      <textarea id="negativePrompt">music, vocals, speech, melody</textarea>
+      <textarea id="prompt">short dry ceramic tap, close microphone</textarea>
+      <textarea id="negativePrompt"></textarea>
       <input id="duration" type="number" value="2" />
       <input id="steps" type="number" value="8" />
       <input id="cfgScale" type="number" value="1.0" />
@@ -1417,7 +1427,7 @@
       <input id="batchSize" type="number" value="1" />
       <input id="outputName" value="germ" />
       <input id="chunkedDecode" type="checkbox" checked />
-      <textarea id="seedPrompt">TrackType: SFX, dry close-microphone loop of metallic friction with slow breathing movement</textarea>
+      <textarea id="seedPrompt">dry close-microphone loop of metallic friction with slow breathing movement</textarea>
       <textarea id="seedNegative">speech, vocals, melody, long reverb, digital artifact</textarea>
       <select id="seedType"><option value="prompt">prompt</option></select>
       <input id="seedRandom" type="number" value="-1" />

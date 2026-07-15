@@ -57,6 +57,12 @@ LoRA loading is implemented through the official package helpers when present. I
 the installed package changes those helper names, the endpoint returns a clear error
 rather than failing silently.
 
+The `lora` list on each generation request is authoritative. The Python model keeps
+loaded adapter objects for reuse, but germ resets every loaded strength to zero before
+enabling only the requested adapters at their exact indices. This prevents a strain
+removed from the UI from leaking invisibly into a later render. An omitted strength
+uses the upstream default of `1.0`; `step_range` is MLX-only.
+
 Cancellation asymmetry: queued Python-provider jobs can be cancelled before they
 start, but a running Python render may finish normally because the in-process
 Stable Audio API does not expose a safe mid-render interrupt hook.
@@ -92,5 +98,17 @@ the requested output. Metadata records `multi_range_strategy`,
 
 ## Stability API Provider
 
-The API provider is a stub. It reports `large` as a future model but does not require
-an API key for local workflows.
+The API provider implements Stability's asynchronous Stable Audio 3 API. It submits
+`text-to-audio`, `audio-to-audio`, and `inpaint` requests, polls the result endpoint,
+and implements continuation as an inpainted extension. Multi-range inpainting is
+sequential because the hosted API accepts one mask range per request; metadata records
+the generation ids, actual returned seeds, and estimated credits.
+
+Set `STABILITY_API_KEY` to enable it. `GERM_STABILITY_API_URL` and
+`GERM_STABILITY_POLL_SECONDS` override the endpoint and polling interval. Hosted edits
+accept WAV or MP3 sources between 6 and 380 seconds and use `batch_size=1`. The hosted
+API does not accept germ's local LoRA adapters or negative prompt field, so unsupported
+controls are rejected or recorded explicitly in metadata instead of being silently
+treated as active. Sequential multi-range hosted edits require an output duration of
+at least 6 seconds so the first result remains a valid source for the next request;
+germ validates this before spending credits.

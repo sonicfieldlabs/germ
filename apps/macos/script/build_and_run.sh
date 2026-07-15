@@ -6,10 +6,14 @@ APP_NAME="germ"
 EXECUTABLE_NAME="germ-macos"
 BUNDLE_ID="org.sonicfield.germ"
 MIN_SYSTEM_VERSION="13.0"
+MARKETING_VERSION="0.1.0"
+BUNDLE_VERSION="1"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST_DIR="$ROOT_DIR/dist"
-APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+# Keep the runnable bundle where repository users expect to find apps. The
+# Swift sources remain in apps/macos; the generated bundle is apps/germ.app.
+APPS_DIR="$(cd "$ROOT_DIR/.." && pwd)"
+APP_BUNDLE="$APPS_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
@@ -23,6 +27,10 @@ export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT_DIR/.build/clan
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
 
 pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+for _ in {1..20}; do
+  pgrep -x "$EXECUTABLE_NAME" >/dev/null || break
+  sleep 0.1
+done
 
 if [ ! -f "$ICON_SRC" ]; then
   echo "Generating AppIcon.icns…"
@@ -49,6 +57,12 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key>
+  <string>$APP_NAME</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$MARKETING_VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$BUNDLE_VERSION</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>
@@ -59,9 +73,21 @@ cat >"$INFO_PLIST" <<PLIST
   <string>NSApplication</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>germ records hardware input only when you start a Record module in the Chamber.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>germ captures shared system audio only when you start an Audio Snapshot module and choose a source.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+  <key>NSHighResolutionCapable</key>
+  <true/>
 </dict>
 </plist>
 PLIST
+
+# Bind the generated Info.plist and resources into a coherent local bundle.
+/usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
@@ -81,13 +107,31 @@ case "$MODE" in
     open_app
     /usr/bin/log stream --info --style compact --predicate "process == \"$EXECUTABLE_NAME\""
     ;;
+  --telemetry|telemetry)
+    open_app
+    /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\" OR process == \"$EXECUTABLE_NAME\""
+    ;;
   --verify|verify)
     open_app
-    sleep 1
-    pgrep -x "$EXECUTABLE_NAME" >/dev/null
+    for _ in {1..90}; do
+      if ! pgrep -x "$EXECUTABLE_NAME" >/dev/null; then
+        echo "$APP_NAME exited before the dashboard became ready" >&2
+        exit 1
+      fi
+      if curl --fail --silent --show-error --max-time 2 \
+        "http://127.0.0.1:5178/health" >/dev/null 2>&1 && \
+        curl --fail --silent --show-error --max-time 2 \
+        "http://127.0.0.1:5178/dashboard" >/dev/null 2>&1; then
+        echo "Verified $APP_BUNDLE and http://127.0.0.1:5178/dashboard"
+        exit 0
+      fi
+      sleep 0.5
+    done
+    echo "$APP_NAME is running, but its dashboard did not become ready within 45 seconds" >&2
+    exit 1
     ;;
   *)
-    echo "usage: $0 [run|--build-only|--debug|--logs|--verify]" >&2
+    echo "usage: $0 [run|--build-only|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

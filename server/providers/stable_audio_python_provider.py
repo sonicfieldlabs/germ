@@ -137,14 +137,12 @@ class StableAudioPythonProvider(AudioGenerationProvider):
             device = self.current_device if self.current_device != "unknown" else "auto"
             self.load_model(request.model, device)
 
-        for lora in request.lora:
-            resolved_lora = str(
-                self.storage.resolve_existing_model_file_path(lora.path, label="LoRA checkpoint")
-            )
-            if resolved_lora not in self.loaded_loras:
-                self.load_lora([resolved_lora])
-            if lora.strength is not None:
-                self.set_lora_strength(lora.strength)
+        if request.model.startswith("small-") and request.duration > 120:
+            raise ValueError("Stable Audio 3 small models support at most 120 seconds")
+        if mode != "text-to-audio" and request.batch_size != 1:
+            raise ValueError("Stable Audio Python editing modes currently require batch_size=1")
+
+        self._apply_request_loras(request)
 
         import torchaudio
 
@@ -189,7 +187,7 @@ class StableAudioPythonProvider(AudioGenerationProvider):
                 mode=mode,
                 provider=self.provider_id,
                 model=request.model,
-                seed=seed + index if request.seed >= 0 else seed,
+                seed=seed,
                 output_audio_path=audio_path,
                 sample_rate=sample_rate,
                 status="done",
@@ -212,6 +210,28 @@ class StableAudioPythonProvider(AudioGenerationProvider):
         )
         self.storage.record_result(result)
         return result
+
+    def _apply_request_loras(self, request: Any) -> None:
+        # StableAudioModel retains adapters and strengths across calls. Reset
+        # every loaded slot so removing a strain from a later request cannot
+        # silently leak its influence into that render.
+        for index in range(len(self.loaded_loras)):
+            self.set_lora_strength(0.0, lora_index=index)
+
+        for lora in request.lora:
+            if not lora.enabled:
+                continue
+            if lora.step_range:
+                raise ValueError("step-gated LoRA ranges are supported by the MLX provider only")
+            resolved_lora = str(
+                self.storage.resolve_existing_model_file_path(lora.path, label="LoRA checkpoint")
+            )
+            if resolved_lora not in self.loaded_loras:
+                self.load_lora([resolved_lora])
+            self.set_lora_strength(
+                1.0 if lora.strength is None else lora.strength,
+                lora_index=self.loaded_loras.index(resolved_lora),
+            )
 
     @staticmethod
     def _resolve_device(device: str) -> str:

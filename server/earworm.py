@@ -10,7 +10,7 @@ from server.storage import utc_now_iso
 
 
 def metadata_to_earworm_session(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Map one germ organism metadata record to an Earworm 0.1 session."""
+    """Map one germ organism metadata record to an Earworm context session."""
     sound_id = str(metadata.get("sound_id") or metadata.get("id") or "sound_unknown")
     asset_id = f"asset_{sound_id}"
     provenance_id = f"prov_{sound_id}"

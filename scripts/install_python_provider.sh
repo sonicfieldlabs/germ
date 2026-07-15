@@ -37,7 +37,7 @@ Official Gradio examples:
 Note: Stable Audio 3 Medium may require CUDA and Flash Attention depending on platform.
 If model loading fails with a gated Hugging Face access error:
   uv run hf auth login
-  curl "http://127.0.0.1:8765/huggingface/status?check_models=true"
+  curl "http://127.0.0.1:5178/huggingface/status?check_models=true"
 
 Run the germ sidecar from:
   cd "$PROJECT_ROOT"

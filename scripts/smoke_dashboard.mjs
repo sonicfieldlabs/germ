@@ -177,8 +177,15 @@ function checkListenerContracts() {
   const app = read("dashboard/static/app.js");
   assert.match(html, /id="tab-listener"/, "Listener tab should be present");
   assert.match(html, /id="listenerEnhanceBtn"/, "Listener enhance action should be present");
+  assert.match(html, /id="listenerRelistenBtn"/, "Oída re-listening action should be present");
   assert.match(app, /\/listener\/enhance/, "Listener enhance route should be wired");
   assert.match(app, /\/listener\/score/, "Listener score route should be wired");
+  assert.match(app, /\/listener\/relisten/, "Oída re-listening route should be wired");
+  assert.match(
+    app,
+    /germ\.akousma\.prompt-handoff/,
+    "Structured Akousma prompt handoffs should reach the editable canvas",
+  );
 }
 
 function checkMicrocosmosContracts() {

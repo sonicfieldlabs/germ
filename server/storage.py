@@ -231,6 +231,8 @@ class StorageManager:
         if not any(self.is_within(resolved, root) for root in allowed_roots):
             roots = ", ".join(self.relative_path(root) for root in allowed_roots)
             raise PermissionError(f"{label} must be inside an allowed input root ({roots}): {path}")
+        if not resolved.is_file():
+            raise ValueError(f"{label} must point to a file: {path}")
         if resolved.suffix.lower() not in AUDIO_EXTENSIONS:
             raise ValueError(f"{label} must be an audio file: {path}")
         return resolved
@@ -328,6 +330,7 @@ class StorageManager:
                     "name",
                     "path",
                     "strength",
+                    "step_range",
                     "tags",
                     "author",
                     "license",
@@ -481,6 +484,15 @@ class StorageManager:
         if extra:
             metadata.update(extra)
 
+        metadata["akousmata"] = self._remember_generation_as_akousma(
+            metadata=metadata,
+            request_data=request_data,
+            output_audio_path=output_audio_path,
+            status=status,
+        )
+        if metadata["akousmata"].get("akousma_id"):
+            metadata["akousma_id"] = metadata["akousmata"]["akousma_id"]
+
         metadata_path = Path(metadata_path)
         with self._lock:
             self._write_json_atomic(metadata_path, metadata)
@@ -491,6 +503,92 @@ class StorageManager:
                     lineage["id"],
                 )
         return metadata
+
+    def _remember_generation_as_akousma(
+        self,
+        *,
+        metadata: dict[str, Any],
+        request_data: dict[str, Any],
+        output_audio_path: str | Path | None,
+        status: str,
+    ) -> dict[str, Any]:
+        requested = bool(request_data.get("remember_to_akousmata"))
+        source = request_data.get("source") if isinstance(request_data.get("source"), dict) else {}
+        parents = self._string_list(request_data.get("parent_akousma_ids"))
+        source_akousma_id = str(source.get("akousma_id") or "").strip()
+        if source_akousma_id and source_akousma_id not in parents:
+            parents.append(source_akousma_id)
+        state: dict[str, Any] = {
+            "status": "not_requested" if not requested else "pending",
+            "requested": requested,
+            "parent_akousma_ids": parents,
+        }
+        if not requested:
+            return state
+        if status != "done" or not output_audio_path:
+            return {**state, "status": "not_recorded", "reason": f"generation_status:{status}"}
+
+        try:
+            from server.akousma_store import organism_lineage_extension, record_generation
+
+            listening_context = request_data.get("listening_context")
+            listening = (
+                {
+                    "germ.prompt-source": {
+                        "summary": "Prompt and provenance context used to cultivate this sound.",
+                        "source": source,
+                        "context": listening_context,
+                    }
+                }
+                if source or listening_context
+                else {}
+            )
+            generation_context = request_data.get("generation_context")
+            prompt_contract = (
+                generation_context.get("prompt_contract")
+                if isinstance(generation_context, dict)
+                and isinstance(generation_context.get("prompt_contract"), dict)
+                else None
+            )
+            extensions = {"germ.prompt-contract": prompt_contract} if prompt_contract else {}
+            record = record_generation(
+                audio_path=output_audio_path,
+                prompt=str(metadata.get("prompt") or ""),
+                model=str(metadata.get("model") or ""),
+                operation=str(metadata.get("operation") or metadata.get("mode") or "generate"),
+                params=(
+                    metadata.get("operation_params")
+                    if isinstance(metadata.get("operation_params"), dict)
+                    else {}
+                ),
+                parent_akousma_ids=parents,
+                relations=(
+                    request_data.get("akousma_relations")
+                    if isinstance(request_data.get("akousma_relations"), list)
+                    else []
+                ),
+                listening=listening,
+                tags=[str(tag) for tag in request_data.get("tags") or []],
+                extensions=extensions,
+                summary=request_data.get("akousma_summary") or None,
+                session_id=(metadata.get("earworm") or {}).get("session_id"),
+                germ_lineage=organism_lineage_extension(metadata),
+                covenant=(
+                    request_data.get("covenant")
+                    if isinstance(request_data.get("covenant"), dict)
+                    else None
+                ),
+            )
+            return {
+                **state,
+                "status": "remembered",
+                "akousma_id": record["akousma_id"],
+                "contract": record.get("schema_version"),
+            }
+        except Exception as exc:
+            # Audio generation succeeded.  Memory is an explicit companion
+            # write and must report failure without disguising the valid sound.
+            return {**state, "status": "error", "error": str(exc)}
 
     def _lineage_metadata(
         self,
@@ -607,6 +705,7 @@ class StorageManager:
                     "id",
                     "name",
                     "strength",
+                    "step_range",
                     "tags",
                     "author",
                     "license",
@@ -618,6 +717,8 @@ class StorageManager:
                 )
                 if item.get(key) not in (None, "", [], {})
             }
+            if item.get("enabled") is False:
+                spec["enabled"] = False
             if spec:
                 specs.append(spec)
         return specs

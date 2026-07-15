@@ -29,7 +29,8 @@ def provider_install_commands(settings: Settings) -> dict[str, list[str]]:
             "./launch_germinator.command",
         ],
         "stability_api": [
-            "Future provider stub. Local testing does not need STABILITY_API_KEY.",
+            "Set STABILITY_API_KEY for hosted Stable Audio 3 generation.",
+            "Optional: set GERM_STABILITY_API_URL and GERM_STABILITY_POLL_SECONDS.",
         ],
     }
 

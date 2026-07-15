@@ -49,15 +49,16 @@ final class ShellStore: ObservableObject {
         let stored = UserDefaults.standard.string(forKey: "germDaemonBaseURL")
         daemonBaseURL = (stored?.isEmpty == false ? stored! : "http://127.0.0.1:5178")
         // Quit stops only the daemon this shell started; externally started
-        // daemons are observed, never owned. (A managed orphan would also die
-        // on its next log write, since its stdio pipes into this app.)
-        let supervisor = self.supervisor
+        // daemons are observed, never owned. The managed process helper also
+        // watches this app's PID so an unexpected exit cannot orphan uvicorn.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            supervisor.stop()
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.supervisor.stop()
+            }
         }
         supervisor.onLogLine = { [weak self] line in
             Task { @MainActor [weak self] in

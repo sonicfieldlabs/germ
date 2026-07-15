@@ -3,35 +3,22 @@ from __future__ import annotations
 import array
 import json
 import math
-import os
-import urllib.error
-import urllib.request
 import wave
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import HTTPException
 
 from server.registry import settings, storage
 from server.schemas import (
     ListenerEnhanceRequest,
     ListenerEnhanceResult,
+    ListenerRelistenRequest,
+    ListenerRelistenResult,
     ListenerScoreRequest,
     ListenerScoreResult,
 )
-
-
-DEFAULT_NEGATIVE = [
-    "speech",
-    "vocals",
-    "singing",
-    "melody phrase",
-    "chord progression",
-    "full song",
-    "long ambience",
-    "harsh clipping",
-    "muddy background",
-]
 
 PCM_HEADER_BYTES = 44
 
@@ -67,38 +54,47 @@ GESTURE_WORDS = {
 
 
 def enhance_prompt(request: ListenerEnhanceRequest) -> ListenerEnhanceResult:
-    if request.provider == "local":
-        local = _try_local_ollama(request)
-        if local:
-            return local
+    """Compile an editable prompt without performing machine listening.
+
+    Oída owns audio understanding.  This compatibility endpoint is deliberately
+    neutral: it cleans whitespace, applies only explicitly supplied fragments,
+    and offers suggestions without injecting SFX/music/voice assumptions.
+    """
     prompt = _clean_prompt(request.prompt)
-    negative = _merge_negative(request.negative_prompt)
+    prompt_was_empty = not prompt
+    negative = _clean_prompt(request.negative_prompt)
+    explicit_fragments = request.context.get("prompt_fragments")
+    if request.context.get("apply_prompt_fragments") and isinstance(explicit_fragments, list):
+        prompt = _join_prompt_fragments(prompt, explicit_fragments)
     words = _prompt_words(prompt)
     suggestions: list[str] = []
-    if not words & MATERIAL_WORDS:
-        suggestions.append("Add a material word such as glass, metal, paper, water, or ceramic.")
-    if not words & GESTURE_WORDS:
-        suggestions.append("Add a gesture word such as scrape, snap, drip, pulse, or rattle.")
-    if "close microphone" not in prompt.lower():
-        suggestions.append("Use close microphone language for cleaner source material.")
-    if not prompt:
-        prompt = "small tactile sound organism"
-    enhanced = (
-        "TrackType: SFX, close microphone, controllable microsound source, "
-        f"{prompt}, clear foreground event, useful for mutation and layering, "
-        "no voice, no music, no full song."
-    )
-    if request.task == "negative_prompt":
-        enhanced = prompt
+    if prompt_was_empty:
+        suggestions.append(
+            "Start with the audible material, gesture, space, and temporal behavior you want."
+        )
+    else:
+        if not words & MATERIAL_WORDS:
+            suggestions.append("Consider naming a material or timbral source when it matters.")
+        if not words & GESTURE_WORDS:
+            suggestions.append("Consider naming the gesture or temporal behavior when it matters.")
+        if not any(
+            term in words for term in {"close", "distant", "room", "stereo", "mono", "space"}
+        ):
+            suggestions.append("Consider describing perspective or space when it matters.")
+    warnings = ["empty_prompt"] if prompt_was_empty else []
+    if request.provider in {"mock", "local", "api"}:
+        warnings.append("legacy_provider_alias")
+    if request.provider == "oida":
+        warnings.append("use_relisten_endpoint_for_oida")
     return ListenerEnhanceResult(
         provider=request.provider,
-        model=request.model or "heuristic-listener",
+        model="neutral-compiler",
         task=request.task,
         prompt=request.prompt,
-        enhanced_prompt=enhanced,
+        enhanced_prompt=prompt,
         negative_prompt=negative,
         suggestions=suggestions,
-        warnings=[] if prompt else ["empty_prompt"],
+        warnings=warnings,
         repair_proposals=[],
     )
 
@@ -136,7 +132,7 @@ def score_audio(request: ListenerScoreRequest) -> ListenerScoreResult:
     score = _score_from_features(features, warnings)
     return ListenerScoreResult(
         provider=request.provider,
-        model=request.model or "heuristic-listener",
+        model="local-signal-check",
         prompt=request.prompt,
         audio_path=storage.relative_path(path),
         score=score,
@@ -158,53 +154,410 @@ def _prompt_words(prompt: str) -> set[str]:
     return {word for word in cleaned.split() if word}
 
 
-def _merge_negative(negative: str) -> str:
-    existing = [part.strip() for part in str(negative or "").split(",") if part.strip()]
-    seen = {part.lower() for part in existing}
-    merged = existing[:]
-    for item in DEFAULT_NEGATIVE:
-        if item.lower() not in seen:
-            merged.append(item)
-    return ", ".join(merged)
+def _join_prompt_fragments(prompt: str, fragments: list[Any]) -> str:
+    values = [prompt] if prompt else []
+    values.extend(_clean_prompt(str(value)) for value in fragments if _clean_prompt(str(value)))
+    return ", ".join(dict.fromkeys(values))
 
 
-def _try_local_ollama(request: ListenerEnhanceRequest) -> ListenerEnhanceResult | None:
-    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-    model = request.model if request.model and request.model != "heuristic-listener" else os.getenv("OLLAMA_MODEL", "llama3.2")
-    payload = {
-        "model": model,
-        "stream": False,
-        "prompt": (
-            "Enhance this sound-generation prompt for a short foreground microsound. "
-            "Keep the user's idea intact. Return one concise prompt only.\n\n"
-            f"User prompt: {request.prompt}"
-        ),
+def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResult:
+    """Send generated audio to Oída, then ask Oída for the next editable prompt."""
+    audio_path = _resolve_audio_path(request.audio_path)
+    metadata_path = _resolve_metadata_path(request.metadata_path)
+    source_generation_id = _source_oida_generation_id(metadata_path, request.context)
+    listen_payload = {
+        "path": str(audio_path),
+        "route_preset": request.route_preset,
+        "privacy_mode": request.privacy_mode,
+        "source_type": "file",
+        "source_label": audio_path.name,
+        "raw_audio_policy": "external_ref",
+        # Shared-memory retention is requested explicitly through Oída's
+        # /memory/remember route after listening. This avoids treating a
+        # compatibility trace as an Akousmata record.
+        "remember": False,
+        "tags": ["germ-generation", "relisten"],
+        "user_notes": request.context.get("notes"),
     }
+    warnings: list[str] = []
+    relisten_mode = "gateway_listen"
     try:
-        http_request = urllib.request.Request(
-            f"{base_url}/api/generate",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(http_request, timeout=2.5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
-        return None
-    text = _clean_prompt(str(data.get("response") or ""))
-    if not text:
-        return None
-    return ListenerEnhanceResult(
-        provider="local",
-        model=model,
-        task=request.task,
-        prompt=request.prompt,
-        enhanced_prompt=text,
-        negative_prompt=_merge_negative(request.negative_prompt),
-        suggestions=["local_ollama"],
-        warnings=[],
-        repair_proposals=[],
+        with httpx.Client(timeout=settings.oida_timeout_seconds) as client:
+            if source_generation_id:
+                listen_response = client.post(
+                    f"{settings.oida_url}/generation/relisten",
+                    json={
+                        "generation_id": source_generation_id,
+                        "path": str(audio_path),
+                        "route_preset": request.route_preset,
+                        "privacy_mode": request.privacy_mode,
+                        "remember": False,
+                    },
+                )
+                if listen_response.status_code == 404:
+                    warnings.append("oida_generation_context_missing_fell_back_to_gateway")
+                    listen_response = client.post(
+                        f"{settings.oida_url}/gateway/listen",
+                        json=listen_payload,
+                    )
+                else:
+                    relisten_mode = "generation_relisten"
+            else:
+                listen_response = client.post(
+                    f"{settings.oida_url}/gateway/listen",
+                    json=listen_payload,
+                )
+            _raise_oida_error(listen_response, "re-listening")
+            listen_body = listen_response.json()
+            event = listen_body.get("listening_event")
+            if not isinstance(event, dict) or not event.get("id"):
+                raise HTTPException(status_code=502, detail="Oída returned no listening event")
+            memory_body: dict[str, Any] = {}
+            if request.remember and request.privacy_mode != "incognito":
+                memory_response = client.post(
+                    f"{settings.oida_url}/memory/remember",
+                    json={
+                        "event": event,
+                        "user_notes": request.context.get("notes"),
+                        "tags": ["germ-generation", "relisten"],
+                    },
+                )
+                _raise_oida_error(memory_response, "Akousmata retention")
+                memory_result = memory_response.json()
+                if isinstance(memory_result, dict):
+                    memory_body = memory_result
+                    remembered_event = memory_result.get("event")
+                    if isinstance(remembered_event, dict):
+                        event = remembered_event
+            prompt_response = client.post(
+                f"{settings.oida_url}/generation/prompt",
+                json={
+                    "event": event,
+                    "intent": request.intent,
+                    "prompt": request.prompt.strip() or None,
+                    "negative_prompt": request.negative_prompt.strip() or None,
+                    "adapter": "prompt_only",
+                    "duration_s": _event_duration_seconds(event),
+                    "generate": False,
+                },
+            )
+            _raise_oida_error(prompt_response, "prompt derivation")
+            generation = prompt_response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Oída is unavailable at {settings.oida_url}: {exc}",
+        ) from exc
+
+    compact = _compact_oida_result(event)
+    trace = (
+        memory_body.get("trace")
+        if isinstance(memory_body.get("trace"), dict)
+        else listen_body.get("trace")
+        if isinstance(listen_body.get("trace"), dict)
+        else {}
     )
+    route_comparison = (
+        listen_body.get("route_comparison")
+        if isinstance(listen_body.get("route_comparison"), dict)
+        else {}
+    )
+    memory = event.get("memory") if isinstance(event.get("memory"), dict) else {}
+    new_akousma_id = (
+        str(
+            memory_body.get("akousma_id")
+            or memory.get("akousma_id")
+            or trace.get("akousma_id")
+            or ""
+        )
+        or None
+    )
+    remembered = bool(new_akousma_id)
+    shared_error = str(memory_body.get("shared_error") or "").strip()
+    if shared_error:
+        warnings.append(f"oida_akousmata_retention_failed:{shared_error}")
+    elif request.remember and not remembered:
+        warnings.append("oida_akousmata_retention_not_performed")
+    if request.remember and request.privacy_mode == "incognito":
+        warnings.append("oida_retention_skipped_in_incognito")
+    raw_prompt = str(generation.get("prompt") or "")
+    raw_negative_prompt = str(generation.get("negative_prompt") or "")
+    prompt = raw_prompt[:10_000]
+    negative_prompt = raw_negative_prompt[:10_000]
+    source_summary = str(generation.get("source_summary") or "")[:2_000]
+    if len(raw_prompt) > len(prompt):
+        warnings.append("oida_prompt_truncated_to_10000_characters")
+    if len(raw_negative_prompt) > len(negative_prompt):
+        warnings.append("oida_negative_prompt_truncated_to_10000_characters")
+    extension = {
+        "contract": "germ.oida-relisten/v0.1",
+        "provider": "oida",
+        "event_id": str(event["id"]),
+        "generation_id": str(generation.get("id") or ""),
+        "source_generation_id": source_generation_id,
+        "relisten_mode": relisten_mode,
+        "route_preset": request.route_preset,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "source_summary": source_summary,
+        "remembered": remembered,
+        "akousma_id": new_akousma_id,
+        "listening_result": compact,
+        "route_comparison": route_comparison,
+    }
+    existing_akousma_id = _persist_relisten_context(
+        metadata_path,
+        extension,
+        warnings,
+        akousma_id_to_update=new_akousma_id if remembered else None,
+    )
+    return ListenerRelistenResult(
+        audio_path=storage.relative_path(audio_path),
+        metadata_path=storage.relative_path(metadata_path) if metadata_path else None,
+        route_preset=request.route_preset,
+        relisten_mode=relisten_mode,
+        source_generation_id=source_generation_id,
+        listening_event_id=str(event["id"]),
+        generation_id=str(generation.get("id") or ""),
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        source_summary=source_summary,
+        listening_result=compact,
+        route_comparison=route_comparison,
+        remembered=remembered,
+        akousma_id=new_akousma_id or existing_akousma_id,
+        warnings=warnings,
+    )
+
+
+def _source_oida_generation_id(
+    metadata_path: Path | None,
+    context: dict[str, Any],
+) -> str | None:
+    candidates: list[Any] = [
+        context.get("source_generation_id"),
+        context.get("generation_id"),
+    ]
+    if metadata_path is not None:
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+        if isinstance(metadata, dict):
+            generation_context = (
+                metadata.get("generation_context")
+                if isinstance(metadata.get("generation_context"), dict)
+                else {}
+            )
+            listening_context = (
+                metadata.get("listening_context")
+                if isinstance(metadata.get("listening_context"), dict)
+                else {}
+            )
+            extensions = (
+                metadata.get("extensions") if isinstance(metadata.get("extensions"), dict) else {}
+            )
+            relisten_extension = (
+                extensions.get("germ.relisten")
+                if isinstance(extensions.get("germ.relisten"), dict)
+                else {}
+            )
+            latest = (
+                relisten_extension.get("latest")
+                if isinstance(relisten_extension.get("latest"), dict)
+                else {}
+            )
+            for container in (generation_context, listening_context):
+                relisten = (
+                    container.get("oida_relisten")
+                    if isinstance(container.get("oida_relisten"), dict)
+                    else {}
+                )
+                candidates.append(relisten.get("generation_id"))
+            candidates.append(latest.get("generation_id"))
+    for value in candidates:
+        cleaned = str(value or "").strip()
+        if cleaned:
+            return cleaned[:256]
+    return None
+
+
+def _raise_oida_error(response: httpx.Response, action: str) -> None:
+    if response.is_success:
+        return
+    try:
+        body = response.json()
+        detail = body.get("detail") if isinstance(body, dict) else body
+    except (ValueError, json.JSONDecodeError):
+        detail = response.text[:500]
+    raise HTTPException(
+        status_code=502,
+        detail=f"Oída {action} failed ({response.status_code}): {detail}",
+    )
+
+
+def _event_duration_seconds(event: dict[str, Any]) -> float | None:
+    segment = event.get("segment") if isinstance(event.get("segment"), dict) else {}
+    duration_ms = segment.get("duration_ms")
+    if isinstance(duration_ms, (int, float)) and duration_ms > 0:
+        return min(380.0, float(duration_ms) / 1000.0)
+    return None
+
+
+def _compact_oida_result(event: dict[str, Any]) -> dict[str, Any]:
+    aggregate_source = event.get("aggregate") if isinstance(event.get("aggregate"), dict) else {}
+    aggregate = {
+        key: str(aggregate_source.get(key) or "")[:limit]
+        for key, limit in (("title", 500), ("short_summary", 2_000), ("detailed_summary", 5_000))
+        if aggregate_source.get(key) not in (None, "")
+    }
+    for key in ("primary_tags", "signal_facts", "warnings"):
+        values = aggregate_source.get(key)
+        if isinstance(values, list):
+            aggregate[key] = [str(value)[:500] for value in values[:32] if value not in (None, "")]
+    hypotheses = aggregate_source.get("hypotheses")
+    if isinstance(hypotheses, list):
+        aggregate["hypotheses"] = [
+            {
+                key: str(item.get(key) or "")[:1_000]
+                for key in ("statement", "confidence", "basis")
+                if item.get(key) not in (None, "")
+            }
+            for item in hypotheses[:8]
+            if isinstance(item, dict)
+        ]
+    routes = []
+    for route in event.get("routes") or []:
+        if not isinstance(route, dict):
+            continue
+        routes.append(
+            {
+                key: route.get(key)
+                for key in (
+                    "route_id",
+                    "route_name",
+                    "skill_id",
+                    "listening_mode",
+                    "summary",
+                    "confidence",
+                    "evidence_level",
+                )
+                if route.get(key) not in (None, "", [], {})
+            }
+        )
+        for key in ("skill_ids", "uncertainty", "suggested_next_routes"):
+            values = route.get(key)
+            if isinstance(values, list):
+                routes[-1][key] = [str(value)[:500] for value in values[:32] if value]
+    features = event.get("features") if isinstance(event.get("features"), dict) else {}
+    scalar_features = {
+        key: value
+        for key, value in features.items()
+        if isinstance(value, (str, int, float, bool)) or value is None
+    }
+    return {
+        "event_id": event.get("id"),
+        "aggregate": aggregate,
+        "routes": routes,
+        "features": scalar_features,
+        "tags": [str(tag)[:200] for tag in (event.get("tags") or [])[:64]],
+        "covenant": _compact_oida_covenant(event.get("covenant")),
+    }
+
+
+def _compact_oida_covenant(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    compact: dict[str, Any] = {}
+    for key in ("id", "name", "version", "contract", "sha256", "extends", "note"):
+        if value.get(key) not in (None, ""):
+            compact[key] = str(value[key])[:2_000]
+    for key in ("rules_applied", "withheld", "commitments"):
+        items = value.get(key)
+        if isinstance(items, list):
+            compact[key] = [
+                {
+                    str(item_key)[:100]: (
+                        str(item_value)[:1_000]
+                        if not isinstance(item_value, (int, float, bool))
+                        else item_value
+                    )
+                    for item_key, item_value in list(item.items())[:16]
+                }
+                if isinstance(item, dict)
+                else str(item)[:1_000]
+                for item in items[:32]
+            ]
+    return compact
+
+
+def _resolve_metadata_path(raw_path: str | None) -> Path | None:
+    if not raw_path:
+        return None
+    try:
+        path = storage.resolve_existing_metadata_path(raw_path, label="listener metadata")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if path.suffix.lower() != ".json":
+        raise HTTPException(status_code=422, detail="listener metadata must be JSON")
+    return path
+
+
+def _persist_relisten_context(
+    metadata_path: Path | None,
+    extension: dict[str, Any],
+    warnings: list[str],
+    *,
+    akousma_id_to_update: str | None = None,
+) -> str | None:
+    if metadata_path is None:
+        return None
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        warnings.append(f"metadata_update_failed:{exc}")
+        return None
+    if not isinstance(metadata, dict):
+        warnings.append("metadata_update_failed:not_an_object")
+        return None
+    extensions = metadata.setdefault("extensions", {})
+    if not isinstance(extensions, dict):
+        extensions = {}
+        metadata["extensions"] = extensions
+    previous = extensions.get("germ.relisten")
+    history = list(previous.get("history") or []) if isinstance(previous, dict) else []
+    history.append(extension)
+    extensions["germ.relisten"] = {"latest": extension, "history": history[-12:]}
+    storage.write_json_atomic(metadata_path, metadata, touch_library=True)
+
+    akousmata = metadata.get("akousmata") if isinstance(metadata.get("akousmata"), dict) else {}
+    akousma_id = str(metadata.get("akousma_id") or akousmata.get("akousma_id") or "") or None
+    if not akousma_id_to_update:
+        return akousma_id
+    try:
+        from server.akousma_store import open_store
+
+        with open_store() as store:
+            record = store.get(akousma_id_to_update)
+            if not isinstance(record, dict):
+                warnings.append("akousma_relisten_update_failed:record_missing")
+                return akousma_id
+            record_extensions = record.setdefault("extensions", {})
+            old = record_extensions.get("germ.relisten")
+            record_history = list(old.get("history") or []) if isinstance(old, dict) else []
+            record_history.append(extension)
+            record_extensions["germ.relisten"] = {
+                "latest": extension,
+                "history": record_history[-12:],
+            }
+            store.put(record)
+    except Exception as exc:  # Akousmata is optional; the re-listen remains valid.
+        warnings.append(f"akousma_relisten_update_failed:{exc}")
+    return akousma_id
 
 
 def _resolve_audio_path(raw_path: str) -> Path:
@@ -237,7 +590,10 @@ def _wav_features(path: Path) -> dict[str, Any]:
                         f"{settings.listener_score_max_duration_seconds:.0f} seconds"
                     ),
                 )
-            if max(path.stat().st_size, pcm_bytes + PCM_HEADER_BYTES) > settings.listener_score_max_bytes:
+            if (
+                max(path.stat().st_size, pcm_bytes + PCM_HEADER_BYTES)
+                > settings.listener_score_max_bytes
+            ):
                 limit_mb = settings.listener_score_max_bytes / (1024 * 1024)
                 raise HTTPException(
                     status_code=413,
@@ -245,7 +601,9 @@ def _wav_features(path: Path) -> dict[str, Any]:
                 )
             raw = wav.readframes(frames)
     except wave.Error as exc:
-        raise HTTPException(status_code=422, detail="Listener scoring currently supports PCM WAV input") from exc
+        raise HTTPException(
+            status_code=422, detail="Listener scoring currently supports PCM WAV input"
+        ) from exc
     if channels <= 0 or sample_rate <= 0 or frames <= 0:
         raise HTTPException(status_code=422, detail="audio file is empty")
     samples = _decode_pcm(raw, sample_width)
@@ -259,12 +617,16 @@ def _wav_features(path: Path) -> dict[str, Any]:
     mean_square = sum(sample * sample for sample in samples) / len(samples)
     rms = math.sqrt(mean_square)
     peak = max(abs(sample) for sample in samples)
-    zero_crossings = sum(1 for prev, cur in zip(samples, samples[1:]) if (prev < 0 <= cur) or (prev >= 0 > cur))
+    zero_crossings = sum(
+        1 for prev, cur in zip(samples, samples[1:]) if (prev < 0 <= cur) or (prev >= 0 > cur)
+    )
     clip_count = sum(1 for sample in samples if abs(sample) >= 0.995)
     edge_count = min(len(samples) // 4, max(1, int(sample_rate * 0.02)))
     start_edge = samples[:edge_count]
     end_edge = samples[-edge_count:]
-    edge_delta = math.sqrt(sum((a - b) * (a - b) for a, b in zip(start_edge, end_edge)) / edge_count)
+    edge_delta = math.sqrt(
+        sum((a - b) * (a - b) for a, b in zip(start_edge, end_edge)) / edge_count
+    )
     return {
         "duration": round(len(samples) / sample_rate, 6),
         "sample_rate": sample_rate,

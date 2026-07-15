@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from server.audio_io import write_sine_wav
 from server.main import app
+from server.providers.stability_api_provider import StabilityAPIProvider
 from server.providers.stable_audio_mlx_provider import StableAudioMLXProvider
 from server.providers.stable_audio_python_provider import StableAudioPythonProvider
 from server.registry import control_registry, registry, settings, storage, strain_registry
@@ -146,6 +147,28 @@ def test_models_returns_providers() -> None:
     assert "stable_audio_mlx" in providers
     assert "stability_api" in providers
     assert providers["mock"]["available"] is True
+
+
+def test_failed_provider_load_does_not_change_active_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = registry.active_provider_id
+    registry.set_active("mock")
+    monkeypatch.setattr(settings, "stability_api_key", "")
+    try:
+        response = client.post(
+            "/models/load",
+            json={
+                "provider": "stability_api",
+                "model": "stable-audio-3",
+                "device": "api",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "error"
+        assert registry.active_provider_id == "mock"
+    finally:
+        registry.set_active(previous)
 
 
 def test_diagnostics_reports_local_readiness() -> None:
@@ -696,6 +719,20 @@ def test_mock_generate_creates_wav_and_metadata() -> None:
     assert metadata["tags"] == ["SFX", "review"]
     assert metadata["earworm"]["protocol"] == "earworm"
     assert metadata["earworm"]["export_route"] == "/earworm/export"
+
+
+def test_generation_rejects_seed_below_random_sentinel() -> None:
+    response = client.post(
+        "/generate",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "short pulse",
+            "seed": -2,
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_earworm_export_maps_germ_metadata_to_context_chain() -> None:
@@ -1439,22 +1476,257 @@ def test_time_render_request_accepts_next_phase_modules() -> None:
         assert request.module_type == module_type
 
 
-def test_listener_enhances_prompt_with_contract_language() -> None:
+def test_listener_compiles_prompt_without_injecting_modality_assumptions() -> None:
     response = client.post(
         "/listener/enhance",
         json={
-            "provider": "mock",
+            "provider": "neutral",
             "prompt": "wet glass insects",
             "negative_prompt": "traffic",
         },
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["provider"] == "mock"
-    assert "wet glass insects" in body["enhanced_prompt"]
-    assert "TrackType: SFX" in body["enhanced_prompt"]
-    assert "traffic" in body["negative_prompt"]
-    assert "speech" in body["negative_prompt"]
+    assert body["provider"] == "neutral"
+    assert body["model"] == "neutral-compiler"
+    assert body["enhanced_prompt"] == "wet glass insects"
+    assert body["negative_prompt"] == "traffic"
+    assert "TrackType" not in body["enhanced_prompt"]
+    assert "speech" not in body["negative_prompt"]
+
+
+def test_listener_reports_empty_prompt_without_substituting_an_idea() -> None:
+    response = client.post(
+        "/listener/enhance",
+        json={"provider": "neutral", "prompt": "   \n  "},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enhanced_prompt"] == ""
+    assert body["warnings"] == ["empty_prompt"]
+
+
+def test_generation_request_uses_modulated_prompt_as_effective_prompt() -> None:
+    request = GenerateRequest(
+        prompt="unmodulated source",
+        negative_prompt="base negative",
+        base_prompt="listening-derived source",
+        modulated_prompt="listening-derived source, brittle glass",
+        modulated_negative_prompt="base negative, long tail",
+    )
+
+    assert request.prompt == "listening-derived source, brittle glass"
+    assert request.negative_prompt == "base negative, long tail"
+    assert request.base_prompt == "listening-derived source"
+    assert request.generation_context["prompt_contract"]["modulated"] is True
+
+
+def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_path = settings.audio_dir / "pytest_oida_relisten.wav"
+    write_sine_wav(audio_path, duration=0.25, amplitude=0.2)
+    metadata_path = settings.metadata_dir / "pytest_oida_relisten.json"
+    storage.write_json_atomic(
+        metadata_path,
+        {"output_audio_path": storage.relative_path(audio_path), "extensions": {}},
+    )
+
+    class FakeResponse:
+        def __init__(self, body: dict, status_code: int = 200) -> None:
+            self._body = body
+            self.status_code = status_code
+            self.text = json.dumps(body)
+
+        @property
+        def is_success(self) -> bool:
+            return 200 <= self.status_code < 300
+
+        def json(self) -> dict:
+            return self._body
+
+    class FakeClient:
+        calls: list[tuple[str, dict]] = []
+
+        def __init__(self, **kwargs) -> None:  # noqa: ARG002
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:  # noqa: ANN002
+            return None
+
+        def post(self, url: str, *, json: dict) -> FakeResponse:
+            self.calls.append((url, json))
+            if url.endswith("/gateway/listen"):
+                return FakeResponse(
+                    {
+                        "contract": "oida.gateway/v0.1",
+                        "listening_event": {
+                            "id": "evt_reheard",
+                            "segment": {"duration_ms": 250},
+                            "aggregate": {
+                                "title": "Brittle pulse",
+                                "short_summary": "A dry brittle pulse with a short tail.",
+                            },
+                            "routes": [
+                                {
+                                    "skill_id": "generative-bridge",
+                                    "listening_mode": "generative",
+                                    "summary": "Material is ready for another variation.",
+                                    "private_payload": "must not cross the compact bridge",
+                                }
+                            ],
+                            "features": {"sample_rate": 44_100, "large_array": [1, 2, 3]},
+                            "tags": ["brittle", "pulse"],
+                            "privacy_mode": "session",
+                        },
+                        "trace": None,
+                    }
+                )
+            return FakeResponse(
+                {
+                    "id": "gen_next_prompt",
+                    "prompt": "Create a sparse variation of the dry brittle pulse.",
+                    "negative_prompt": "Avoid blurred attacks.",
+                    "source_summary": "A dry brittle pulse with a short tail.",
+                }
+            )
+
+    monkeypatch.setattr("server.listener.httpx.Client", FakeClient)
+    response = client.post(
+        "/listener/relisten",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "route_preset": "generative",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "oida"
+    assert body["listening_event_id"] == "evt_reheard"
+    assert body["generation_id"] == "gen_next_prompt"
+    assert body["prompt"].startswith("Create a sparse variation")
+    assert "large_array" not in body["listening_result"]["features"]
+    assert "private_payload" not in body["listening_result"]["routes"][0]
+    updated = json.loads(metadata_path.read_text(encoding="utf-8"))
+    latest = updated["extensions"]["germ.relisten"]["latest"]
+    assert latest["event_id"] == "evt_reheard"
+    assert FakeClient.calls[0][0].endswith("/gateway/listen")
+    assert FakeClient.calls[1][0].endswith("/generation/prompt")
+
+
+def test_listener_relisten_uses_oida_generation_comparison_when_lineage_has_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_path = settings.audio_dir / "pytest_oida_generation_relisten.wav"
+    write_sine_wav(audio_path, duration=0.25, amplitude=0.2)
+    metadata_path = settings.metadata_dir / "pytest_oida_generation_relisten.json"
+    storage.write_json_atomic(
+        metadata_path,
+        {
+            "output_audio_path": storage.relative_path(audio_path),
+            "generation_context": {
+                "oida_relisten": {"generation_id": "gen_source_prompt"},
+            },
+            "extensions": {},
+        },
+    )
+
+    class FakeResponse:
+        def __init__(self, body: dict, status_code: int = 200) -> None:
+            self._body = body
+            self.status_code = status_code
+            self.text = json.dumps(body)
+
+        @property
+        def is_success(self) -> bool:
+            return 200 <= self.status_code < 300
+
+        def json(self) -> dict:
+            return self._body
+
+    class FakeClient:
+        calls: list[tuple[str, dict]] = []
+
+        def __init__(self, **kwargs) -> None:  # noqa: ARG002
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:  # noqa: ANN002
+            return None
+
+        def post(self, url: str, *, json: dict) -> FakeResponse:
+            self.calls.append((url, json))
+            if url.endswith("/generation/relisten"):
+                assert json["generation_id"] == "gen_source_prompt"
+                return FakeResponse(
+                    {
+                        "listening_event": {
+                            "id": "evt_compared_output",
+                            "segment": {"duration_ms": 250},
+                            "aggregate": {
+                                "title": "Cultivated pulse",
+                                "short_summary": "The derived pulse is sharper.",
+                            },
+                            "routes": [],
+                            "features": {"rmsDbfs": -12.0},
+                            "tags": ["pulse"],
+                        },
+                        "trace": None,
+                        "route_comparison": {
+                            "version": "0.1",
+                            "base_event_id": "evt_source",
+                            "current_event_id": "evt_compared_output",
+                            "change_flags": {"summary_changed": True},
+                        },
+                    }
+                )
+            if url.endswith("/memory/remember"):
+                return FakeResponse(
+                    {
+                        "trace": {"id": "trace_compared_output"},
+                        "event": json["event"],
+                        "akousma_id": "akm_compared_output",
+                        "shared_error": None,
+                    }
+                )
+            return FakeResponse(
+                {
+                    "id": "gen_after_comparison",
+                    "prompt": "Cultivate the sharper pulse into a sparse variation.",
+                    "negative_prompt": "Avoid a blurred onset.",
+                    "source_summary": "The derived pulse is sharper.",
+                }
+            )
+
+    monkeypatch.setattr("server.listener.httpx.Client", FakeClient)
+    response = client.post(
+        "/listener/relisten",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "route_preset": "generative",
+            "remember": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["relisten_mode"] == "generation_relisten"
+    assert body["source_generation_id"] == "gen_source_prompt"
+    assert body["route_comparison"]["base_event_id"] == "evt_source"
+    assert body["remembered"] is True
+    assert body["akousma_id"] == "akm_compared_output"
+    assert FakeClient.calls[0][0].endswith("/generation/relisten")
+    assert FakeClient.calls[1][0].endswith("/memory/remember")
+    assert FakeClient.calls[2][0].endswith("/generation/prompt")
 
 
 def test_listener_scores_wav_and_rejects_external_path(tmp_path: Path) -> None:
@@ -2214,6 +2486,19 @@ def test_mock_inpaint_validates_ranges() -> None:
     )
     assert invalid.status_code == 422
 
+    outside_duration = client.post(
+        "/inpaint",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "replace the region",
+            "input_audio_path": str(input_path),
+            "inpaint_ranges": [[0.4, 0.6]],
+            "duration": 0.5,
+        },
+    )
+    assert outside_duration.status_code == 422
+
 
 def test_inpaint_preserves_wave_region_roles() -> None:
     input_path = settings.upload_dir / "pytest_region_roles_input.wav"
@@ -2681,6 +2966,7 @@ def test_mlx_command_includes_steps_and_validates_model() -> None:
     command = provider._build_command(request, Path("output/audio/test.wav"), seed=42)
     assert "--steps" in command
     assert command[command.index("--steps") + 1] == "12"
+    assert command.count("--decoder") == 1
 
     invalid = request.model_copy(update={"model": "not-a-model"})
     try:
@@ -2689,6 +2975,143 @@ def test_mlx_command_includes_steps_and_validates_model() -> None:
         assert "unknown MLX model" in str(exc)
     else:
         raise AssertionError("invalid MLX model should raise ValueError")
+
+
+def test_mlx_command_supports_current_repeatable_lora_contract() -> None:
+    lora_dir = settings.output_root / "lora"
+    lora_dir.mkdir(parents=True, exist_ok=True)
+    lora_path = lora_dir / "mlx-style.safetensors"
+    lora_path.write_bytes(b"placeholder")
+    provider = StableAudioMLXProvider(storage, settings)
+    request = GenerateRequest(
+        provider="stable_audio_mlx",
+        model="sm-sfx",
+        prompt="brittle pulse",
+        duration=1.0,
+        steps=8,
+        lora=[{"path": str(lora_path), "strength": 0.65, "step_range": "2-6"}],
+    )
+
+    command = provider._build_command(request, Path("output/audio/test-lora.wav"), seed=7)
+
+    assert command[command.index("--lora") + 1] == str(lora_path.resolve())
+    assert "strength=0.65" in command
+    assert "steps=2-6" in command
+
+
+def test_stability_api_provider_submits_polls_and_records_actual_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as output:
+        output.setnchannels(2)
+        output.setsampwidth(2)
+        output.setframerate(44_100)
+        output.writeframes(b"\x00\x00" * 2 * 200)
+    wav_bytes = buffer.getvalue()
+
+    class FakeResponse:
+        def __init__(
+            self,
+            status_code: int,
+            *,
+            body: dict | None = None,
+            content: bytes = b"",
+            headers: dict[str, str] | None = None,
+        ) -> None:
+            self.status_code = status_code
+            self._body = body or {}
+            self.content = content
+            self.headers = headers or {}
+            self.text = json.dumps(self._body)
+
+        def json(self) -> dict:
+            return self._body
+
+    class FakeClient:
+        posts: list[dict] = []
+        gets = 0
+
+        def __init__(self, **kwargs) -> None:
+            assert "Bearer test-stability-key" == kwargs["headers"]["authorization"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:  # noqa: ANN002
+            return None
+
+        def post(self, url: str, *, data: dict, files: dict) -> FakeResponse:
+            self.posts.append({"url": url, "data": data, "files": files})
+            return FakeResponse(202, body={"id": "audio_generation_1"})
+
+        def get(self, url: str) -> FakeResponse:
+            assert url.endswith("/v2beta/audio/results/audio_generation_1")
+            self.gets += 1
+            if self.gets == 1:
+                return FakeResponse(202, body={"status": "in-progress"})
+            return FakeResponse(200, content=wav_bytes, headers={"seed": "91234"})
+
+    monkeypatch.setattr(settings, "stability_api_key", "test-stability-key")
+    monkeypatch.setattr(settings, "stability_poll_seconds", 0.0)
+    monkeypatch.setattr("server.providers.stability_api_provider.httpx.Client", FakeClient)
+    provider = StabilityAPIProvider(storage, settings)
+    request = GenerateRequest(
+        provider="stability_api",
+        model="stable-audio-3",
+        prompt="slow glass rhythm",
+        negative_prompt="voice",
+        duration=1,
+        steps=8,
+        cfg_scale=1,
+        seed=42,
+        lora=[{"path": "disabled-local-style.safetensors", "enabled": False}],
+        output_name="pytest_stability_api",
+    )
+
+    result = provider.generate(request)
+
+    assert result.status == "done"
+    assert result.seed == 91_234
+    assert Path(result.audio_files[0]).read_bytes() == wav_bytes
+    assert FakeClient.posts[0]["url"].endswith("/text-to-audio")
+    assert FakeClient.posts[0]["data"]["model"] == "stable-audio-3"
+    assert FakeClient.posts[0]["data"]["output_format"] == "wav"
+    metadata = json.loads(Path(result.metadata_files[0]).read_text(encoding="utf-8"))
+    assert metadata["api_generation_id"] == "audio_generation_1"
+    assert metadata["api_credit_estimate"] == 26
+    assert metadata["api_ignored_controls"] == ["negative_prompt"]
+    assert metadata["seed"] == 91_234
+
+
+def test_stability_api_provider_rejects_non_wav_success_payload(tmp_path: Path) -> None:
+    output = tmp_path / "not-a-wave.wav"
+
+    with pytest.raises(OSError, match="non-WAV"):
+        StabilityAPIProvider._write_audio_atomic(output, b'{"error":"not audio"}')
+
+    assert not output.exists()
+
+
+def test_stability_api_multi_range_rejects_short_intermediate_before_submission() -> None:
+    input_path = settings.upload_dir / "pytest_stability_api_short_multi.wav"
+    write_sine_wav(input_path, duration=6.0)
+    provider = StabilityAPIProvider(storage, settings)
+    request = InpaintRequest(
+        provider="stability_api",
+        model="stable-audio-3",
+        prompt="repair two brief regions",
+        input_audio_path=str(input_path),
+        inpaint_ranges=[(0.1, 0.2), (0.3, 0.4)],
+        duration=4.0,
+        steps=8,
+        cfg_scale=1,
+    )
+
+    result = provider.inpaint(request)
+
+    assert result.status == "error"
+    assert "duration >= 6 seconds" in (result.error or "")
 
 
 def test_mlx_multi_range_inpaint_runs_sequentially(monkeypatch) -> None:
@@ -2807,6 +3230,46 @@ def test_python_lora_uses_stable_audio_model_methods() -> None:
     assert dummy.strengths == [(0.5, 0)]
 
 
+def test_python_generation_lora_request_disables_stale_adapters() -> None:
+    class DummyModel:
+        def __init__(self) -> None:
+            self.strengths: list[tuple[float, int | None]] = []
+
+        def load_lora(self, paths: list[str]) -> None:  # noqa: ARG002
+            return None
+
+        def set_lora_strength(self, strength: float, lora_index: int | None = None) -> None:
+            self.strengths.append((strength, lora_index))
+
+    lora_dir = settings.output_root / "lora"
+    lora_dir.mkdir(parents=True, exist_ok=True)
+    stale_path = lora_dir / "stale-style.safetensors"
+    active_path = lora_dir / "active-style.safetensors"
+    stale_path.write_bytes(b"placeholder")
+    active_path.write_bytes(b"placeholder")
+
+    provider = StableAudioPythonProvider(storage)
+    dummy = DummyModel()
+    provider.model = dummy
+    provider.load_lora([str(stale_path), str(active_path)])
+    request = GenerateRequest(
+        provider="stable_audio_python",
+        model="small-sfx",
+        prompt="brittle pulse",
+        lora=[
+            {"path": str(stale_path), "enabled": False, "strength": 0.9},
+            {"path": str(active_path), "strength": 0.7},
+        ],
+    )
+
+    provider._apply_request_loras(request)
+
+    assert dummy.strengths == [(0.0, 0), (0.0, 1), (0.7, 1)]
+    dummy.strengths.clear()
+    provider._apply_request_loras(request.model_copy(update={"lora": []}))
+    assert dummy.strengths == [(0.0, 0), (0.0, 1)]
+
+
 def test_python_lora_rejects_checkpoint_outside_allowed_roots(tmp_path: Path) -> None:
     lora_path = tmp_path / "style.safetensors"
     lora_path.write_bytes(b"placeholder")
@@ -2830,7 +3293,7 @@ def test_files_rename_endpoint() -> None:
     new_metadata_path.unlink(missing_ok=True)
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     write_sine_wav(audio_path, duration=0.25)
-    
+
     # Create valid metadata JSON
     metadata = {
         "sound_id": "sound_pytest_rename_test",
@@ -2931,16 +3394,16 @@ def test_files_bulk_delete_endpoint() -> None:
     audio_path1 = settings.output_root / "audio" / "pytest_delete_1.wav"
     metadata_path1 = settings.output_root / "audio" / "pytest_delete_1.json"
     audio_path2 = settings.output_root / "audio" / "pytest_delete_2.wav"
-    
+
     audio_path1.parent.mkdir(parents=True, exist_ok=True)
     write_sine_wav(audio_path1, duration=0.1)
     metadata_path1.write_text("{}", encoding="utf-8")
     write_sine_wav(audio_path2, duration=0.1)
-    
+
     assert audio_path1.exists()
     assert metadata_path1.exists()
     assert audio_path2.exists()
-    
+
     response = client.post(
         "/files/delete",
         json={

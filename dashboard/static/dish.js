@@ -1875,7 +1875,7 @@ function openMicrocosmosSettings() {
 
         <div class="dish-form-field" style="display: grid; gap: 4px;">
           <label style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dish-soft); font-weight: bold;">Server URL</label>
-          <input id="dishServerUrlInput" type="text" value="${E.escapeHtml(serverUrlVal)}" placeholder="http://127.0.0.1:8765" style="width: 100%; padding: 8px 10px; background: rgba(5, 6, 7, 0.65); color: var(--dish-ink); border: 1px solid var(--dish-line); font: inherit; font-size: 12px; border-radius: 4px; box-sizing: border-box; outline: none;" />
+          <input id="dishServerUrlInput" type="text" value="${E.escapeHtml(serverUrlVal)}" placeholder="http://127.0.0.1:5178" style="width: 100%; padding: 8px 10px; background: rgba(5, 6, 7, 0.65); color: var(--dish-ink); border: 1px solid var(--dish-line); font: inherit; font-size: 12px; border-radius: 4px; box-sizing: border-box; outline: none;" />
         </div>
 
         <div class="dish-settings-buttons" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px;">
@@ -1970,7 +1970,7 @@ function openCustomPromptDialog(worldPoint) {
     <div class="dish-cards-inner">
       <span class="dish-cards-kicker">Custom prompt germination</span>
       <div class="dish-prompt-input-container" style="display: grid; width: 100%; gap: 12px; z-index: 1;">
-        <textarea id="dishCustomPromptInput" rows="3" placeholder="Describe the sound matter (e.g. TrackType: SFX, dry wood crackle, close microphone)..." style="width: 100%; padding: 12px; background: rgba(5, 6, 7, 0.42); color: var(--dish-ink); border: 1px solid var(--dish-line); font: inherit; font-size: 13px; resize: vertical; box-sizing: border-box;"></textarea>
+        <textarea id="dishCustomPromptInput" rows="3" placeholder="Describe the sound matter (e.g. dry wood crackle, close microphone)..." style="width: 100%; padding: 12px; background: rgba(5, 6, 7, 0.42); color: var(--dish-ink); border: 1px solid var(--dish-line); font: inherit; font-size: 13px; resize: vertical; box-sizing: border-box;"></textarea>
         <button id="dishCustomPromptBtn" class="dish-pixel-button" type="button" style="justify-self: center; min-width: 140px;">Germinate</button>
       </div>
       <button class="dish-cards-cancel" type="button" data-card-cancel>esc</button>

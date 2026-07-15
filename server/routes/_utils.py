@@ -199,6 +199,10 @@ def coerce_form_value(value: Any, *, key: str | None = None) -> Any:
         "silence_ranges",
         "genetic_identities",
         "generation_sequences",
+        "parent_akousma_ids",
+        "akousma_relations",
+        "listening_context",
+        "covenant",
     }
     if key in json_keys:
         try:
