@@ -19,7 +19,11 @@ struct ContentView: View {
             DashboardWebView(
                 urlString: store.dashboardURL,
                 reloadToken: store.reloadToken,
-                holder: web
+                holder: web,
+                appearance: store.dashboardAppearance,
+                onAppearanceChange: { theme, accent in
+                    store.updateAppearance(theme: theme, accent: accent)
+                }
             )
             .id(store.dashboardURL)
 
@@ -34,7 +38,14 @@ struct ContentView: View {
                 Spacer(minLength: 0)
             }
         }
-        .background(Color(red: 0.984, green: 0.984, blue: 0.976))
+        .background(chromeBackground.ignoresSafeArea())
+        .preferredColorScheme(store.preferredColorScheme)
+    }
+
+    private var chromeBackground: Color {
+        store.appearanceMode == "dark"
+            ? Color(red: 0.106, green: 0.106, blue: 0.098)
+            : Color(red: 0.965, green: 0.965, blue: 0.957)
     }
 
     private var offlineOverlay: some View {
@@ -57,7 +68,8 @@ struct ContentView: View {
             }
         }
         .padding(28)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.10), radius: 28, y: 12)
     }
 }
 
@@ -65,6 +77,8 @@ struct DashboardWebView: NSViewRepresentable {
     let urlString: String
     let reloadToken: Int
     let holder: WebViewHolder
+    let appearance: DashboardAppearance
+    let onAppearanceChange: (String?, String?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(dashboardURL: URL(string: urlString))
@@ -77,23 +91,22 @@ struct DashboardWebView: NSViewRepresentable {
         // dashboard-side affordances later).
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
-            source: "window.__germNative = true;",
+            source: initialAppearanceScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
+        controller.add(context.coordinator, name: "germShell")
         configuration.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.underPageBackgroundColor = NSColor(
-            red: 0.984,
-            green: 0.984,
-            blue: 0.976,
-            alpha: 1
-        )
+        webView.setValue(false, forKey: "drawsBackground")
         webView.uiDelegate = context.coordinator
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         holder.webView = webView
+        context.coordinator.onAppearanceChange = onAppearanceChange
+        context.coordinator.lastAppearance = appearance
+        context.coordinator.pendingAppearance = appearance
         if let url = URL(string: urlString) {
             webView.load(URLRequest(url: url))
         }
@@ -103,6 +116,8 @@ struct DashboardWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         holder.webView = webView
+        context.coordinator.onAppearanceChange = onAppearanceChange
+        context.coordinator.pushAppearance(appearance, to: webView)
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             if let url = URL(string: urlString) {
@@ -111,13 +126,65 @@ struct DashboardWebView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate {
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "germShell")
+    }
+
+    private var initialAppearanceScript: String {
+        let theme = appearance.theme == "dark" ? "dark" : "light"
+        let accent = GermAppearancePalette.normalizedAccent(appearance.accent)
+        return """
+        window.__germNative = true;
+        try {
+          if (!localStorage.getItem('germinator-theme')) localStorage.setItem('germinator-theme', '\(theme)');
+          if (!localStorage.getItem('germinator-accent')) localStorage.setItem('germinator-accent', '\(accent)');
+          document.documentElement.setAttribute('data-theme', localStorage.getItem('germinator-theme') || '\(theme)');
+        } catch (_) {
+          document.documentElement.setAttribute('data-theme', '\(theme)');
+        }
+        """
+    }
+
+    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler {
         var lastReloadToken = 0
+        var onAppearanceChange: ((String?, String?) -> Void)?
+        var lastAppearance: DashboardAppearance?
+        var pendingAppearance: DashboardAppearance?
         private let dashboardURL: URL?
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         init(dashboardURL: URL?) {
             self.dashboardURL = dashboardURL
+        }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard message.name == "germShell",
+                  let body = message.body as? [String: Any],
+                  body["action"] as? String == "appearance" else {
+                return
+            }
+            onAppearanceChange?(body["theme"] as? String, body["accent"] as? String)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let pendingAppearance, pendingAppearance != lastAppearance else { return }
+            pushAppearance(pendingAppearance, to: webView)
+        }
+
+        func pushAppearance(_ appearance: DashboardAppearance, to webView: WKWebView) {
+            pendingAppearance = appearance
+            guard appearance != lastAppearance, !webView.isLoading else { return }
+            guard let data = try? JSONEncoder().encode(appearance),
+                  let json = String(data: data, encoding: .utf8) else {
+                return
+            }
+            webView.evaluateJavaScript("window.germNativeAppearance?.(\(json));") { [weak self] _, error in
+                guard error == nil else { return }
+                self?.lastAppearance = appearance
+            }
         }
 
         // The Chamber's hardware-record module uses getUserMedia; grant the

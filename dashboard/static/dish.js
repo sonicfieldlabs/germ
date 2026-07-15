@@ -13,6 +13,10 @@ import { createMicroRenderer, GERM_FORMS, MODULE_FORMS } from "./micro_render.js
 import { germRenderParams, moduleVesselParams, hydrateMicroIcons, MODULE_FRAMES } from "./micro_forms.js?v=20260602-unicode-p1";
 import { unicodeFrame } from "./micro_unicode.js?v=20260602-unicode-p1";
 
+function dishAccentColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue("--leaf").trim() || "#476f5d";
+}
+
 // ---- Word banks for the card-prompt game ---------------------------------
 const WORD_BANKS = {
   recipe: {
@@ -2546,7 +2550,7 @@ function drawGermWaveform(canvas, buffer, germ) {
   // Draw waveform peaks
   const data = buffer.getChannelData(0);
   const step = Math.max(1, Math.floor(data.length / width));
-  ctx.strokeStyle = isDark ? "#7aa58f" : "#476f5d";
+  ctx.strokeStyle = dishAccentColor();
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (let x = 0; x < width; x++) {

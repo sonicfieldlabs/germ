@@ -6,10 +6,11 @@
     <meta name="description" content="germ — an open-source modular lab for generative microsound, sound matter, and control signals." />
     <meta property="og:title" content="germ — generative microsound system" />
     <meta property="og:description" content="A local modular environment for sound organisms, grains, control signals, and Stable Audio 3 workflows." />
-    <meta name="theme-color" content="#FAFAFA" />
+    <meta name="theme-color" content="#f6f6f4" />
     <title>germ — generative microsound system</title>
     <link rel="icon" href="/dashboard/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260706-engine-p1" />
+    <link rel="apple-touch-icon" href="/dashboard/assets/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260715-oida-family-p1" />
   </head>
   <body class="canvas-active no-left-sidebar">
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -139,7 +140,7 @@
                 </button>
                 <span class="transport-separator"></span>
                 <div id="masterVolumeControl" class="master-volume-control">
-                  <button id="masterVolumeBtn" class="transport-icon-button" type="button" aria-label="Master volume" title="Master volume" data-help="Hover to reveal the master output volume slider.">
+                  <button id="masterVolumeBtn" class="transport-icon-button" type="button" aria-label="Master volume" aria-expanded="false" aria-controls="masterVolumePopover" title="Master volume" data-help="Open the master output volume slider.">
                     <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
                   </button>
                   <div id="masterVolumePopover" class="master-volume-popover" hidden>
@@ -156,35 +157,35 @@
             <div id="canvasToolsMenu" class="canvas-tools-menu" role="menu" aria-label="Selected sound tools" hidden>
               <div class="canvas-tools-group">
                 <span class="canvas-tools-label">Repair</span>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="seam_healer">Seam Healer <span>repair boundaries</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loop_doctor">Loop Doctor <span>cyclic repair</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loudness_match">Loudness Match <span>fair compare</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="phase_mono_check">Phase / Mono Check <span>safe output</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="seam_healer" title="Repair clip boundaries">Seams</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loop_doctor" title="Repair cyclic boundaries">Loop</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="loudness_match" title="Match loudness for comparison">Loudness</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="phase_mono_check" title="Check phase and mono compatibility">Phase</button>
               </div>
               <div class="canvas-tools-group">
                 <span class="canvas-tools-label">Prepare</span>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="transient_keeper">Transient Keeper <span>protect attacks</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="texture_flatten">Texture Flatten <span>mutation-ready</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="silence_cleaner">Silence Cleaner <span>trim dead air</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="stem_extract_prep">Stem Extract Prep <span>model prep</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="transient_keeper" title="Protect transient attacks">Transients</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="texture_flatten" title="Flatten texture for mutation">Texture</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="silence_cleaner" title="Trim silent material">Silence</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="stem_extract_prep" title="Prepare audio for stem extraction">Stems</button>
               </div>
               <div class="canvas-tools-group">
                 <span class="canvas-tools-label">Regions</span>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="tail_extender">Tail Extender <span>decay stretch</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="spectral_freeze">Spectral Freeze <span>drone from region</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="onset_splitter">Onset Splitter <span>make one-shots</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="region_quantizer">Region Quantizer <span>align selection</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="tail_extender" title="Extend the selected decay">Tail</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="spectral_freeze" title="Freeze the selected spectrum">Freeze</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="onset_splitter" title="Split audio at onsets">Onsets</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="region_quantizer" title="Align the selected region">Quantize</button>
               </div>
               <div class="canvas-tools-group">
                 <span class="canvas-tools-label">Core</span>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="normalize">Normalize <span>peak level</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="fade">Fade <span>fade in / out</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-time-pitch">Warp / Pitch <span>stretch or retune</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="reverse">Reverse <span>reverse audio</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="duplicate">Duplicate <span>copy source</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="slice">Slice <span>split regions</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata_embedder">Metadata Embedder <span>lineage export</span></button>
-                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata">Metadata <span>manual edit</span></button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="normalize" title="Normalize peak level">Normalize</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="fade" title="Apply fades">Fades</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-time-pitch" title="Stretch or retune audio">Warp</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="reverse" title="Reverse audio">Reverse</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="duplicate" title="Duplicate the source">Duplicate</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="slice" title="Split audio into regions">Slice</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata_embedder" title="Embed lineage metadata">Embed</button>
+                <button type="button" role="menuitem" data-action="canvas-audio-tool" data-tool="metadata" title="Edit metadata">Metadata</button>
               </div>
             </div>
             <div class="panel-head canvas-head">
@@ -211,6 +212,25 @@
                     </label>
                     <label>Server <input id="serverUrl" placeholder="http://127.0.0.1:5178" data-help="The API server address." /></label>
                   </div>
+                  <section class="appearance-preferences" aria-labelledby="appearancePreferencesTitle">
+                    <div class="appearance-preferences-head">
+                      <span id="appearancePreferencesTitle">Accent</span>
+                      <span id="accentName">Leaf</span>
+                    </div>
+                    <div id="accentPalette" class="accent-palette" role="group" aria-label="Accent color">
+                      <button class="accent-swatch" type="button" data-accent="#476f5d" data-accent-name="Leaf" style="--swatch:#476f5d" aria-label="Leaf accent" aria-pressed="true"></button>
+                      <button class="accent-swatch" type="button" data-accent="#426b8a" data-accent-name="Tide" style="--swatch:#426b8a" aria-label="Tide accent" aria-pressed="false"></button>
+                      <button class="accent-swatch" type="button" data-accent="#6d5a8d" data-accent-name="Iris" style="--swatch:#6d5a8d" aria-label="Iris accent" aria-pressed="false"></button>
+                      <button class="accent-swatch" type="button" data-accent="#9a5964" data-accent-name="Rose" style="--swatch:#9a5964" aria-label="Rose accent" aria-pressed="false"></button>
+                      <button class="accent-swatch" type="button" data-accent="#a06e35" data-accent-name="Amber" style="--swatch:#a06e35" aria-label="Amber accent" aria-pressed="false"></button>
+                      <button class="accent-swatch" type="button" data-accent="#397679" data-accent-name="Lagoon" style="--swatch:#397679" aria-label="Lagoon accent" aria-pressed="false"></button>
+                      <button class="accent-swatch" type="button" data-accent="#6d6d68" data-accent-name="Graphite" style="--swatch:#6d6d68" aria-label="Graphite accent" aria-pressed="false"></button>
+                      <label class="accent-custom" title="Choose a custom accent">
+                        <span>Custom</span>
+                        <input id="accentCustom" type="color" value="#476f5d" aria-label="Custom accent color" />
+                      </label>
+                    </div>
+                  </section>
                   <div class="topbar-nav-entries">
                     <button id="aboutAppModalBtn" class="topbar-nav-entry" type="button" aria-label="About germ" title="About" data-help="Open the germ system overview.">
                       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
@@ -223,8 +243,12 @@
                     <button id="themeToggle" class="topbar-nav-entry" type="button" aria-label="Toggle dark mode" title="Toggle dark mode" data-help="Switch the interface between light and dark mode.">
                       <svg id="themeIconMoon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
                       <svg id="themeIconSun" viewBox="0 0 24 24" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                      Dark Mode
+                      <span id="themeToggleLabel">Dark mode</span>
                     </button>
+                    <a class="topbar-nav-entry" href="/docs" target="_blank" rel="noreferrer" aria-label="Open documentation" title="Documentation" data-help="Open the germ API and system documentation.">
+                      <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 016.5 3H11v16H6.5A2.5 2.5 0 004 21.5z"/><path d="M20 5.5A2.5 2.5 0 0017.5 3H13v16h4.5a2.5 2.5 0 012.5 2.5z"/></svg>
+                      Documentation
+                    </a>
                     <button id="helpModeToggle" class="topbar-nav-entry" type="button" aria-label="Toggle help mode" title="Help mode" data-help="Show or hide the short tool descriptions under modules.">
                       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                       Help Mode
@@ -1463,6 +1487,6 @@
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260714-metadata-p1"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260715-oida-family-p1"></script>
   </body>
 </html>

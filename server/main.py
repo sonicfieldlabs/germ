@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -48,6 +49,7 @@ app = FastAPI(
         f"{PRODUCT_DESCRIPTION}, and legacy {LEGACY_ENGINE_NAME} clients."
     ),
     version="0.2.0",
+    docs_url=None,
 )
 
 app.add_middleware(
@@ -107,6 +109,30 @@ def root() -> dict[str, str]:
         "models": "/models",
         "docs": "/docs",
     }
+
+
+@app.get("/docs", include_in_schema=False)
+def api_docs() -> HTMLResponse:
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{PRODUCT_NAME} — documentation",
+        swagger_favicon_url="/dashboard/assets/favicon.svg",
+        swagger_ui_parameters={
+            "displayRequestDuration": True,
+            "docExpansion": "list",
+            "filter": True,
+            "persistAuthorization": True,
+        },
+    )
+    html = response.body.decode("utf-8").replace(
+        "</head>",
+        (
+            '<script src="/dashboard/assets/docs_theme.js?v=20260715-oida-family-p1"></script>'
+            '<link rel="stylesheet" href="/dashboard/assets/docs.css?v=20260715-oida-family-p1">'
+            "</head>"
+        ),
+    )
+    return HTMLResponse(html)
 
 
 @app.get("/dashboard", include_in_schema=False)

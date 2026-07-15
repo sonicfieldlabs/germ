@@ -24,6 +24,19 @@ struct HealthModel: Decodable {
 /// watches /health, and opens surfaces.
 @MainActor
 final class ShellStore: ObservableObject {
+    @Published var appearanceMode: String {
+        didSet {
+            UserDefaults.standard.set(appearanceMode == "dark" ? "dark" : "light", forKey: "germAppearanceMode")
+        }
+    }
+    @Published var accentHex: String {
+        didSet {
+            UserDefaults.standard.set(
+                GermAppearancePalette.normalizedAccent(accentHex),
+                forKey: "germAccentHex"
+            )
+        }
+    }
     @Published var daemonBaseURL: String {
         didSet {
             let trimmed = daemonBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -46,6 +59,12 @@ final class ShellStore: ObservableObject {
     private var hasBootstrapped = false
 
     init() {
+        appearanceMode = UserDefaults.standard.string(forKey: "germAppearanceMode") == "dark"
+            ? "dark"
+            : "light"
+        accentHex = GermAppearancePalette.normalizedAccent(
+            UserDefaults.standard.string(forKey: "germAccentHex")
+        )
         let stored = UserDefaults.standard.string(forKey: "germDaemonBaseURL")
         daemonBaseURL = (stored?.isEmpty == false ? stored! : "http://127.0.0.1:5178")
         // Quit stops only the daemon this shell started; externally started
@@ -77,6 +96,17 @@ final class ShellStore: ObservableObject {
     var dashboardURL: String {
         let base = daemonBaseURL.hasSuffix("/") ? String(daemonBaseURL.dropLast()) : daemonBaseURL
         return "\(base)/dashboard"
+    }
+
+    var preferredColorScheme: ColorScheme {
+        appearanceMode == "dark" ? .dark : .light
+    }
+
+    var dashboardAppearance: DashboardAppearance {
+        DashboardAppearance(
+            theme: appearanceMode == "dark" ? "dark" : "light",
+            accent: GermAppearancePalette.normalizedAccent(accentHex)
+        )
     }
 
     var statusLabel: String {
@@ -179,6 +209,15 @@ final class ShellStore: ObservableObject {
 
     func requestReload() {
         reloadToken += 1
+    }
+
+    func updateAppearance(theme: String?, accent: String?) {
+        if let theme {
+            appearanceMode = theme == "dark" ? "dark" : "light"
+        }
+        if let accent {
+            accentHex = GermAppearancePalette.normalizedAccent(accent)
+        }
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {

@@ -46,13 +46,16 @@ struct GermMacOSApp: App {
         Settings {
             SettingsView()
                 .environmentObject(store)
-                .frame(width: 480)
-                .padding()
+                .frame(width: 520, height: 610)
         }
 
-        MenuBarExtra("germ", systemImage: "circle.hexagongrid") {
+        MenuBarExtra {
             MenuBarView()
                 .environmentObject(store)
+        } label: {
+            Image(nsImage: GermLogoSymbol.image())
+                .renderingMode(.template)
+                .accessibilityLabel("germ")
         }
     }
 }

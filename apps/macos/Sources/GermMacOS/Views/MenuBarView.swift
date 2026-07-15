@@ -23,6 +23,11 @@ struct MenuBarView: View {
             }
             .disabled(!store.daemonOnline)
 
+            Button("Settings…") {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+
             Divider()
 
             Button("Start Daemon") {
@@ -45,6 +50,7 @@ struct MenuBarView: View {
         .task {
             await store.refresh()
         }
+        .preferredColorScheme(store.preferredColorScheme)
     }
 
     private var statusIcon: String {

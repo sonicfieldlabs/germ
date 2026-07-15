@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">germ logo — dark</title>
+  <rect width="1024" height="1024" fill="#232320"/>
+  <path d="M331.5 846.4 A374 374 0 1 1 852.4 325.5" fill="none" stroke="#f4f3ee" stroke-width="30" stroke-linecap="round" opacity="0.62"/>
+  <g fill="#f4f3ee">
+    <circle cx="546" cy="447" r="80"/>
+    <circle cx="426" cy="593" r="51" opacity="0.78"/>
+    <circle cx="670" cy="581" r="44" opacity="0.64"/>
+  </g>
+</svg>

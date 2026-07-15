@@ -40,12 +40,12 @@ function checkResponsiveAssetContracts() {
   const css = read("dashboard/static/styles.css");
   assert.match(
     html,
-    /styles\.css\?v=20260706-engine-p1/,
+    /styles\.css\?v=20260715-oida-family-p1/,
     "Dashboard should request the current stylesheet cache key",
   );
   assert.match(
     html,
-    /app\.js\?v=20260714-metadata-p1/,
+    /app\.js\?v=20260715-oida-family-p1/,
     "Dashboard should request the current app script cache key",
   );
   const appSource = read("dashboard/static/app.js");

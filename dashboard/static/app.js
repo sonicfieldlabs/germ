@@ -17,33 +17,174 @@ import {
   createVoicePool,
 } from "./audio_engine.js?v=20260706-engine-p1";
 
-/* Theme toggle */
-(function initTheme() {
-  const saved = localStorage.getItem("germinator-theme");
-  if (saved) document.documentElement.setAttribute("data-theme", saved);
+/* Appearance preferences -------------------------------------------------
+   Oída and germ share the same warm-neutral surface system. Germ keeps one
+   user-selectable cultivation accent for waveforms, active states and
+   sliders. Both preferences live in localStorage and are mirrored to the
+   native shell when the dashboard is embedded in the macOS app. */
+const GERM_THEME_KEY = "germinator-theme";
+const GERM_ACCENT_KEY = "germinator-accent";
+const DEFAULT_GERM_ACCENT = "#476f5d";
+const GERM_ACCENT_NAMES = new Map([
+  ["#476f5d", "Leaf"],
+  ["#426b8a", "Tide"],
+  ["#6d5a8d", "Iris"],
+  ["#9a5964", "Rose"],
+  ["#a06e35", "Amber"],
+  ["#397679", "Lagoon"],
+  ["#6d6d68", "Graphite"],
+]);
 
-  function updateIcons(theme) {
-    const moon = document.getElementById("themeIconMoon");
-    const sun = document.getElementById("themeIconSun");
-    if (moon) moon.style.display = theme === "dark" ? "none" : "block";
-    if (sun) sun.style.display = theme === "dark" ? "block" : "none";
+function storedPreference(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
   }
+}
 
-  document.addEventListener("DOMContentLoaded", () => {
-    updateIcons(document.documentElement.getAttribute("data-theme") || "light");
-    const btn = document.getElementById("themeToggle");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        const current = document.documentElement.getAttribute("data-theme");
-        const next = current === "dark" ? "light" : "dark";
-        document.documentElement.setAttribute("data-theme", next);
-        localStorage.setItem("germinator-theme", next);
-        updateIcons(next);
-        if (typeof drawCanvasWaveforms === "function") drawCanvasWaveforms();
-      });
-    }
+function persistPreference(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The in-memory preference still applies in restricted browsing modes.
+  }
+}
+
+function normalizeAccentHex(value) {
+  const candidate = String(value || "").trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(candidate) ? candidate : DEFAULT_GERM_ACCENT;
+}
+
+function hexChannels(value) {
+  const hex = normalizeAccentHex(value).slice(1);
+  return [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+}
+
+function mixHex(source, target, amount) {
+  const a = hexChannels(source);
+  const b = hexChannels(target);
+  const channel = (index) => Math.round(a[index] + (b[index] - a[index]) * amount)
+    .toString(16)
+    .padStart(2, "0");
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
+function accentRgba(alpha = 1) {
+  const [r, g, b] = hexChannels(currentAccentColor());
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, Number(alpha) || 0))})`;
+}
+
+function currentAccentColor() {
+  const computed = getComputedStyle(document.documentElement).getPropertyValue("--leaf").trim();
+  return normalizeAccentHex(computed || storedPreference(GERM_ACCENT_KEY, DEFAULT_GERM_ACCENT));
+}
+
+function updateAppearanceControls() {
+  const theme = document.documentElement.getAttribute("data-theme") || "light";
+  const accent = normalizeAccentHex(storedPreference(GERM_ACCENT_KEY, DEFAULT_GERM_ACCENT));
+  const moon = document.getElementById("themeIconMoon");
+  const sun = document.getElementById("themeIconSun");
+  const label = document.getElementById("themeToggleLabel");
+  const custom = document.getElementById("accentCustom");
+  const name = document.getElementById("accentName");
+  if (moon) moon.style.display = theme === "dark" ? "none" : "block";
+  if (sun) sun.style.display = theme === "dark" ? "block" : "none";
+  if (label) label.textContent = theme === "dark" ? "Light mode" : "Dark mode";
+  if (custom) custom.value = accent;
+  if (name) name.textContent = GERM_ACCENT_NAMES.get(accent) || "Custom";
+  document.querySelectorAll(".accent-swatch[data-accent]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(normalizeAccentHex(button.dataset.accent) === accent));
   });
-})();
+}
+
+function notifyNativeAppearance() {
+  const handler = window.webkit?.messageHandlers?.germShell;
+  if (!handler) return;
+  handler.postMessage({
+    action: "appearance",
+    theme: document.documentElement.getAttribute("data-theme") || "light",
+    accent: normalizeAccentHex(storedPreference(GERM_ACCENT_KEY, DEFAULT_GERM_ACCENT)),
+  });
+}
+
+function redrawAppearanceSurfaces() {
+  window.requestAnimationFrame(() => {
+    if (typeof drawCanvasWaveforms === "function") drawCanvasWaveforms();
+    if (typeof renderPetri === "function") renderPetri();
+    if (typeof renderHerbarium === "function") renderHerbarium();
+    if (typeof renderCanvas === "function") renderCanvas();
+  });
+}
+
+function applyAccentPreference(value, { persist = true, notify = true, redraw = true } = {}) {
+  const accent = normalizeAccentHex(value);
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const root = document.documentElement;
+  const visible = dark ? mixHex(accent, "#ffffff", 0.24) : mixHex(accent, "#000000", 0.08);
+  const strong = dark ? mixHex(accent, "#ffffff", 0.38) : mixHex(accent, "#000000", 0.28);
+  root.style.setProperty("--germ-accent", accent);
+  root.style.setProperty("--leaf", visible);
+  root.style.setProperty("--ok", visible);
+  root.style.setProperty("--pale-green-text", strong);
+  root.style.setProperty("--pale-green-bg", accentRgba(dark ? 0.16 : 0.10));
+  root.style.setProperty("--wave-zone-active-bg", accentRgba(dark ? 0.18 : 0.12));
+  root.style.setProperty("--gradient-tint-active", accentRgba(dark ? 0.28 : 0.24));
+  root.style.setProperty("--accent-focus", accentRgba(dark ? 0.58 : 0.48));
+  root.style.setProperty("--accent-wash", accentRgba(dark ? 0.15 : 0.09));
+  if (persist) persistPreference(GERM_ACCENT_KEY, accent);
+  updateAppearanceControls();
+  if (redraw) redrawAppearanceSurfaces();
+  if (notify) notifyNativeAppearance();
+}
+
+function applyThemePreference(value, { persist = true, notify = true, redraw = true } = {}) {
+  const theme = value === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", theme);
+  if (persist) persistPreference(GERM_THEME_KEY, theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme === "dark" ? "#1b1b19" : "#f6f6f4";
+  applyAccentPreference(storedPreference(GERM_ACCENT_KEY, DEFAULT_GERM_ACCENT), {
+    persist: false,
+    notify: false,
+    redraw: false,
+  });
+  updateAppearanceControls();
+  if (redraw) redrawAppearanceSurfaces();
+  if (notify) notifyNativeAppearance();
+}
+
+applyThemePreference(storedPreference(GERM_THEME_KEY, "light"), {
+  persist: false,
+  notify: false,
+  redraw: false,
+});
+applyAccentPreference(storedPreference(GERM_ACCENT_KEY, DEFAULT_GERM_ACCENT), {
+  persist: false,
+  notify: false,
+  redraw: false,
+});
+
+window.germNativeAppearance = ({ theme, accent } = {}) => {
+  if (theme) applyThemePreference(theme, { persist: true, notify: false, redraw: false });
+  if (accent) applyAccentPreference(accent, { persist: true, notify: false, redraw: false });
+  redrawAppearanceSurfaces();
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  updateAppearanceControls();
+  document.getElementById("themeToggle")?.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme") || "light";
+    applyThemePreference(current === "dark" ? "light" : "dark");
+  });
+  document.querySelectorAll(".accent-swatch[data-accent]").forEach((button) => {
+    button.addEventListener("click", () => applyAccentPreference(button.dataset.accent));
+  });
+  document.getElementById("accentCustom")?.addEventListener("input", (event) => {
+    applyAccentPreference(event.target.value);
+  });
+  notifyNativeAppearance();
+});
 
 const $ = (id) => document.getElementById(id);
 
@@ -1105,7 +1246,7 @@ function drawWavetableMiniScope(canvas, wavetable, frames = null, position = 0) 
   const frameSize = Number(wavetable?.frame_size || 0);
   const frameCount = Number(wavetable?.frame_count || 0);
   if (!frames || !frameSize || !frameCount) {
-    ctx.strokeStyle = "rgba(71,111,93,0.35)";
+    ctx.strokeStyle = accentRgba(0.35);
     ctx.beginPath();
     ctx.moveTo(0, height / 2);
     ctx.lineTo(width, height / 2);
@@ -1114,7 +1255,7 @@ function drawWavetableMiniScope(canvas, wavetable, frames = null, position = 0) 
   }
   const frameIndex = Math.max(0, Math.min(frameCount - 1, Math.round((Number(position) || 0) * (frameCount - 1))));
   const start = frameIndex * frameSize;
-  ctx.strokeStyle = "#476f5d";
+  ctx.strokeStyle = currentAccentColor();
   ctx.lineWidth = Math.max(1, ratio);
   ctx.beginPath();
   for (let x = 0; x < width; x += 1) {
@@ -1146,7 +1287,7 @@ function drawWavetableFrameStrip(canvas, wavetable, frames = null) {
       energy += Math.abs(frames[start + j] || 0);
     }
     energy = Math.min(1, energy / 64);
-    ctx.fillStyle = `rgba(71,111,93,${0.18 + energy * 0.72})`;
+    ctx.fillStyle = accentRgba(0.18 + energy * 0.72);
     ctx.fillRect(i * barWidth, height * (1 - energy), Math.max(1, barWidth - 1), height * energy);
   }
 }
@@ -2489,8 +2630,7 @@ function mutationPresetOptions(value) {
   const active = mutationPresetForValue(value);
   return MUTATION_PRESETS
     .map((preset) => {
-      const label = `${preset.value.toFixed(2)} ${preset.label}`;
-      return `<option value="${preset.value}"${preset.key === active.key ? " selected" : ""}>${escapeHtml(label)}</option>`;
+      return `<option value="${preset.value}"${preset.key === active.key ? " selected" : ""}>${escapeHtml(preset.label)}</option>`;
     })
     .join("");
 }
@@ -5311,7 +5451,7 @@ function canvasActiveEditableRegion(node) {
 }
 
 function canvasRegionSummary(region) {
-  if (!region) return "Draw a region, then assign a role.";
+  if (!region) return "Draw, then assign.";
   const config = canvasRegionConfig(region);
   const bounds = canvasRegionBounds(region);
   if (!bounds) return `${config.label} selection`;
@@ -9897,13 +10037,13 @@ function canvasNodeMarkup(node) {
         </div>
         <div class="wave-corner-group wave-corner-bl">
           <div class="wave-zone wave-knob-control" data-help="Volume">
-            <button class="wave-knob-btn" type="button" data-knob="volume" data-node-id="${escapeHtml(node.id)}" title="Volume" aria-label="Volume"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg></button>
+            <button class="wave-knob-btn" type="button" data-knob="volume" data-node-id="${escapeHtml(node.id)}" title="Volume" aria-label="Volume" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg></button>
             <div class="wave-knob-popup wave-knob-vertical">
               <input type="range" class="wave-knob-slider" data-param="volume" data-node-id="${escapeHtml(node.id)}" min="0" max="100" value="${Math.round((node.volume ?? 1) * 100)}" orient="vertical" />
             </div>
           </div>
           <div class="wave-zone wave-knob-control" data-help="Pan">
-            <button class="wave-knob-btn" type="button" data-knob="pan" data-node-id="${escapeHtml(node.id)}" title="Pan" aria-label="Pan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8l4 4-4 4"/><path d="M6 8l-4 4 4 4"/><line x1="2" y1="12" x2="22" y2="12"/></svg></button>
+            <button class="wave-knob-btn" type="button" data-knob="pan" data-node-id="${escapeHtml(node.id)}" title="Pan" aria-label="Pan" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8l4 4-4 4"/><path d="M6 8l-4 4 4 4"/><line x1="2" y1="12" x2="22" y2="12"/></svg></button>
             <div class="wave-knob-popup wave-knob-horizontal">
               <input type="range" class="wave-knob-slider" data-param="pan" data-node-id="${escapeHtml(node.id)}" min="-100" max="100" value="${Math.round((node.pan ?? 0) * 100)}" />
             </div>
@@ -9915,7 +10055,7 @@ function canvasNodeMarkup(node) {
             <button class="wave-zone wave-variations-btn" type="button" data-node-id="${escapeHtml(node.id)}" title="Variations" aria-label="Variations" data-help="Variations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></button>
             <div class="wave-variations-popover wave-var-menu" hidden>
               <div class="wave-var-row">
-                <span class="wave-var-label">Full variation</span>
+                <span class="wave-var-label">Variation</span>
                 <div class="wave-var-spinner">
                   <button class="wave-var-spin-btn" type="button" data-spin="-1" data-node-id="${escapeHtml(node.id)}">−</button>
                   <span class="wave-var-spin-val" data-node-id="${escapeHtml(node.id)}">1</span>
@@ -9928,9 +10068,9 @@ function canvasNodeMarkup(node) {
               </select>
               ${canvasWaveRegionOptionsMarkup(node)}
               <div class="wave-region-legacy-row">
-                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="inpaint" data-node-id="${escapeHtml(node.id)}">Selection variation</button>
-                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="heal" data-node-id="${escapeHtml(node.id)}">Heal selection</button>
-                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="heal-full" data-node-id="${escapeHtml(node.id)}">Full heal</button>
+                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="inpaint" data-node-id="${escapeHtml(node.id)}">Selection</button>
+                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="heal" data-node-id="${escapeHtml(node.id)}">Heal</button>
+                <button class="wave-var-menu-opt" type="button" data-action="canvas-op" data-op="heal-full" data-node-id="${escapeHtml(node.id)}">Repair all</button>
               </div>
             </div>
           </div>
@@ -11006,7 +11146,7 @@ function canvasPaintWaveformLayer(ctx, buffer, node, asset, metrics) {
     const sampleEnd = Math.min(data.length, Math.max(sampleStart + 1, Math.ceil((viewEnd / Math.max(buffer.duration, 0.01)) * data.length)));
     const drawableHeight = Math.max(1, Math.floor(sourceHeight));
     const step = Math.max(1, Math.floor((sampleEnd - sampleStart) / drawableHeight));
-    ctx.strokeStyle = isDark ? "#7aa58f" : "#476f5d";
+    ctx.strokeStyle = currentAccentColor();
     ctx.lineWidth = Math.max(1.2, height / Math.max(760, height));
     ctx.beginPath();
     for (let y = 0; y < drawableHeight; y += 1) {
@@ -11065,7 +11205,7 @@ function canvasPaintWaveformLayer(ctx, buffer, node, asset, metrics) {
     const sampleEnd = Math.min(data.length, Math.max(sampleStart + 1, Math.ceil((viewEnd / Math.max(buffer.duration, 0.01)) * data.length)));
     const drawableWidth = Math.max(1, Math.floor(sourceWidth));
     const step = Math.max(1, Math.floor((sampleEnd - sampleStart) / drawableWidth));
-    ctx.strokeStyle = isDark ? "#7aa58f" : "#476f5d";
+    ctx.strokeStyle = currentAccentColor();
     ctx.lineWidth = Math.max(1.2, width / Math.max(760, width));
     ctx.beginPath();
     for (let x = 0; x < drawableWidth; x += 1) {
@@ -11137,7 +11277,7 @@ function drawCanvasFxFilters() {
     }
     const gradient = ctx.createLinearGradient(0, 0, width, 0);
     gradient.addColorStop(0, "rgba(215,168,23,0.15)");
-    gradient.addColorStop(0.5, "rgba(71,111,93,0.22)");
+    gradient.addColorStop(0.5, accentRgba(0.22));
     gradient.addColorStop(1, "rgba(18,95,209,0.13)");
     ctx.beginPath();
     curve.forEach((value, index) => {
@@ -11158,7 +11298,7 @@ function drawCanvasFxFilters() {
       if (index === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = isDark ? "#d7a817" : "#476f5d";
+    ctx.strokeStyle = currentAccentColor();
     ctx.lineWidth = Math.max(2, width / 220);
     ctx.stroke();
   });
@@ -13258,7 +13398,7 @@ async function canvasStartAudioSnapshot(nodeId, seconds = null) {
       analyser.getByteTimeDomainData(dataArray);
       ctx.clearRect(0, 0, w, h);
       ctx.beginPath();
-      ctx.strokeStyle = "rgba(71, 111, 93, 0.82)";
+      ctx.strokeStyle = accentRgba(0.82);
       ctx.lineWidth = 1.5;
       dataArray.forEach((value, index) => {
         const x = (index / Math.max(1, dataArray.length - 1)) * w;
@@ -19449,8 +19589,7 @@ function germinatorMasterVolume() {
   return _germinatorMasterVolume;
 }
 
-// --- Master volume (hover popover with sticky-close so the user has time to
-//     move from the icon to the slider) -----------------------------------
+// --- Master volume: click-to-reveal, slider-only popover -----------------
 (() => {
   const control = document.getElementById("masterVolumeControl");
   const button = document.getElementById("masterVolumeBtn");
@@ -19458,6 +19597,7 @@ function germinatorMasterVolume() {
   const slider = document.getElementById("masterVolumeSlider");
   const readout = document.getElementById("masterVolumeReadout");
   if (!control || !button || !popover || !slider) return;
+  const compactToolbar = window.matchMedia("(max-width: 760px)");
   const storedRaw = localStorage.getItem("germinator-master-volume");
   const stored = storedRaw == null || storedRaw === "" ? NaN : Number(storedRaw);
   const initial = Number.isFinite(stored) ? Math.max(0, Math.min(100, stored)) : 100;
@@ -19466,35 +19606,52 @@ function germinatorMasterVolume() {
   syncRangeFill(slider);
   applyMasterVolume(initial);
 
-  let hideTimer = null;
+  function placePopover() {
+    const parent = compactToolbar.matches ? document.body : control;
+    if (popover.parentElement !== parent) parent.appendChild(popover);
+  }
+
   function show() {
-    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    placePopover();
     popover.hidden = false;
     button.setAttribute("aria-expanded", "true");
+    window.requestAnimationFrame(() => popover.classList.add("is-visible"));
   }
-  function scheduleHide(delay = 1600) {
-    if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
+  function hide({ restoreFocus = false } = {}) {
+    popover.classList.remove("is-visible");
+    window.setTimeout(() => {
+      if (popover.classList.contains("is-visible")) return;
       popover.hidden = true;
+      placePopover();
       button.setAttribute("aria-expanded", "false");
-      hideTimer = null;
-    }, delay);
+      if (restoreFocus) button.focus();
+    }, 150);
   }
-  control.addEventListener("mouseenter", show);
-  control.addEventListener("focusin", show);
-  control.addEventListener("mouseleave", () => scheduleHide(1600));
-  control.addEventListener("focusout", (event) => {
-    if (!control.contains(event.relatedTarget)) scheduleHide(1600);
+  function toggle() {
+    if (popover.hidden) show();
+    else hide();
+  }
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggle();
   });
-  button.addEventListener("click", () => { show(); scheduleHide(2800); });
+  popover.addEventListener("click", (event) => event.stopPropagation());
   slider.addEventListener("input", () => {
     const value = Math.max(0, Math.min(100, Number(slider.value) || 0));
     if (readout) readout.textContent = `${value}%`;
     applyMasterVolume(value);
     localStorage.setItem("germinator-master-volume", String(value));
-    // Keep the popover up while the user is interacting.
-    show(); scheduleHide(2200);
   });
+  document.addEventListener("click", (event) => {
+    if (!control.contains(event.target) && !popover.hidden) hide();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!control.contains(event.target) && !popover.contains(event.target) && !popover.hidden) hide();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !popover.hidden) hide({ restoreFocus: true });
+  });
+  compactToolbar.addEventListener?.("change", placePopover);
 })();
 refreshAll();
 
@@ -19700,7 +19857,7 @@ function _getWaveformLayers(audioBuffer, w, h, isDark, strokeColor) {
   const cached = _waveformRenderCache.get(audioBuffer);
   if (cached && cached.key === key) return cached;
   const defaultColor = strokeColor || (isDark ? "rgba(160, 160, 160, 0.78)" : "rgba(88, 96, 88, 0.70)");
-  const greenColor = isDark ? "#7ac47a" : "#3a6b3a";
+  const greenColor = currentAccentColor();
   const entry = {
     key,
     base: _renderWaveformLayer(audioBuffer, w, h, defaultColor, isDark),
@@ -20007,13 +20164,39 @@ document.addEventListener("click", (e) => {
   const knobBtn = e.target.closest(".wave-knob-btn");
   if (knobBtn) {
     e.stopPropagation();
+    const control = knobBtn.closest(".wave-knob-control");
+    const nextOpen = !control?.classList.contains("is-open");
+    document.querySelectorAll(".wave-knob-control.is-open").forEach((item) => {
+      if (item !== control) {
+        item.classList.remove("is-open");
+        item.querySelector(".wave-knob-btn")?.setAttribute("aria-expanded", "false");
+      }
+    });
+    control?.classList.toggle("is-open", nextOpen);
+    knobBtn.setAttribute("aria-expanded", String(nextOpen));
+    if (nextOpen) {
+      window.requestAnimationFrame(() => control?.querySelector("input[type='range']")?.focus());
+    }
     return;
   }
   // Close all popups when clicking elsewhere
   if (!e.target.closest(".wave-variations-popover, .wave-knob-popup")) {
     document.querySelectorAll(".wave-variations-popover").forEach(p => p.hidden = true);
+    document.querySelectorAll(".wave-knob-control.is-open").forEach((control) => {
+      control.classList.remove("is-open");
+      control.querySelector(".wave-knob-btn")?.setAttribute("aria-expanded", "false");
+    });
   }
 });
+
+// Capture outside presses before toolbar/menu handlers can stop propagation.
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest(".wave-knob-control")) return;
+  document.querySelectorAll(".wave-knob-control.is-open").forEach((control) => {
+    control.classList.remove("is-open");
+    control.querySelector(".wave-knob-btn")?.setAttribute("aria-expanded", "false");
+  });
+}, true);
 
 /* ===================================================================
    Colony UI handlers
@@ -20386,7 +20569,7 @@ document.addEventListener("keydown", (event) => {
   }
   const modal = document.querySelector(".canvas-modal:not([hidden])");
   if (modal) {
-    modal.hidden = true;
+    closeCanvasModal(modal.id);
     event.preventDefault();
   }
 });
