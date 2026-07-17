@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from server.routes._utils import (
     cleanup_transient_uploads,
@@ -26,9 +27,17 @@ async def inpaint(request: Request) -> GenerationResult:
                 payload["inpaint_ranges"] = parse_ranges_text(payload["inpaint_ranges"])
             model = InpaintRequest(**payload)
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
+            raise HTTPException(
+                status_code=422,
+                detail=exc.errors(include_context=False, include_input=False),
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return run_provider_method(model, "inpainting", "inpaint")
+        return await run_in_threadpool(
+            run_provider_method,
+            model,
+            "inpainting",
+            "inpaint",
+        )
     finally:
         cleanup_transient_uploads(transient_upload_paths)

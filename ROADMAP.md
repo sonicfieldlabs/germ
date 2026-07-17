@@ -1,6 +1,6 @@
 # GERM Roadmap
 
-GERM 0.2.0 is a public alpha and open research release. This roadmap names the
+GERM 0.2.5 is a public alpha and open research release. This roadmap names the
 work in view without promising dates or production stability.
 
 ## Working Now

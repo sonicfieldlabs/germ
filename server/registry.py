@@ -55,14 +55,16 @@ class ProviderRegistry:
             try:
                 available = provider.is_available()
                 detail = provider.status_detail()
+                models = provider.list_models()
             except Exception as exc:
                 available = False
                 detail = str(exc)
+                models = []
             statuses.append(
                 ProviderStatus(
                     id=provider.provider_id,
                     available=available,
-                    models=provider.list_models(),
+                    models=models,
                     loaded_model=provider.loaded_model_id,
                     device=provider.current_device,
                     detail=detail,

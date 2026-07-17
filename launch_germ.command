@@ -17,8 +17,6 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p output/audio output/metadata output/uploads
-
 echo "Starting germ"
 echo "API:       ${API_URL}"
 echo "Dashboard: ${DASHBOARD_URL}"
@@ -31,13 +29,14 @@ if command -v open >/dev/null 2>&1; then
   (sleep 3 && open "${DASHBOARD_URL}") >/dev/null 2>&1 &
 fi
 
-RELOAD_FLAG=""
+UVICORN_ARGS=(
+  server.main:app
+  --host "${GERM_HOST}"
+  --port "${GERM_PORT}"
+)
 RELOAD_VALUE="${GERM_RELOAD:-${GERMINATOR_RELOAD:-0}}"
 if [ "$RELOAD_VALUE" = "1" ] || [ "$RELOAD_VALUE" = "true" ]; then
-  RELOAD_FLAG="--reload"
+  UVICORN_ARGS+=(--reload)
 fi
 
-uv run uvicorn server.main:app \
-  --host "${GERM_HOST}" \
-  --port "${GERM_PORT}" \
-  ${RELOAD_FLAG}
+exec uv run uvicorn "${UVICORN_ARGS[@]}"

@@ -42,10 +42,9 @@ def main() -> int:
             f"device={provider['device']} detail={provider.get('detail')}"
         )
     print("output_dirs:")
-    for child in ["output/audio", "output/metadata", "output/uploads"]:
-        path = PROJECT_ROOT / child
+    for path in (settings.audio_dir, settings.metadata_dir, settings.upload_dir):
         path.mkdir(parents=True, exist_ok=True)
-        print(f"  {child}: {path}")
+        print(f"  {path.relative_to(PROJECT_ROOT) if path.is_relative_to(PROJECT_ROOT) else path}: {path}")
     return 0
 
 

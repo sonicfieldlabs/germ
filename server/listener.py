@@ -3,7 +3,9 @@ from __future__ import annotations
 import array
 import json
 import math
+import sys
 import wave
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ from server.schemas import (
 )
 
 PCM_HEADER_BYTES = 44
+MAX_LISTENER_METADATA_BYTES = 10_000_000
 
 MATERIAL_WORDS = {
     "glass",
@@ -208,7 +211,7 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
                     json=listen_payload,
                 )
             _raise_oida_error(listen_response, "re-listening")
-            listen_body = listen_response.json()
+            listen_body = _response_object(listen_response, "re-listening")
             event = listen_body.get("listening_event")
             if not isinstance(event, dict) or not event.get("id"):
                 raise HTTPException(status_code=502, detail="Oída returned no listening event")
@@ -223,12 +226,10 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
                     },
                 )
                 _raise_oida_error(memory_response, "Akousmata retention")
-                memory_result = memory_response.json()
-                if isinstance(memory_result, dict):
-                    memory_body = memory_result
-                    remembered_event = memory_result.get("event")
-                    if isinstance(remembered_event, dict):
-                        event = remembered_event
+                memory_body = _response_object(memory_response, "Akousmata retention")
+                remembered_event = memory_body.get("event")
+                if isinstance(remembered_event, dict):
+                    event = remembered_event
             prompt_response = client.post(
                 f"{settings.oida_url}/generation/prompt",
                 json={
@@ -242,7 +243,7 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
                 },
             )
             _raise_oida_error(prompt_response, "prompt derivation")
-            generation = prompt_response.json()
+            generation = _response_object(prompt_response, "prompt derivation")
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError, json.JSONDecodeError) as exc:
@@ -259,9 +260,10 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
         if isinstance(listen_body.get("trace"), dict)
         else {}
     )
+    raw_route_comparison = listen_body.get("route_comparison")
     route_comparison = (
-        listen_body.get("route_comparison")
-        if isinstance(listen_body.get("route_comparison"), dict)
+        _compact_external_json(raw_route_comparison)
+        if isinstance(raw_route_comparison, dict)
         else {}
     )
     memory = event.get("memory") if isinstance(event.get("memory"), dict) else {}
@@ -343,7 +345,7 @@ def _source_oida_generation_id(
     if metadata_path is not None:
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
             metadata = {}
         if isinstance(metadata, dict):
             generation_context = (
@@ -390,18 +392,40 @@ def _raise_oida_error(response: httpx.Response, action: str) -> None:
     try:
         body = response.json()
         detail = body.get("detail") if isinstance(body, dict) else body
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError, RecursionError):
         detail = response.text[:500]
+    compact_detail = str(detail)[:1_000]
     raise HTTPException(
         status_code=502,
-        detail=f"Oída {action} failed ({response.status_code}): {detail}",
+        detail=f"Oída {action} failed ({response.status_code}): {compact_detail}",
     )
+
+
+def _response_object(response: httpx.Response, action: str) -> dict[str, Any]:
+    try:
+        body = response.json()
+    except (ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Oída {action} returned invalid JSON",
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Oída {action} returned a non-object response",
+        )
+    return body
 
 
 def _event_duration_seconds(event: dict[str, Any]) -> float | None:
     segment = event.get("segment") if isinstance(event.get("segment"), dict) else {}
     duration_ms = segment.get("duration_ms")
-    if isinstance(duration_ms, (int, float)) and duration_ms > 0:
+    if (
+        isinstance(duration_ms, (int, float))
+        and not isinstance(duration_ms, bool)
+        and math.isfinite(float(duration_ms))
+        and duration_ms > 0
+    ):
         return min(380.0, float(duration_ms) / 1000.0)
     return None
 
@@ -429,12 +453,15 @@ def _compact_oida_result(event: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ]
     routes = []
-    for route in event.get("routes") or []:
+    route_values = event.get("routes")
+    if not isinstance(route_values, list):
+        route_values = []
+    for route in route_values[:64]:
         if not isinstance(route, dict):
             continue
         routes.append(
             {
-                key: route.get(key)
+                key: _compact_external_json(route.get(key), depth=1)
                 for key in (
                     "route_id",
                     "route_name",
@@ -452,19 +479,47 @@ def _compact_oida_result(event: dict[str, Any]) -> dict[str, Any]:
             if isinstance(values, list):
                 routes[-1][key] = [str(value)[:500] for value in values[:32] if value]
     features = event.get("features") if isinstance(event.get("features"), dict) else {}
-    scalar_features = {
-        key: value
-        for key, value in features.items()
-        if isinstance(value, (str, int, float, bool)) or value is None
-    }
+    scalar_features: dict[str, Any] = {}
+    for key, raw_value in list(features.items())[:128]:
+        if isinstance(raw_value, float) and not math.isfinite(raw_value):
+            continue
+        value = raw_value[:1_000] if isinstance(raw_value, str) else raw_value
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            scalar_features[str(key)[:200]] = value
+    raw_tags = event.get("tags")
+    tags = (
+        [str(tag)[:200] for tag in raw_tags[:64] if tag not in (None, "")]
+        if isinstance(raw_tags, list)
+        else []
+    )
     return {
-        "event_id": event.get("id"),
+        "event_id": str(event.get("id") or "")[:256],
         "aggregate": aggregate,
         "routes": routes,
         "features": scalar_features,
-        "tags": [str(tag)[:200] for tag in (event.get("tags") or [])[:64]],
+        "tags": tags,
         "covenant": _compact_oida_covenant(event.get("covenant")),
     }
+
+
+def _compact_external_json(value: Any, *, depth: int = 0) -> Any:
+    """Bound untrusted integration payloads before persisting or returning them."""
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value[:2_000]
+    if depth >= 4:
+        return None
+    if isinstance(value, list):
+        return [_compact_external_json(item, depth=depth + 1) for item in value[:64]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:200]: _compact_external_json(item, depth=depth + 1)
+            for key, item in list(value.items())[:64]
+        }
+    return str(value)[:2_000]
 
 
 def _compact_oida_covenant(value: Any) -> dict[str, Any]:
@@ -504,6 +559,11 @@ def _resolve_metadata_path(raw_path: str | None) -> Path | None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if path.suffix.lower() != ".json":
         raise HTTPException(status_code=422, detail="listener metadata must be JSON")
+    try:
+        if path.stat().st_size > MAX_LISTENER_METADATA_BYTES:
+            raise HTTPException(status_code=413, detail="listener metadata exceeds the 10 MB limit")
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail="listener metadata could not be inspected") from exc
     return path
 
 
@@ -518,8 +578,8 @@ def _persist_relisten_context(
         return None
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        warnings.append(f"metadata_update_failed:{exc}")
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        warnings.append(f"metadata_update_failed:{str(exc)[:500]}")
         return None
     if not isinstance(metadata, dict):
         warnings.append("metadata_update_failed:not_an_object")
@@ -529,10 +589,14 @@ def _persist_relisten_context(
         extensions = {}
         metadata["extensions"] = extensions
     previous = extensions.get("germ.relisten")
-    history = list(previous.get("history") or []) if isinstance(previous, dict) else []
+    previous_history = previous.get("history") if isinstance(previous, dict) else []
+    history = list(previous_history) if isinstance(previous_history, list) else []
     history.append(extension)
     extensions["germ.relisten"] = {"latest": extension, "history": history[-12:]}
-    storage.write_json_atomic(metadata_path, metadata, touch_library=True)
+    try:
+        storage.write_json_atomic(metadata_path, metadata, touch_library=True)
+    except (OSError, TypeError, ValueError) as exc:
+        warnings.append(f"metadata_update_failed:{str(exc)[:500]}")
 
     akousmata = metadata.get("akousmata") if isinstance(metadata.get("akousmata"), dict) else {}
     akousma_id = str(metadata.get("akousma_id") or akousmata.get("akousma_id") or "") or None
@@ -546,9 +610,13 @@ def _persist_relisten_context(
             if not isinstance(record, dict):
                 warnings.append("akousma_relisten_update_failed:record_missing")
                 return akousma_id
-            record_extensions = record.setdefault("extensions", {})
+            record_extensions = record.get("extensions")
+            if not isinstance(record_extensions, dict):
+                record_extensions = {}
+                record["extensions"] = record_extensions
             old = record_extensions.get("germ.relisten")
-            record_history = list(old.get("history") or []) if isinstance(old, dict) else []
+            old_history = old.get("history") if isinstance(old, dict) else []
+            record_history = list(old_history) if isinstance(old_history, list) else []
             record_history.append(extension)
             record_extensions["germ.relisten"] = {
                 "latest": extension,
@@ -556,7 +624,7 @@ def _persist_relisten_context(
             }
             store.put(record)
     except Exception as exc:  # Akousmata is optional; the re-listen remains valid.
-        warnings.append(f"akousma_relisten_update_failed:{exc}")
+        warnings.append(f"akousma_relisten_update_failed:{str(exc)[:500]}")
     return akousma_id
 
 
@@ -574,14 +642,31 @@ def _resolve_audio_path(raw_path: str) -> Path:
 
 
 def _wav_features(path: Path) -> dict[str, Any]:
+    total_frames = 0
+    sum_squares = 0.0
+    peak = 0.0
+    zero_crossings = 0
+    clip_count = 0
+    previous_sample: float | None = None
     try:
         with wave.open(str(path), "rb") as wav:
             channels = wav.getnchannels()
             sample_rate = wav.getframerate()
             sample_width = wav.getsampwidth()
             frames = wav.getnframes()
+            compression = wav.getcomptype()
+            if compression != "NONE":
+                raise HTTPException(status_code=422, detail="compressed WAV audio is not supported")
+            if channels <= 0 or channels > 8:
+                raise HTTPException(status_code=422, detail="audio must have between 1 and 8 channels")
+            if sample_rate <= 0 or sample_rate > 768_000:
+                raise HTTPException(status_code=422, detail="audio sample rate is invalid")
+            if sample_width not in {1, 2, 3, 4}:
+                raise HTTPException(status_code=422, detail="unsupported PCM sample width")
+            if frames <= 0:
+                raise HTTPException(status_code=422, detail="audio file is empty")
             duration = frames / float(sample_rate) if sample_rate else 0.0
-            pcm_bytes = frames * max(1, channels) * max(1, sample_width)
+            pcm_bytes = frames * channels * sample_width
             if duration > settings.listener_score_max_duration_seconds:
                 raise HTTPException(
                     status_code=413,
@@ -599,42 +684,59 @@ def _wav_features(path: Path) -> dict[str, Any]:
                     status_code=413,
                     detail=f"listener scoring is capped at {limit_mb:.0f} MB WAV files",
                 )
-            raw = wav.readframes(frames)
-    except wave.Error as exc:
+            edge_count = min(max(1, frames // 4), max(1, int(sample_rate * 0.02)))
+            start_edge: list[float] = []
+            end_edge: deque[float] = deque(maxlen=edge_count)
+            while total_frames < frames:
+                requested_frames = min(65_536, frames - total_frames)
+                raw = wav.readframes(requested_frames)
+                expected_bytes = requested_frames * channels * sample_width
+                if len(raw) != expected_bytes:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="audio file has truncated sample data",
+                    )
+                samples = _decode_pcm(raw, sample_width)
+                if len(samples) != requested_frames * channels:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="audio file has malformed sample data",
+                    )
+                for index in range(0, len(samples), channels):
+                    sample = sum(samples[index : index + channels]) / channels
+                    sum_squares += sample * sample
+                    peak = max(peak, abs(sample))
+                    if abs(sample) >= 0.995:
+                        clip_count += 1
+                    if previous_sample is not None and (
+                        (previous_sample < 0 <= sample) or (previous_sample >= 0 > sample)
+                    ):
+                        zero_crossings += 1
+                    previous_sample = sample
+                    if len(start_edge) < edge_count:
+                        start_edge.append(sample)
+                    end_edge.append(sample)
+                total_frames += requested_frames
+    except (EOFError, OSError, wave.Error) as exc:
         raise HTTPException(
             status_code=422, detail="Listener scoring currently supports PCM WAV input"
         ) from exc
-    if channels <= 0 or sample_rate <= 0 or frames <= 0:
-        raise HTTPException(status_code=422, detail="audio file is empty")
-    samples = _decode_pcm(raw, sample_width)
-    if channels > 1:
-        mono = array.array("f")
-        for index in range(0, len(samples), channels):
-            mono.append(sum(samples[index : index + channels]) / channels)
-        samples = mono
-    if not samples:
-        raise HTTPException(status_code=422, detail="audio file has no samples")
-    mean_square = sum(sample * sample for sample in samples) / len(samples)
-    rms = math.sqrt(mean_square)
-    peak = max(abs(sample) for sample in samples)
-    zero_crossings = sum(
-        1 for prev, cur in zip(samples, samples[1:]) if (prev < 0 <= cur) or (prev >= 0 > cur)
-    )
-    clip_count = sum(1 for sample in samples if abs(sample) >= 0.995)
-    edge_count = min(len(samples) // 4, max(1, int(sample_rate * 0.02)))
-    start_edge = samples[:edge_count]
-    end_edge = samples[-edge_count:]
+    if total_frames != frames:
+        raise HTTPException(status_code=422, detail="audio file has truncated sample data")
+    rms = math.sqrt(sum_squares / total_frames)
+    end_values = list(end_edge)
     edge_delta = math.sqrt(
-        sum((a - b) * (a - b) for a, b in zip(start_edge, end_edge)) / edge_count
+        sum((a - b) * (a - b) for a, b in zip(start_edge, end_values, strict=True))
+        / edge_count
     )
     return {
-        "duration": round(len(samples) / sample_rate, 6),
+        "duration": round(total_frames / sample_rate, 6),
         "sample_rate": sample_rate,
         "channels": channels,
         "rms": round(rms, 6),
         "peak": round(peak, 6),
-        "zero_crossing_rate": round(zero_crossings / max(1, len(samples) - 1), 6),
-        "clip_ratio": round(clip_count / len(samples), 6),
+        "zero_crossing_rate": round(zero_crossings / max(1, total_frames - 1), 6),
+        "clip_ratio": round(clip_count / total_frames, 6),
         "edge_delta": round(edge_delta, 6),
     }
 
@@ -645,10 +747,23 @@ def _decode_pcm(raw: bytes, sample_width: int) -> array.array:
     if sample_width == 2:
         ints = array.array("h")
         ints.frombytes(raw)
+        if sys.byteorder != "little":
+            ints.byteswap()
         return array.array("f", (sample / 32768.0 for sample in ints))
+    if sample_width == 3:
+        decoded = array.array("f")
+        view = memoryview(raw)
+        for index in range(0, len(raw), 3):
+            sample = view[index] | (view[index + 1] << 8) | (view[index + 2] << 16)
+            if sample & 0x800000:
+                sample -= 0x1000000
+            decoded.append(sample / 8388608.0)
+        return decoded
     if sample_width == 4:
         ints = array.array("i")
         ints.frombytes(raw)
+        if sys.byteorder != "little":
+            ints.byteswap()
         return array.array("f", (sample / 2147483648.0 for sample in ints))
     raise HTTPException(status_code=422, detail="unsupported PCM sample width")
 

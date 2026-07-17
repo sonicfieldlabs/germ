@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from server.identity import PRODUCT_NAME
+from server.schemas import validate_json_compatible
 from server.storage import utc_now_iso
 
 
 def metadata_to_earworm_session(metadata: dict[str, Any]) -> dict[str, Any]:
     """Map one germ organism metadata record to an Earworm context session."""
+    validate_json_compatible(metadata, label="Earworm metadata")
     sound_id = str(metadata.get("sound_id") or metadata.get("id") or "sound_unknown")
     asset_id = f"asset_{sound_id}"
     provenance_id = f"prov_{sound_id}"
@@ -295,7 +299,15 @@ def write_earworm_session(metadata: dict[str, Any], destination: str | Path) -> 
     session = metadata_to_earworm_session(metadata)
     path = Path(destination)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(session, indent=2, sort_keys=True), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(session, indent=2, sort_keys=True, allow_nan=False),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return session
 
 
@@ -353,20 +365,27 @@ def _safe_id(value: str) -> str:
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value if item not in (None, "")]
+    return [
+        str(item).strip()[:500]
+        for item in value[:512]
+        if isinstance(item, (str, int, float))
+        and not isinstance(item, bool)
+        and str(item).strip()
+    ]
 
 
 def _number_or_none(value: Any) -> float | None:
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

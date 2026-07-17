@@ -14,6 +14,15 @@ class GermClient:
         self.base_url = base_url.rstrip("/")
         self.client = httpx.Client(timeout=timeout)
 
+    def close(self) -> None:
+        self.client.close()
+
+    def __enter__(self) -> "GermClient":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
     def health(self) -> dict:
         return self.client.get(f"{self.base_url}/health").raise_for_status().json()
 
@@ -131,9 +140,9 @@ def main() -> int:
     parser.add_argument("--model", default="mock-sine")
     args = parser.parse_args()
 
-    client = GermClient(args.base_url)
-    print(client.health())
-    print(client.generate(args.prompt, provider=args.provider, model=args.model))
+    with GermClient(args.base_url) as client:
+        print(client.health())
+        print(client.generate(args.prompt, provider=args.provider, model=args.model))
     return 0
 
 

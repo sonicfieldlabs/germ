@@ -17,16 +17,31 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server.audio_io import write_sine_wav
+from server.job_runner import JobQueueFullError
 from server.main import app
 from server.providers.stability_api_provider import StabilityAPIProvider
 from server.providers.stable_audio_mlx_provider import StableAudioMLXProvider
 from server.providers.stable_audio_python_provider import StableAudioPythonProvider
-from server.registry import control_registry, registry, settings, storage, strain_registry
+from server.registry import (
+    control_registry,
+    job_runner,
+    registry,
+    settings,
+    storage,
+    strain_registry,
+)
 from server.routes import audio_tools
+from server.routes import image_to_audio as image_routes
 from server.routes import micro as micro_routes
+from server.routes import wavetables as wavetable_routes
 from server.routes.time_render import time_clock_summary
 from server.schemas import GenerationResult, GenerateRequest, InpaintRequest, TimeClock, TimeRenderRequest
-from server.storage import JOB_EVICTION_GRACE_SECONDS, MAX_LINEAGE_CHILD_LOCKS, MAX_TRACKED_JOBS
+from server.storage import (
+    JOB_EVICTION_GRACE_SECONDS,
+    MAX_LINEAGE_CHILD_LOCKS,
+    MAX_TRACKED_JOBS,
+    MAX_TRACKED_JOBS_HARD,
+)
 
 
 client = TestClient(app)
@@ -233,6 +248,38 @@ def test_control_ports_and_routes_round_trip() -> None:
         },
     )
     assert rejected_response.status_code == 422
+
+
+def test_control_events_reject_nonfinite_values_before_persistence() -> None:
+    original_count = len(control_registry.events())
+    response = client.post(
+        "/control/events",
+        content='{"kind":"event","source":"pytest","value":NaN}',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert len(control_registry.events()) == original_count
+
+
+def test_control_graph_does_not_follow_metadata_symlinks(tmp_path: Path) -> None:
+    external = tmp_path / "external-control-metadata.json"
+    external.write_text(
+        json.dumps({"sound_id": "pytest_external_symlink_sound", "prompt": "must stay private"}),
+        encoding="utf-8",
+    )
+    link = settings.metadata_dir / "pytest_external_control_symlink.json"
+    link.symlink_to(external)
+    try:
+        response = client.get("/control/genetic/control-graph?limit=1000")
+    finally:
+        link.unlink(missing_ok=True)
+
+    assert response.status_code == 200
+    assert all(
+        node["id"] != "pytest_external_symlink_sound"
+        for node in response.json()["nodes"]
+    )
 
 
 def test_control_audio_analysis_and_cv_safe_render() -> None:
@@ -636,6 +683,32 @@ def test_micro_matter_profile_reuses_cached_analysis(monkeypatch: pytest.MonkeyP
     assert calls == 1
 
 
+def test_micro_analysis_cache_evicts_single_oversized_entry_without_double_pop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = settings.audio_dir / "pytest_micro_cache_pressure.wav"
+    write_sine_wav(source_path, duration=0.25)
+    with micro_routes._MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
+        micro_routes._MATTER_PROFILE_ANALYSIS_CACHE.clear()
+    monkeypatch.setattr(micro_routes, "MATTER_PROFILE_CACHE_LIMIT", 1)
+    monkeypatch.setattr(micro_routes, "MATTER_PROFILE_CACHE_MAX_POINTS", 1)
+
+    response = client.post(
+        "/micro/matter-profile",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "module": "microscope",
+            "window_ms": 20,
+            "hop_ms": 10,
+            "output_name": "pytest_micro_cache_pressure_profile",
+        },
+    )
+
+    assert response.status_code == 200
+    with micro_routes._MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
+        assert not micro_routes._MATTER_PROFILE_ANALYSIS_CACHE
+
+
 def test_micro_biomes_save_list_load_delete() -> None:
     payload = {
         "name": "pytest mist biome",
@@ -663,6 +736,25 @@ def test_micro_biomes_save_list_load_delete() -> None:
     deleted = client.delete(f"/micro/biomes/{biome_id}")
     assert deleted.status_code == 200
     assert deleted.json()["status"] == "deleted"
+
+
+def test_micro_biomes_do_not_follow_symlinks(tmp_path: Path) -> None:
+    external = tmp_path / "external-biome.json"
+    external.write_text(
+        json.dumps({"id": "pytest_external_biome", "name": "outside", "state": {}}),
+        encoding="utf-8",
+    )
+    link = settings.micro_biome_dir / "pytest_external_biome.json"
+    link.symlink_to(external)
+    try:
+        listed = client.get("/micro/biomes")
+        loaded = client.get("/micro/biomes/pytest_external_biome")
+    finally:
+        link.unlink(missing_ok=True)
+
+    assert listed.status_code == 200
+    assert all(item["id"] != "pytest_external_biome" for item in listed.json())
+    assert loaded.status_code == 404
 
 
 def test_micro_biome_rejects_oversized_state(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1021,6 +1113,68 @@ def test_wavetable_prompt_route_wraps_prompt_and_creates_table() -> None:
     assert contract["user_prompt"] == "glassy metallic vowel"
     assert "no rhythm" in contract["prompt"]
     assert wavetable_metadata["operation_params"]["modulators"][0]["target_path"] == "prompt"
+
+
+def test_wavetable_prompt_rejects_mismatched_provider_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def mismatched_result(*args, **kwargs) -> GenerationResult:  # noqa: ARG001
+        return GenerationResult(
+            job_id="pytest-mismatched-wavetable-provider",
+            status="done",
+            audio_files=["output/audio/provider-only.wav"],
+            metadata_files=[],
+            provider="mock",
+            model="mock-sine",
+            mode="text-to-audio",
+        )
+
+    monkeypatch.setattr(wavetable_routes, "run_provider_method", mismatched_result)
+    response = client.post(
+        "/wavetables/prompt",
+        json={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "artifact mismatch",
+            "duration": 0.2,
+            "frame_count": 4,
+            "frame_size": 512,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "error"
+    assert "incomplete output artifacts" in response.json()["error"]
+
+
+def test_wavetable_discovery_does_not_follow_metadata_symlinks(tmp_path: Path) -> None:
+    wavetable_id = "wt_ExternalSymlink"
+    external = tmp_path / "external-wavetable.json"
+    external.write_text(
+        json.dumps(
+            {
+                "type": "germ_wavetable",
+                "id": wavetable_id,
+                "name": "outside",
+                "frame_size": 512,
+                "frame_count": 1,
+                "sample_rate": 44_100,
+                "data_path": "output/wavetables/tables/outside.gwt.bin",
+            }
+        ),
+        encoding="utf-8",
+    )
+    link = settings.wavetable_metadata_dir / f"outside_{wavetable_id}.json"
+    link.symlink_to(external)
+    try:
+        listed = client.get("/wavetables")
+        loaded = client.get(f"/wavetables/{wavetable_id}")
+    finally:
+        link.unlink(missing_ok=True)
+
+    assert listed.status_code == 200
+    assert all(item["id"] != wavetable_id for item in listed.json())
+    assert loaded.status_code == 404
 
 
 def test_wavetable_mutation_creates_child_lineage() -> None:
@@ -1775,6 +1929,69 @@ def test_listener_scores_wav_and_rejects_external_path(tmp_path: Path) -> None:
     assert too_long.status_code == 413
 
 
+def test_listener_scores_24_bit_pcm_without_loading_the_whole_file() -> None:
+    audio_path = settings.audio_dir / "pytest_listener_24bit.wav"
+    sample_rate = 8_000
+    samples = [int(2_000_000 * math.sin(2 * math.pi * 220 * index / sample_rate)) for index in range(800)]
+    frames = b"".join(sample.to_bytes(3, "little", signed=True) for sample in samples)
+    with wave.open(str(audio_path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(3)
+        wav.setframerate(sample_rate)
+        wav.writeframes(frames)
+
+    response = client.post(
+        "/listener/score",
+        json={
+            "provider": "mock",
+            "prompt": "24 bit test tone",
+            "audio_path": storage.relative_path(audio_path),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["features"]["channels"] == 1
+    assert response.json()["features"]["peak"] > 0
+
+
+def test_listener_relisten_rejects_non_object_oida_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_path = settings.audio_dir / "pytest_oida_non_object.wav"
+    write_sine_wav(audio_path, duration=0.1)
+
+    class FakeResponse:
+        status_code = 200
+        text = "[]"
+        is_success = True
+
+        @staticmethod
+        def json() -> list:
+            return []
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:  # noqa: ARG002
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:  # noqa: ANN002
+            return None
+
+        def post(self, url: str, *, json: dict) -> FakeResponse:  # noqa: ARG002
+            return FakeResponse()
+
+    monkeypatch.setattr("server.listener.httpx.Client", FakeClient)
+    response = client.post(
+        "/listener/relisten",
+        json={"audio_path": storage.relative_path(audio_path)},
+    )
+
+    assert response.status_code == 502
+    assert "non-object response" in response.json()["detail"]
+
+
 def test_audio_metadata_update_persists_petri_ratings() -> None:
     audio_path = settings.audio_dir / "pytest_petri_ratings.wav"
     write_sine_wav(audio_path, duration=0.2, amplitude=0.2)
@@ -2241,6 +2458,37 @@ def test_submit_job_runs_mock_generate_and_records_status() -> None:
     assert job["metrics"]["elapsed_seconds"] >= 0
 
 
+def test_submit_job_reports_bounded_queue_pressure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_jobs = set(storage.jobs)
+
+    def reject_submission(*args, **kwargs) -> None:  # noqa: ARG001
+        raise JobQueueFullError("background job queue is full")
+
+    monkeypatch.setattr(job_runner, "submit", reject_submission)
+    response = client.post(
+        "/jobs/submit",
+        json={
+            "mode": "text-to-audio",
+            "request": {
+                "provider": "mock",
+                "model": "mock-sine",
+                "prompt": "queue pressure",
+                "duration": 0.25,
+            },
+        },
+    )
+
+    assert response.status_code == 429
+    created_jobs = set(storage.jobs) - existing_jobs
+    assert len(created_jobs) == 1
+    job = storage.get_job(created_jobs.pop())
+    assert job is not None
+    assert job.status == "error"
+    assert job.error == "background job queue is full"
+
+
 def test_cancel_missing_job_returns_404() -> None:
     response = client.post("/jobs/not-a-job/cancel")
     assert response.status_code == 404
@@ -2360,6 +2608,33 @@ def test_job_eviction_keeps_recent_terminal_jobs_during_grace_window() -> None:
         storage.job_listeners.update(original_listeners)
 
 
+def test_job_eviction_hard_caps_recent_terminal_bursts() -> None:
+    original_jobs = dict(storage.jobs)
+    original_listeners = dict(storage.job_listeners)
+    try:
+        storage.jobs.clear()
+        storage.job_listeners.clear()
+        recent = datetime.now(timezone.utc).isoformat()
+        for index in range(MAX_TRACKED_JOBS_HARD + 5):
+            storage.jobs[f"recent-burst-{index}"] = {
+                "job_id": f"recent-burst-{index}",
+                "status": "done",
+                "created_at": recent,
+                "updated_at": recent,
+            }
+
+        storage._evict_old_jobs()
+
+        assert len(storage.jobs) == MAX_TRACKED_JOBS_HARD
+        assert "recent-burst-0" not in storage.jobs
+        assert f"recent-burst-{MAX_TRACKED_JOBS_HARD + 4}" in storage.jobs
+    finally:
+        storage.jobs.clear()
+        storage.jobs.update(original_jobs)
+        storage.job_listeners.clear()
+        storage.job_listeners.update(original_listeners)
+
+
 def test_lineage_child_lock_cache_is_lru_bounded(tmp_path: Path) -> None:
     original_locks = storage._lineage_child_locks.copy()
     try:
@@ -2373,6 +2648,45 @@ def test_lineage_child_lock_cache_is_lru_bounded(tmp_path: Path) -> None:
     finally:
         storage._lineage_child_locks.clear()
         storage._lineage_child_locks.update(original_locks)
+
+
+def test_metadata_commit_precedes_optional_akousmata_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory_called = False
+
+    def fail_local_commit(path: Path, data: dict) -> None:  # noqa: ARG001
+        raise OSError("local metadata unavailable")
+
+    def track_memory_write(**kwargs) -> dict:  # noqa: ARG001
+        nonlocal memory_called
+        memory_called = True
+        return {"status": "remembered", "requested": True, "akousma_id": "unexpected"}
+
+    monkeypatch.setattr(storage, "_write_json_atomic", fail_local_commit)
+    monkeypatch.setattr(storage, "_remember_generation_as_akousma", track_memory_write)
+    request = GenerateRequest(
+        provider="mock",
+        model="mock-sine",
+        prompt="local transaction first",
+        duration=0.25,
+        remember_to_akousmata=True,
+    )
+
+    with pytest.raises(OSError, match="local metadata unavailable"):
+        storage.write_metadata(
+            metadata_path=settings.metadata_dir / "pytest_local_commit_first.json",
+            request=request,
+            mode="text-to-audio",
+            provider="mock",
+            model="mock-sine",
+            seed=1,
+            output_audio_path=settings.audio_dir / "pytest_local_commit_first.wav",
+            sample_rate=44_100,
+            status="done",
+        )
+
+    assert memory_called is False
 
 
 def test_mock_audio_to_audio_accepts_input_path() -> None:
@@ -2674,6 +2988,19 @@ def test_metadata_read_route_restricts_paths_and_foreign_origins() -> None:
     )
 
 
+def test_metadata_read_rejects_nonfinite_artifacts_with_json_safe_error() -> None:
+    metadata_path = settings.metadata_dir / "pytest_nonfinite_metadata.json"
+    metadata_path.write_text('{"value": NaN}', encoding="utf-8")
+
+    response = client.post(
+        "/metadata/read",
+        json={"path": storage.relative_path(metadata_path)},
+    )
+
+    assert response.status_code == 422
+    assert "non-finite" in response.json()["detail"]
+
+
 def test_audio_to_audio_invalid_json_returns_400() -> None:
     response = client.post(
         "/audio-to-audio",
@@ -2769,6 +3096,52 @@ def test_multipart_audio_to_audio_preserves_lora_metadata(tmp_path: Path) -> Non
     metadata_path = Path(response.json()["metadata_files"][0])
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["lora"] == [{"path": "/tmp/example.safetensors", "strength": 0.7}]
+
+
+def test_multipart_prompt_like_boolean_remains_text(tmp_path: Path) -> None:
+    input_path = tmp_path / "boolean-prompt.wav"
+    write_sine_wav(input_path, duration=0.25)
+    response = client.post(
+        "/audio-to-audio",
+        data={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "true",
+            "duration": "0.5",
+            "init_noise_level": "0.45",
+        },
+        files={"file": ("boolean-prompt.wav", input_path.read_bytes(), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    metadata = json.loads(Path(response.json()["metadata_files"][0]).read_text(encoding="utf-8"))
+    assert metadata["prompt"] == "true"
+
+
+def test_multipart_generation_rejects_multiple_uploads_before_saving(tmp_path: Path) -> None:
+    input_path = tmp_path / "multiple-upload.wav"
+    write_sine_wav(input_path, duration=0.1)
+    payload = input_path.read_bytes()
+    before = set(settings.upload_dir.iterdir())
+
+    response = client.post(
+        "/audio-to-audio",
+        data={
+            "provider": "mock",
+            "model": "mock-sine",
+            "prompt": "two uploads",
+            "duration": "0.5",
+            "init_noise_level": "0.45",
+        },
+        files=[
+            ("file", ("first.wav", payload, "audio/wav")),
+            ("file", ("second.wav", payload, "audio/wav")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert "only one audio upload" in response.json()["detail"]
+    assert set(settings.upload_dir.iterdir()) == before
 
 
 def test_multipart_audio_to_audio_transient_upload_is_cleaned_and_hidden(tmp_path: Path) -> None:
@@ -2926,10 +3299,45 @@ def test_audio_import_handles_malformed_optional_numeric_metadata(tmp_path: Path
     )
     assert response.status_code == 200
     metadata = json.loads(Path(response.json()["metadata_files"][0]).read_text(encoding="utf-8"))
-    assert metadata["duration"] == 0.1
+    assert metadata["duration"] == pytest.approx(0.25)
     assert metadata["seed"] == -1
     assert metadata["steps"] == 1
     assert metadata["cfg_scale"] == 1.0
+
+
+def test_audio_import_rejects_excessively_nested_metadata_before_upload(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "nested-metadata.wav"
+    write_sine_wav(input_path, duration=0.1)
+    nested: list = []
+    cursor = nested
+    for _ in range(40):
+        child: list = []
+        cursor.append(child)
+        cursor = child
+
+    response = client.post(
+        "/audio/import",
+        data={"metadata": json.dumps({"organism": nested})},
+        files={"file": ("nested-metadata.wav", input_path.read_bytes(), "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    assert "nested too deeply" in response.json()["detail"]
+
+
+def test_audio_import_rejects_extension_content_mismatch_without_orphan() -> None:
+    before = set(settings.upload_dir.iterdir())
+    response = client.post(
+        "/audio/import",
+        data={"metadata": "{}"},
+        files={"file": ("not-really.wav", b"not a wav file", "audio/wav")},
+    )
+
+    assert response.status_code == 422
+    assert "does not match" in response.json()["detail"]
+    assert set(settings.upload_dir.iterdir()) == before
 
 
 def test_audio_import_rejects_oversized_upload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2973,7 +3381,7 @@ def test_image_to_audio_does_not_use_cloud_without_explicit_opt_in(
     response = client.post(
         "/image-to-audio/analyze",
         json={
-            "image_base64": base64.b64encode(b"image").decode("ascii"),
+            "image_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode("ascii"),
             "mime_type": "image/png",
             "mode": "vision",
         },
@@ -2983,6 +3391,57 @@ def test_image_to_audio_does_not_use_cloud_without_explicit_opt_in(
     assert body["cloud_vision"] is False
     assert body["cloud_vision_enabled"] is False
     assert body["analysis_provider"] == "local_fallback"
+
+
+def test_image_to_audio_normalizes_untrusted_cloud_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_analysis(*args, **kwargs) -> dict:  # noqa: ARG001
+        return {
+            "imageSummary": "x" * 4_000,
+            "visualElements": [
+                {
+                    "element": "e" * 1_000,
+                    "sonicPotential": "s" * 2_000,
+                    "category": "c" * 200,
+                }
+                for _ in range(40)
+            ],
+            "acousticSpace": "room" * 1_000,
+            "materialTextures": ["texture" * 100 for _ in range(80)],
+            "mood": {
+                "primary": "focused",
+                "secondary": ["secondary" * 50 for _ in range(40)],
+            },
+            "soundCards": [
+                {
+                    "title": "title" * 100,
+                    "prompt": "prompt" * 1_000,
+                    "durationSeconds": float("nan"),
+                    "loop": "true",
+                }
+                for _ in range(20)
+            ],
+        }
+
+    monkeypatch.setattr(image_routes, "_gemini_analysis", fake_analysis)
+    response = client.post(
+        "/image-to-audio/analyze",
+        json={
+            "image_base64": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode("ascii"),
+            "mime_type": "image/png",
+            "mode": "vision",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["analysis_provider"] == "gemini"
+    assert len(body["imageSummary"]) == 2_000
+    assert len(body["visualElements"]) == 32
+    assert len(body["soundCards"]) == 16
+    assert body["duration"] == 6.0
+    assert body["soundCards"][0]["loop"] is False
 
 
 def test_mlx_command_includes_steps_and_validates_model() -> None:
@@ -3072,8 +3531,8 @@ def test_stability_api_provider_submits_polls_and_records_actual_seed(
         def __exit__(self, *args) -> None:  # noqa: ANN002
             return None
 
-        def post(self, url: str, *, data: dict, files: dict) -> FakeResponse:
-            self.posts.append({"url": url, "data": data, "files": files})
+        def post(self, url: str, *, files: dict) -> FakeResponse:
+            self.posts.append({"url": url, "files": files})
             return FakeResponse(202, body={"id": "audio_generation_1"})
 
         def get(self, url: str) -> FakeResponse:
@@ -3106,8 +3565,8 @@ def test_stability_api_provider_submits_polls_and_records_actual_seed(
     assert result.seed == 91_234
     assert Path(result.audio_files[0]).read_bytes() == wav_bytes
     assert FakeClient.posts[0]["url"].endswith("/text-to-audio")
-    assert FakeClient.posts[0]["data"]["model"] == "stable-audio-3"
-    assert FakeClient.posts[0]["data"]["output_format"] == "wav"
+    assert FakeClient.posts[0]["files"]["model"] == (None, "stable-audio-3")
+    assert FakeClient.posts[0]["files"]["output_format"] == (None, "wav")
     metadata = json.loads(Path(result.metadata_files[0]).read_text(encoding="utf-8"))
     assert metadata["api_generation_id"] == "audio_generation_1"
     assert metadata["api_credit_estimate"] == 26
@@ -3122,6 +3581,24 @@ def test_stability_api_provider_rejects_non_wav_success_payload(tmp_path: Path) 
         StabilityAPIProvider._write_audio_atomic(output, b'{"error":"not audio"}')
 
     assert not output.exists()
+
+
+def test_stability_api_provider_rejects_truncated_wav_payload(tmp_path: Path) -> None:
+    source = tmp_path / "complete.wav"
+    target = tmp_path / "truncated-output.wav"
+    write_sine_wav(source, duration=0.1, sample_rate=44_100)
+
+    with pytest.raises(OSError, match="invalid WAV"):
+        StabilityAPIProvider._write_audio_atomic(target, source.read_bytes()[:-8])
+
+    assert not target.exists()
+
+
+def test_stability_api_seed_header_rejects_out_of_range_values() -> None:
+    assert StabilityAPIProvider._header_seed("0") == 0
+    assert StabilityAPIProvider._header_seed("4294967294") == 4_294_967_294
+    assert StabilityAPIProvider._header_seed("-1") is None
+    assert StabilityAPIProvider._header_seed("4294967295") is None
 
 
 def test_stability_api_multi_range_rejects_short_intermediate_before_submission() -> None:

@@ -28,7 +28,7 @@ def providers() -> dict[str, object]:
                 "performs_listening": False,
             },
             {
-                "id": "local_signal",
+                "id": "local",
                 "label": "Local Signal Check",
                 "available": True,
                 "requires_key": False,

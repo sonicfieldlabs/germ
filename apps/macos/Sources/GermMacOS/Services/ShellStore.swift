@@ -66,7 +66,8 @@ final class ShellStore: ObservableObject {
             UserDefaults.standard.string(forKey: "germAccentHex")
         )
         let stored = UserDefaults.standard.string(forKey: "germDaemonBaseURL")
-        daemonBaseURL = (stored?.isEmpty == false ? stored! : "http://127.0.0.1:5178")
+        let cleanedStored = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        daemonBaseURL = cleanedStored.isEmpty ? "http://127.0.0.1:5178" : cleanedStored
         // Quit stops only the daemon this shell started; externally started
         // daemons are observed, never owned. The managed process helper also
         // watches this app's PID so an unexpected exit cannot orphan uvicorn.
@@ -94,8 +95,8 @@ final class ShellStore: ObservableObject {
     }
 
     var dashboardURL: String {
-        let base = daemonBaseURL.hasSuffix("/") ? String(daemonBaseURL.dropLast()) : daemonBaseURL
-        return "\(base)/dashboard"
+        guard let baseURL = normalizedDaemonURL else { return "about:blank" }
+        return baseURL.appendingPathComponent("dashboard").absoluteString
     }
 
     var preferredColorScheme: ColorScheme {
@@ -147,8 +148,10 @@ final class ShellStore: ObservableObject {
     }
 
     func refresh() async {
-        guard let url = URL(string: "\(daemonBaseURL)/health") else {
+        guard let url = normalizedDaemonURL?.appendingPathComponent("health") else {
             daemonOnline = false
+            health = nil
+            errorMessage = "Daemon base URL must be a valid HTTP or HTTPS URL."
             return
         }
         do {
@@ -180,8 +183,16 @@ final class ShellStore: ObservableObject {
         isStartingDaemon = true
         defer { isStartingDaemon = false }
         do {
-            let port = URL(string: daemonBaseURL)?.port ?? 5178
-            try supervisor.start(port: port)
+            guard let url = normalizedDaemonURL,
+                  url.scheme?.lowercased() == "http",
+                  let host = url.host,
+                  ["localhost", "127.0.0.1", "::1"].contains(host.lowercased()) else {
+                throw DaemonSupervisorError.launchFailed(
+                    "Managed startup requires a local HTTP base URL."
+                )
+            }
+            let port = url.port ?? 80
+            try supervisor.start(host: host, port: port)
             managedDaemonRunning = true
             // uvicorn needs a moment before /health responds.
             for _ in 0..<10 {
@@ -236,6 +247,27 @@ final class ShellStore: ObservableObject {
         if daemonLog.count > 200 {
             daemonLog.removeFirst(daemonLog.count - 200)
         }
+    }
+
+    private var normalizedDaemonURL: URL? {
+        let trimmed = daemonBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/" else {
+            return nil
+        }
+        var path = components.path
+        while path.count > 1 && path.hasSuffix("/") {
+            path.removeLast()
+        }
+        components.path = path
+        return components.url
     }
 
     /// The shell stops only daemons it started itself; an externally started

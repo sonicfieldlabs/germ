@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -84,3 +87,28 @@ def test_sessions_update_preserves_created_at() -> None:
     assert body["session"]["created_at"] == created_at
     assert body["session"]["node_count"] == 2
     client.delete(f"/sessions/{body['session']['id']}")
+
+
+def test_sessions_do_not_follow_symlinks(tmp_path: Path) -> None:
+    external = tmp_path / "external-session.json"
+    external.write_text(
+        json.dumps(
+            {
+                "id": "pytest_external_session",
+                "name": "outside",
+                "graph": _sample_graph(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    link = session_routes._session_dir() / "pytest_external_session.json"
+    link.symlink_to(external)
+    try:
+        listed = client.get("/sessions")
+        loaded = client.get("/sessions/pytest_external_session")
+    finally:
+        link.unlink(missing_ok=True)
+
+    assert listed.status_code == 200
+    assert all(item["id"] != "pytest_external_session" for item in listed.json())
+    assert loaded.status_code == 404

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import os
 import re
 from typing import Any, Literal
@@ -26,10 +27,10 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 
 class ImageToAudioAnalyzeRequest(BaseModel):
     image_base64: str = Field(min_length=1)
-    mime_type: str = "image/png"
+    mime_type: str = Field(default="image/png", min_length=1, max_length=64)
     mode: Literal["vision", "spectrogram"] = "vision"
-    interpretation_mode: str = "cinematic"
-    use_case: str = "sound_design"
+    interpretation_mode: str = Field(default="cinematic", min_length=1, max_length=100)
+    use_case: str = Field(default="sound_design", min_length=1, max_length=100)
 
 
 def _vision_prompt(mode: str, use_case: str) -> str:
@@ -82,6 +83,83 @@ def _mock_analysis() -> dict[str, Any]:
     }
 
 
+def _clean_text(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def _normalize_analysis(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return _mock_analysis()
+    raw_elements = value.get("visualElements")
+    elements = []
+    if isinstance(raw_elements, list):
+        for item in raw_elements[:32]:
+            if not isinstance(item, dict):
+                continue
+            elements.append(
+                {
+                    "element": _clean_text(item.get("element"), 500),
+                    "sonicPotential": _clean_text(item.get("sonicPotential"), 1_000),
+                    "category": _clean_text(item.get("category"), 100),
+                }
+            )
+    raw_textures = value.get("materialTextures")
+    textures = (
+        [_clean_text(item, 200) for item in raw_textures[:64] if _clean_text(item, 200)]
+        if isinstance(raw_textures, list)
+        else []
+    )
+    raw_mood = value.get("mood") if isinstance(value.get("mood"), dict) else {}
+    raw_secondary = raw_mood.get("secondary")
+    mood = {
+        "primary": _clean_text(raw_mood.get("primary"), 200),
+        "secondary": (
+            [_clean_text(item, 200) for item in raw_secondary[:32] if _clean_text(item, 200)]
+            if isinstance(raw_secondary, list)
+            else []
+        ),
+    }
+    raw_cards = value.get("soundCards")
+    cards = []
+    if isinstance(raw_cards, list):
+        for item in raw_cards[:16]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                duration = float(item.get("durationSeconds", 6))
+            except (TypeError, ValueError, OverflowError):
+                duration = 6.0
+            if not math.isfinite(duration):
+                duration = 6.0
+            cards.append(
+                {
+                    "title": _clean_text(item.get("title"), 200),
+                    "prompt": _clean_text(item.get("prompt"), 2_000),
+                    "durationSeconds": max(0.1, min(380.0, duration)),
+                    "loop": item.get("loop") is True,
+                }
+            )
+    fallback = _mock_analysis()
+    if not cards:
+        cards = fallback["soundCards"]
+    return {
+        "imageSummary": _clean_text(value.get("imageSummary"), 2_000)
+        or fallback["imageSummary"],
+        "visualElements": elements or fallback["visualElements"],
+        "acousticSpace": _clean_text(value.get("acousticSpace"), 2_000)
+        or fallback["acousticSpace"],
+        "materialTextures": textures or fallback["materialTextures"],
+        "mood": mood if mood["primary"] or mood["secondary"] else fallback["mood"],
+        "soundCards": cards,
+        **({"fallback": bool(value.get("fallback"))} if "fallback" in value else {}),
+        **(
+            {"vision_error": _clean_text(value.get("vision_error"), 500)}
+            if value.get("vision_error")
+            else {}
+        ),
+    }
+
+
 def _json_from_text(text: str) -> dict[str, Any] | None:
     stripped = text.strip()
     stripped = re.sub(r"^```(?:json)?", "", stripped).strip()
@@ -89,18 +167,18 @@ def _json_from_text(text: str) -> dict[str, Any] | None:
     try:
         value = json.loads(stripped)
         return value if isinstance(value, dict) else None
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         match = re.search(r"\{.*\}", stripped, flags=re.S)
         if not match:
             return None
         try:
             value = json.loads(match.group(0))
             return value if isinstance(value, dict) else None
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             return None
 
 
-def _validate_inline_image(request: ImageToAudioAnalyzeRequest) -> str:
+def _validate_inline_image(request: ImageToAudioAnalyzeRequest) -> tuple[str, str]:
     mime_type = request.mime_type.lower().strip()
     if mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
         raise HTTPException(status_code=422, detail="Unsupported image type.")
@@ -121,7 +199,17 @@ def _validate_inline_image(request: ImageToAudioAnalyzeRequest) -> str:
             status_code=413,
             detail=f"image exceeds the {settings.max_image_upload_bytes // (1024 * 1024)} MB limit",
         )
-    return image_base64
+    mime_type = "image/jpeg" if mime_type == "image/jpg" else mime_type
+    signatures_match = {
+        "image/jpeg": decoded.startswith(b"\xff\xd8\xff"),
+        "image/png": decoded.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": len(decoded) >= 12
+        and decoded.startswith(b"RIFF")
+        and decoded[8:12] == b"WEBP",
+    }
+    if not signatures_match[mime_type]:
+        raise HTTPException(status_code=422, detail="image data does not match its MIME type")
+    return image_base64, mime_type
 
 
 async def _gemini_analysis(
@@ -148,11 +236,21 @@ async def _gemini_analysis(
                 ]
             }
         ],
-        "generationConfig": {"responseMimeType": "application/json"},
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 2048,
+        },
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.gemini_model}:generateContent"
+    )
     async with httpx.AsyncClient(timeout=35) as client:
-        response = await client.post(url, json=payload)
+        response = await client.post(
+            url,
+            headers={"x-goog-api-key": api_key.strip()},
+            json=payload,
+        )
         response.raise_for_status()
         data = response.json()
     text = (
@@ -166,8 +264,10 @@ async def _gemini_analysis(
 
 @router.post("/image-to-audio/analyze")
 async def analyze_image_to_audio(request: ImageToAudioAnalyzeRequest) -> dict[str, Any]:
-    image_base64 = _validate_inline_image(request)
-    request = request.model_copy(update={"image_base64": image_base64})
+    image_base64, mime_type = _validate_inline_image(request)
+    request = request.model_copy(
+        update={"image_base64": image_base64, "mime_type": mime_type}
+    )
     if request.mode == "spectrogram":
         return {
             **_mock_analysis(),
@@ -193,6 +293,7 @@ async def analyze_image_to_audio(request: ImageToAudioAnalyzeRequest) -> dict[st
         analysis = {**_mock_analysis(), "vision_error": f"{type(exc).__name__}: analysis failed."}
     if not analysis:
         analysis = _mock_analysis()
+    analysis = _normalize_analysis(analysis)
     cards = analysis.get("soundCards") if isinstance(analysis.get("soundCards"), list) else []
     primary = cards[0] if cards and isinstance(cards[0], dict) else {}
     return {

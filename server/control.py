@@ -11,6 +11,9 @@ from server.storage import StorageManager, utc_now_iso
 
 
 CONTROL_EVENT_LIMIT = 512
+CONTROL_ROUTE_LIMIT = 512
+CONTROL_CV_PROFILE_LIMIT = 256
+CONTROL_STATE_MAX_BYTES = 10 * 1024 * 1024
 
 
 def default_control_ports() -> list[ControlPort]:
@@ -221,6 +224,8 @@ class ControlRegistry:
         self._validate_route_ports(route)
         with self._lock:
             routes = self._load_routes()
+            if not any(item.id == route.id for item in routes) and len(routes) >= CONTROL_ROUTE_LIMIT:
+                raise ValueError(f"control route limit reached ({CONTROL_ROUTE_LIMIT})")
             route = route.model_copy(
                 update={
                     "id": route.id or f"route_{uuid4().hex[:12]}",
@@ -331,6 +336,11 @@ class ControlRegistry:
         now = utc_now_iso()
         with self._lock:
             profiles = self._load_cv_profiles()
+            if (
+                not any(item.id == profile.id for item in profiles)
+                and len(profiles) >= CONTROL_CV_PROFILE_LIMIT
+            ):
+                raise ValueError(f"CV profile limit reached ({CONTROL_CV_PROFILE_LIMIT})")
             profile = profile.model_copy(
                 update={
                     "id": profile.id or f"cv_profile_{uuid4().hex[:12]}",
@@ -385,14 +395,16 @@ class ControlRegistry:
         if not self.routes_path.exists():
             return []
         try:
+            if self.routes_path.is_symlink() or self.routes_path.stat().st_size > CONTROL_STATE_MAX_BYTES:
+                return []
             data = json.loads(self.routes_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             return []
         raw_routes = data.get("routes") if isinstance(data, dict) else data
         if not isinstance(raw_routes, list):
             return []
         routes: list[ControlRoute] = []
-        for raw in raw_routes:
+        for raw in raw_routes[:CONTROL_ROUTE_LIMIT]:
             try:
                 routes.append(ControlRoute(**raw))
             except Exception:
@@ -414,8 +426,10 @@ class ControlRegistry:
         if not self.events_path.exists():
             return []
         try:
+            if self.events_path.is_symlink() or self.events_path.stat().st_size > CONTROL_STATE_MAX_BYTES:
+                return []
             data = json.loads(self.events_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             return []
         raw_events = data.get("events") if isinstance(data, dict) else data
         if not isinstance(raw_events, list):
@@ -439,14 +453,19 @@ class ControlRegistry:
         if not self.cv_profiles_path.exists():
             return []
         try:
+            if (
+                self.cv_profiles_path.is_symlink()
+                or self.cv_profiles_path.stat().st_size > CONTROL_STATE_MAX_BYTES
+            ):
+                return []
             data = json.loads(self.cv_profiles_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             return []
         raw_profiles = data.get("profiles") if isinstance(data, dict) else data
         if not isinstance(raw_profiles, list):
             return []
         profiles: list[ControlCVProfile] = []
-        for raw in raw_profiles:
+        for raw in raw_profiles[:CONTROL_CV_PROFILE_LIMIT]:
             try:
                 profiles.append(ControlCVProfile(**raw))
             except Exception:
@@ -483,4 +502,8 @@ class ControlRegistry:
             resolved.relative_to(self.control_dir.resolve())
         except ValueError as exc:
             raise PermissionError(f"control artifact must be inside {self.control_dir}") from exc
+        if resolved.suffix.lower() != ".json":
+            raise ValueError("control artifact must be a JSON file")
+        if resolved.stat().st_size > CONTROL_STATE_MAX_BYTES:
+            raise ValueError("control artifact exceeds the 10 MB limit")
         return resolved

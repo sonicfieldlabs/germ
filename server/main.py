@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from server.config import get_settings
-from server.identity import LEGACY_ENGINE_NAME, PRODUCT_DESCRIPTION, PRODUCT_NAME
+from server.identity import LEGACY_ENGINE_NAME, PRODUCT_DESCRIPTION, PRODUCT_NAME, __version__
 from server.routes import (
     akousma,
     audio_tools,
@@ -48,7 +49,7 @@ app = FastAPI(
         f"{PRODUCT_NAME} FastAPI sidecar for local Stable Audio 3 providers, "
         f"{PRODUCT_DESCRIPTION}, and legacy {LEGACY_ENGINE_NAME} clients."
     ),
-    version="0.2.0",
+    version=__version__,
     docs_url=None,
 )
 
@@ -69,6 +70,37 @@ app.add_middleware(
     allowed_hosts=settings.allowed_hosts,
 )
 app.add_middleware(PerformanceMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    _request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """Return JSON-safe validation details without reflecting raw request data."""
+    details = []
+    errors = exc.errors()
+    for error in errors[:100]:
+        location = [
+            value if isinstance(value, int) else str(value)[:500]
+            for value in error.get("loc", ())
+        ]
+        details.append(
+            {
+                "type": str(error.get("type") or "value_error")[:200],
+                "loc": location,
+                "msg": str(error.get("msg") or "Invalid request value")[:2_000],
+            }
+        )
+    if len(errors) > 100:
+        details.append(
+            {
+                "type": "too_many_errors",
+                "loc": ["body"],
+                "msg": f"Request has {len(errors)} validation errors; showing the first 100.",
+            }
+        )
+    return JSONResponse(status_code=422, content={"detail": details})
 
 app.include_router(health.router)
 app.include_router(diagnostics.router)

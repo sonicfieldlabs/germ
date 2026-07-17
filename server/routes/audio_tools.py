@@ -15,11 +15,17 @@ from pydantic import BaseModel, Field, field_validator
 
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_NAME, SOUND_MATTER_CONCEPT
 from server.registry import settings, storage
-from server.schemas import GenerateRequest, GenerationResult
+from server.schemas import (
+    GenerateRequest,
+    GenerationResult,
+    JSONRequestModel,
+    validate_json_compatible,
+)
 from server.storage import safe_stem, utc_now_iso
 
 
 router = APIRouter()
+MAX_AUDIO_TOOL_METADATA_BYTES = 10_000_000
 
 AudioToolOperation = Literal[
     "extract_region",
@@ -67,13 +73,13 @@ LINEAGE_OPERATION_NAMES = {
 class AudioToolRegion(BaseModel):
     start_sec: float = Field(ge=0)
     end_sec: float = Field(gt=0)
-    id: str | None = None
-    purpose: str | None = None
-    region_type: str | None = None
-    label: str | None = None
-    role: str | None = None
-    behavior: str | None = None
-    intent: str | None = None
+    id: str | None = Field(default=None, max_length=128)
+    purpose: str | None = Field(default=None, max_length=256)
+    region_type: str | None = Field(default=None, max_length=128)
+    label: str | None = Field(default=None, max_length=500)
+    role: str | None = Field(default=None, max_length=128)
+    behavior: str | None = Field(default=None, max_length=500)
+    intent: str | None = Field(default=None, max_length=500)
     locked: bool = False
 
     @field_validator("end_sec")
@@ -85,23 +91,24 @@ class AudioToolRegion(BaseModel):
         return end_sec
 
 
-class AudioToolRequest(BaseModel):
-    input_audio_path: str
+class AudioToolRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
     operation: AudioToolOperation
-    metadata_path: str | None = None
-    output_name: str | None = None
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    output_name: str | None = Field(default=None, max_length=120)
+    duration: float | None = Field(default=None, gt=0.0, le=380.0)
     start_sec: float | None = Field(default=None, ge=0)
     end_sec: float | None = Field(default=None, gt=0)
-    regions: list[AudioToolRegion] = Field(default_factory=list)
-    region_roles: list[dict[str, Any]] = Field(default_factory=list)
-    preserve_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    accent_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    forbidden_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    seed_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    texture_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    variation_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    bridge_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    silence_ranges: list[tuple[float, float]] = Field(default_factory=list)
+    regions: list[AudioToolRegion] = Field(default_factory=list, max_length=64)
+    region_roles: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    preserve_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    accent_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    forbidden_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    seed_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    texture_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    variation_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    bridge_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    silence_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
     fade_in_sec: float = Field(default=0.04, ge=0, le=30)
     fade_out_sec: float = Field(default=0.04, ge=0, le=30)
     crossfade_sec: float = Field(default=0.08, ge=0.001, le=30)
@@ -110,16 +117,16 @@ class AudioToolRequest(BaseModel):
     silence_threshold: float = Field(default=0.012, ge=0.0, le=1.0)
     onset_threshold: float = Field(default=0.32, ge=0.01, le=1.0)
     slice_count: int = Field(default=4, ge=2, le=64)
-    prompt: str | None = None
-    negative_prompt: str | None = None
-    seed: int | None = None
-    steps: int | None = None
-    cfg_scale: float | None = None
-    batch_size: int | None = 1
-    lora: list[dict[str, Any]] = Field(default_factory=list)
-    culture_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = None
+    prompt: str | None = Field(default=None, max_length=10_000)
+    negative_prompt: str | None = Field(default=None, max_length=10_000)
+    seed: int | None = Field(default=None, ge=-1, le=4_294_967_294)
+    steps: int | None = Field(default=None, ge=1, le=250)
+    cfg_scale: float | None = Field(default=None, ge=0.0, le=25.0)
+    batch_size: int | None = Field(default=1, ge=1, le=16)
+    lora: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    culture_id: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    notes: str | None = Field(default=None, max_length=10_000)
     ratings: dict[str, Any] = Field(default_factory=dict)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
@@ -132,17 +139,17 @@ class AudioToolRequest(BaseModel):
         return end_sec
 
 
-class AudioProcessRequest(BaseModel):
-    input_audio_path: str
-    metadata_path: str | None = None
-    output_name: str | None = None
+class AudioProcessRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    output_name: str | None = Field(default=None, max_length=120)
     pitch_semitones: float = Field(default=0.0, ge=-48.0, le=48.0)
     stretch_ratio: float | None = Field(default=None, ge=0.05, le=20.0)
     target_duration_sec: float | None = Field(default=None, ge=0.01, le=380.0)
     quality: Literal["fast", "fine"] = "fine"
-    culture_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = None
+    culture_id: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    notes: str | None = Field(default=None, max_length=10_000)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("target_duration_sec")
@@ -191,12 +198,32 @@ def _read_metadata(path: str | None) -> dict[str, Any]:
         target = storage.resolve_existing_metadata_path(path, label="metadata")
         if target.suffix.lower() != ".json":
             return {}
-        return json.loads(target.read_text(encoding="utf-8"))
-    except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError):
+        if target.stat().st_size > MAX_AUDIO_TOOL_METADATA_BYTES:
+            return {}
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            return {}
+        validate_json_compatible(loaded, label="audio tool metadata")
+        return loaded
+    except (
+        FileNotFoundError,
+        PermissionError,
+        UnicodeError,
+        json.JSONDecodeError,
+        OSError,
+        RecursionError,
+        ValueError,
+    ):
         return {}
 
 
 def _read_wav(path: Path) -> WavPayload:
+    try:
+        file_size = path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot inspect WAV file: {exc}") from exc
+    if file_size > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="WAV file exceeds the configured size limit")
     try:
         with wave.open(str(path), "rb") as wav:
             if wav.getcomptype() != "NONE":
@@ -206,10 +233,17 @@ def _read_wav(path: Path) -> WavPayload:
             sample_rate = wav.getframerate()
             frame_count = wav.getnframes()
             frames = wav.readframes(frame_count)
-    except wave.Error as exc:
+    except (EOFError, OSError, wave.Error) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid WAV file: {exc}") from exc
-    if channels <= 0 or sample_rate <= 0 or sample_width <= 0:
+    if channels <= 0 or sample_rate <= 0 or sample_width <= 0 or frame_count <= 0:
         raise HTTPException(status_code=422, detail="Invalid WAV parameters.")
+    if channels > 32 or sample_rate > 768_000 or sample_width > 4:
+        raise HTTPException(status_code=422, detail="Unsupported WAV channel, rate, or width.")
+    if frame_count > sample_rate * 380:
+        raise HTTPException(status_code=422, detail="Audio tools support at most 380 seconds.")
+    expected_bytes = frame_count * channels * sample_width
+    if len(frames) != expected_bytes:
+        raise HTTPException(status_code=422, detail="WAV sample data is truncated.")
     return WavPayload(
         channels=channels,
         sample_width=sample_width,
@@ -221,6 +255,8 @@ def _read_wav(path: Path) -> WavPayload:
 
 def _write_wav(path: Path, payload: WavPayload, frames: bytes) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if len(frames) % payload.frame_width:
+        raise ValueError("audio frame data is not aligned to the WAV frame width")
     frame_count = len(frames) // payload.frame_width
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(payload.channels)
@@ -231,6 +267,8 @@ def _write_wav(path: Path, payload: WavPayload, frames: bytes) -> int:
 
 
 def _slice_frames(payload: WavPayload, start_sec: float, end_sec: float) -> tuple[bytes, float]:
+    if start_sec >= payload.duration or end_sec <= 0:
+        raise HTTPException(status_code=422, detail="Audio region is outside the source duration.")
     start_frame = max(0, min(payload.frame_count - 1, math.floor(start_sec * payload.sample_rate)))
     end_frame = max(start_frame + 1, min(payload.frame_count, math.ceil(end_sec * payload.sample_rate)))
     start_byte = start_frame * payload.frame_width
@@ -318,10 +356,15 @@ def _crossfade_loop_frames(payload: WavPayload, crossfade_sec: float) -> bytes:
 
 def _reverse_frames(payload: WavPayload) -> bytes:
     frame_width = payload.frame_width
-    return b"".join(
-        payload.frames[index : index + frame_width]
-        for index in range(len(payload.frames) - frame_width, -1, -frame_width)
-    )
+    output = bytearray(len(payload.frames))
+    source = memoryview(payload.frames)
+    for output_frame in range(payload.frame_count):
+        output_start = output_frame * frame_width
+        source_start = (payload.frame_count - output_frame - 1) * frame_width
+        output[output_start : output_start + frame_width] = source[
+            source_start : source_start + frame_width
+        ]
+    return bytes(output)
 
 
 def _payload_with_frames(payload: WavPayload, frames: bytes) -> WavPayload:
@@ -415,8 +458,10 @@ def _trim_silence_frames(payload: WavPayload, threshold: float) -> bytes:
 
 def _region_frames_or_center(payload: WavPayload, request: AudioToolRequest, default_sec: float = 0.3) -> tuple[bytes, float, float, float]:
     if request.start_sec is not None and request.end_sec is not None:
-        start = max(0.0, min(payload.duration, request.start_sec))
-        end = max(start + 0.01, min(payload.duration, request.end_sec))
+        minimum_span = 1.0 / payload.sample_rate
+        latest_start = max(0.0, payload.duration - minimum_span)
+        start = max(0.0, min(latest_start, request.start_sec))
+        end = min(payload.duration, max(start + minimum_span, request.end_sec))
     else:
         span = min(payload.duration, max(0.04, default_sec))
         start = max(0.0, payload.duration * 0.5 - span * 0.5)
@@ -460,21 +505,32 @@ def _onset_regions(payload: WavPayload, threshold: float, max_regions: int = 16)
     channels = payload.channels
     window = max(64, round(0.012 * payload.sample_rate))
     hop = max(32, window // 2)
+    starts = range(0, max(1, payload.frame_count - window + 1), hop)
     energies: list[tuple[int, float]] = []
-    for frame in range(0, max(1, payload.frame_count - window), hop):
-        total = 0.0
-        count = 0
-        for local_frame in range(window):
-            sample_frame = frame + local_frame
-            if sample_frame >= payload.frame_count:
-                break
-            start = sample_frame * channels
-            for channel in range(channels):
-                sample = samples[start + channel] / 32768.0
-                total += sample * sample
-                count += 1
-        rms = math.sqrt(total / max(1, count))
+    previous_start = 0
+    previous_end = min(payload.frame_count, window)
+    square_total = sum(
+        samples[index] * samples[index]
+        for index in range(previous_end * channels)
+    )
+    for frame in starts:
+        end = min(payload.frame_count, frame + window)
+        if frame != previous_start:
+            for sample_frame in range(previous_start, frame):
+                offset = sample_frame * channels
+                for channel in range(channels):
+                    sample = samples[offset + channel]
+                    square_total -= sample * sample
+            for sample_frame in range(previous_end, end):
+                offset = sample_frame * channels
+                for channel in range(channels):
+                    sample = samples[offset + channel]
+                    square_total += sample * sample
+        count = max(1, (end - frame) * channels)
+        rms = math.sqrt(max(0.0, square_total) / count) / 32768.0
         energies.append((frame, rms))
+        previous_start = frame
+        previous_end = end
     peak = max((energy for _, energy in energies), default=0)
     if peak <= 0:
         return []
@@ -568,9 +624,18 @@ def _metadata_request(
         region=region,
         operation_params=operation_params,
     )
-    prompt = request.prompt if request.prompt is not None else source_metadata.get("prompt")
-    negative_prompt = request.negative_prompt if request.negative_prompt is not None else source_metadata.get("negative_prompt")
-    tags = request.tags or source_metadata.get("tags") or []
+    source_prompt = source_metadata.get("prompt")
+    source_negative = source_metadata.get("negative_prompt")
+    source_tags = source_metadata.get("tags")
+    prompt = request.prompt if request.prompt is not None else (
+        source_prompt if isinstance(source_prompt, str) else ""
+    )
+    negative_prompt = request.negative_prompt if request.negative_prompt is not None else (
+        source_negative if isinstance(source_negative, str) else ""
+    )
+    tags = request.tags if "tags" in request.model_fields_set else (
+        source_tags if isinstance(source_tags, list) else []
+    )
     return request.model_copy(
         update={
             "prompt": prompt,
@@ -668,13 +733,20 @@ def _process_metadata_request(
         source_metadata=source_metadata,
         operation_params=operation_params,
     )
+    raw_seed = source_metadata.get("seed")
+    try:
+        seed = int(raw_seed) if raw_seed is not None else -1
+    except (TypeError, ValueError, OverflowError):
+        seed = -1
+    if not -1 <= seed <= 4_294_967_294:
+        seed = -1
     return GenerateRequest(
         provider="mock",
         model="rubberband",
         prompt=str(source_metadata.get("prompt") or "Time/pitch processed source"),
         negative_prompt=str(source_metadata.get("negative_prompt") or ""),
         duration=duration,
-        seed=int(source_metadata.get("seed") or -1),
+        seed=seed,
         batch_size=1,
         output_name=request.output_name,
         culture_id=request.culture_id or source_metadata.get("culture_id"),
@@ -707,7 +779,12 @@ def _rubberband_command(
     return command
 
 
-def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, source_metadata: dict[str, Any]) -> Path:
+def _update_existing_metadata(
+    request: AudioToolRequest,
+    source_audio: Path,
+    *,
+    job_id: str,
+) -> Path:
     if request.metadata_path:
         try:
             metadata_path = storage.resolve_existing_metadata_path(
@@ -716,11 +793,22 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
             )
             if metadata_path.suffix.lower() != ".json":
                 raise FileNotFoundError
+            if metadata_path.stat().st_size > MAX_AUDIO_TOOL_METADATA_BYTES:
+                raise HTTPException(status_code=413, detail="Metadata exceeds the 10 MB limit")
         except (FileNotFoundError, PermissionError) as exc:
             raise HTTPException(status_code=404, detail=f"Metadata not found: {request.metadata_path}") from exc
-        data = source_metadata or {}
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError) as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid metadata JSON: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise HTTPException(status_code=422, detail="Metadata must be a JSON object")
+        try:
+            validate_json_compatible(loaded, label="audio tool metadata")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        data = loaded
     else:
-        job_id = storage.new_job("audio-metadata", request.model_dump())
         metadata_path = _target_paths(request, job_id, 1)[0][1]
         data = {
             "app": PRODUCT_NAME,
@@ -760,13 +848,13 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
         data["prompt"] = request.prompt
     if request.negative_prompt is not None:
         data["negative_prompt"] = request.negative_prompt
-    if request.tags:
+    if "tags" in request.model_fields_set:
         data["tags"] = request.tags
     if request.notes is not None:
         data["notes"] = request.notes
-    if request.ratings:
+    if "ratings" in request.model_fields_set:
         current_ratings = data.get("ratings") if isinstance(data.get("ratings"), dict) else {}
-        data["ratings"] = {**current_ratings, **request.ratings}
+        data["ratings"] = {**current_ratings, **request.ratings} if request.ratings else {}
     data["updated_at"] = utc_now_iso()
     data["tool_operation"] = "metadata"
     operation_params = data.get("operation_params") if isinstance(data.get("operation_params"), dict) else {}
@@ -777,7 +865,7 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
         operation_params["prompt"] = request.prompt
     if request.negative_prompt is not None:
         operation_params["negative_prompt"] = request.negative_prompt
-    if request.tags:
+    if "tags" in request.model_fields_set:
         operation_params["tags"] = request.tags
     data["operation_params"] = operation_params
     lineage = data.get("lineage") if isinstance(data.get("lineage"), dict) else {}
@@ -792,7 +880,7 @@ def _update_existing_metadata(request: AudioToolRequest, source_audio: Path, sou
         lineage_params["prompt"] = request.prompt
     if request.negative_prompt is not None:
         lineage_params["negative_prompt"] = request.negative_prompt
-    if request.tags:
+    if "tags" in request.model_fields_set:
         lineage_params["tags"] = request.tags
     lineage["operation_params"] = lineage_params
     data["lineage"] = lineage
@@ -824,57 +912,119 @@ def process_audio(request: AudioProcessRequest) -> GenerationResult:
     ratio = request.stretch_ratio
     if ratio is None:
         ratio = request.target_duration_sec / payload.duration if (request.target_duration_sec and payload.duration) else 1.0
-    ratio = max(0.05, min(20.0, float(ratio)))
+    ratio = float(ratio)
+    if not 0.05 <= ratio <= 20.0:
+        raise HTTPException(
+            status_code=422,
+            detail="Requested target duration requires a stretch ratio outside 0.05–20.0.",
+        )
     expected_duration = payload.duration * ratio
+    if expected_duration > 380.0:
+        raise HTTPException(
+            status_code=422,
+            detail="Time-stretched output would exceed the 380-second limit.",
+        )
     job_id = storage.new_job("audio-time-pitch", request.model_dump())
     audio_path, metadata_path = _process_target_paths(request, job_id)
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     command = _rubberband_command(binary, request, source_audio, audio_path, ratio)
     try:
         # Fixed Rubber Band executable, numeric flags, and storage-confined paths; no shell is used.
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)  # nosemgrep: python.django.security.injection.command.subprocess-injection.subprocess-injection
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=settings.provider_timeout_seconds, stdin=subprocess.DEVNULL)  # nosemgrep: python.django.security.injection.command.subprocess-injection.subprocess-injection
     except subprocess.TimeoutExpired as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error="Rubber Band processing timed out.",
+                provider="local",
+                model="rubberband",
+                mode="audio-time-pitch",
+            )
+        )
         raise HTTPException(status_code=504, detail="Rubber Band processing timed out.") from exc
     except subprocess.CalledProcessError as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error="Rubber Band processing failed.",
+                provider="local",
+                model="rubberband",
+                mode="audio-time-pitch",
+            )
+        )
         raise HTTPException(status_code=422, detail="Rubber Band processing failed.") from exc
-
-    output_payload = _read_wav(audio_path)
-    operation_params = {
-        "operation": "time_pitch_process",
-        "engine": "rubberband",
-        "binary": Path(binary).name,
-        "quality": request.quality,
-        "pitch_semitones": request.pitch_semitones,
-        "stretch_ratio": ratio,
-        "source_duration": payload.duration,
-        "output_duration": output_payload.duration,
-        "requested_target_duration": request.target_duration_sec,
-    }
-    metadata_request = _process_metadata_request(
-        request,
-        source_audio=source_audio,
-        source_metadata=source_metadata,
-        duration=output_payload.duration or expected_duration,
-        operation_params=operation_params,
-    )
-    metadata_request = metadata_request.model_copy(update={"job_id": job_id})
-    storage.write_metadata(
-        metadata_path=metadata_path,
-        request=metadata_request,
-        mode="audio-time-pitch",
-        provider="local",
-        model="rubberband",
-        seed=source_metadata.get("seed") if source_metadata.get("seed") is not None else -1,
-        output_audio_path=audio_path,
-        sample_rate=output_payload.sample_rate,
-        status="done",
-        extra={
-            "germinator_mode": "time_pitch",
-            "tool_operation": "time_pitch_process",
-            "source_type": "time_pitch",
-            "time_pitch": operation_params,
-        },
-    )
+    except OSError as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error=f"Rubber Band could not start: {exc}",
+                provider="local",
+                model="rubberband",
+                mode="audio-time-pitch",
+            )
+        )
+        raise HTTPException(status_code=422, detail="Rubber Band could not start.") from exc
+    try:
+        output_payload = _read_wav(audio_path)
+        operation_params = {
+            "operation": "time_pitch_process",
+            "engine": "rubberband",
+            "binary": Path(binary).name,
+            "quality": request.quality,
+            "pitch_semitones": request.pitch_semitones,
+            "stretch_ratio": ratio,
+            "source_duration": payload.duration,
+            "output_duration": output_payload.duration,
+            "requested_target_duration": request.target_duration_sec,
+        }
+        metadata_request = _process_metadata_request(
+            request,
+            source_audio=source_audio,
+            source_metadata=source_metadata,
+            duration=output_payload.duration or expected_duration,
+            operation_params=operation_params,
+        )
+        metadata_request = metadata_request.model_copy(update={"job_id": job_id})
+        storage.write_metadata(
+            metadata_path=metadata_path,
+            request=metadata_request,
+            mode="audio-time-pitch",
+            provider="local",
+            model="rubberband",
+            seed=metadata_request.seed,
+            output_audio_path=audio_path,
+            sample_rate=output_payload.sample_rate,
+            status="done",
+            extra={
+                "germinator_mode": "time_pitch",
+                "tool_operation": "time_pitch_process",
+                "source_type": "time_pitch",
+                "time_pitch": operation_params,
+            },
+        )
+    except Exception as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error=str(exc),
+                provider="local",
+                model="rubberband",
+                mode="audio-time-pitch",
+            )
+        )
+        raise
     result = GenerationResult(
         job_id=job_id,
         status="done",
@@ -896,21 +1046,38 @@ def operate_audio(request: AudioToolRequest) -> GenerationResult:
     source_metadata = _read_metadata(request.metadata_path)
 
     if request.operation == "metadata":
-        metadata_path = _update_existing_metadata(request, source_audio, source_metadata)
-        result = GenerationResult(
-            job_id="metadata-edit",
-            status="done",
-            audio_files=[storage.relative_path(source_audio)],
-            metadata_files=[storage.relative_path(metadata_path)],
-            provider="local",
-            model="wav-tools",
-            mode="audio-metadata",
-        )
-        storage.record_result(result)
-        return result
+        job_id = storage.new_job("audio-metadata", request.model_dump())
+        try:
+            metadata_path = _update_existing_metadata(
+                request,
+                source_audio,
+                job_id=job_id,
+            )
+            result = GenerationResult(
+                job_id=job_id,
+                status="done",
+                audio_files=[storage.relative_path(source_audio)],
+                metadata_files=[storage.relative_path(metadata_path)],
+                provider="local",
+                model="wav-tools",
+                mode="audio-metadata",
+            )
+            storage.record_result(result)
+            return result
+        except Exception as exc:
+            storage.record_result(
+                GenerationResult(
+                    job_id=job_id,
+                    status="error",
+                    error=str(exc),
+                    provider="local",
+                    model="wav-tools",
+                    mode="audio-metadata",
+                )
+            )
+            raise
 
     payload = _read_wav(source_audio)
-    job_id = storage.new_job("audio-tool", request.model_dump())
 
     outputs: list[tuple[bytes, float, dict[str, Any] | None, dict[str, Any]]] = []
     if request.operation == "extract_region":
@@ -960,6 +1127,11 @@ def operate_audio(request: AudioToolRequest) -> GenerationResult:
         repaired_payload = _payload_with_frames(payload, repaired)
         outputs.append((_fade_frames(repaired_payload, request.fade_in_sec, request.fade_out_sec), repaired_payload.duration, None, {"crossfade_sec": request.crossfade_sec, "fade_in_sec": request.fade_in_sec, "fade_out_sec": request.fade_out_sec, "loop_repair": True}))
     elif request.operation == "tail_extender":
+        if payload.duration + request.tail_extension_sec > 380.0:
+            raise HTTPException(
+                status_code=422,
+                detail="Tail-extended output would exceed the 380-second limit.",
+            )
         frames = _tail_extend_frames(payload, request.tail_extension_sec)
         duration = len(frames) // payload.frame_width / float(payload.sample_rate)
         outputs.append((frames, duration, None, {"tail_extension_sec": request.tail_extension_sec}))
@@ -1009,32 +1181,59 @@ def operate_audio(request: AudioToolRequest) -> GenerationResult:
     if not outputs:
         raise HTTPException(status_code=422, detail=f"Unsupported audio tool operation: {request.operation}")
 
+    for frames, duration, _, _ in outputs:
+        if not frames or duration <= 0:
+            raise HTTPException(status_code=422, detail="Audio tool produced an empty output.")
+        if duration > 380.0:
+            raise HTTPException(status_code=422, detail="Audio tool output exceeds 380 seconds.")
+
+    job_id = storage.new_job("audio-tool", request.model_dump())
     paths = _target_paths(request, job_id, len(outputs))
     audio_files: list[str] = []
     metadata_files: list[str] = []
-    for index, ((frames, duration, region, operation_params), (audio_path, metadata_path)) in enumerate(zip(outputs, paths), start=1):
-        if request.operation == "duplicate":
-            shutil.copyfile(source_audio, audio_path)
-        else:
-            frame_count = _write_wav(audio_path, payload, frames)
-            duration = frame_count / float(payload.sample_rate)
-        params = {"operation": request.operation, **operation_params}
-        if len(outputs) > 1:
-            params.setdefault("slice_index", index)
-            params.setdefault("slice_count", len(outputs))
-        _write_tool_metadata(
-            request,
-            metadata_path=metadata_path,
-            audio_path=audio_path,
-            source_audio=source_audio,
-            source_metadata=source_metadata,
-            duration=duration,
-            sample_rate=payload.sample_rate,
-            region=region,
-            operation_params=params,
+    try:
+        for index, (
+            (frames, output_duration, region, operation_params),
+            (audio_path, metadata_path),
+        ) in enumerate(zip(outputs, paths, strict=True), start=1):
+            if request.operation == "duplicate":
+                shutil.copyfile(source_audio, audio_path)
+                rendered_duration = output_duration
+            else:
+                frame_count = _write_wav(audio_path, payload, frames)
+                rendered_duration = frame_count / float(payload.sample_rate)
+            params = {"operation": request.operation, **operation_params}
+            if len(outputs) > 1:
+                params.setdefault("slice_index", index)
+                params.setdefault("slice_count", len(outputs))
+            _write_tool_metadata(
+                request,
+                metadata_path=metadata_path,
+                audio_path=audio_path,
+                source_audio=source_audio,
+                source_metadata=source_metadata,
+                duration=rendered_duration,
+                sample_rate=payload.sample_rate,
+                region=region,
+                operation_params=params,
+            )
+            audio_files.append(storage.relative_path(audio_path))
+            metadata_files.append(storage.relative_path(metadata_path))
+    except Exception as exc:
+        for audio_path, metadata_path in paths:
+            audio_path.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error=str(exc),
+                provider="local",
+                model="wav-tools",
+                mode=f"audio-{request.operation}",
+            )
         )
-        audio_files.append(storage.relative_path(audio_path))
-        metadata_files.append(storage.relative_path(metadata_path))
+        raise
 
     result = GenerationResult(
         job_id=job_id,

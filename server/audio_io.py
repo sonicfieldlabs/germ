@@ -62,8 +62,3 @@ def write_silence_wav(
             chunk_frames = min(remaining, WAV_WRITE_CHUNK_FRAMES)
             wav.writeframesraw(chunk[: chunk_frames * channels * 2])
             remaining -= chunk_frames
-
-
-def wav_duration_seconds(path: str | Path) -> float:
-    with wave.open(str(path), "rb") as wav:
-        return wav.getnframes() / float(wav.getframerate())

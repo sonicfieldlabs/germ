@@ -8,9 +8,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.registry import settings, storage
+from server.schemas import validate_json_compatible
 
 
 router = APIRouter()
@@ -23,25 +24,29 @@ SERVABLE_EXTENSIONS = {
     ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
     ".png", ".jpg", ".jpeg", ".gif", ".webp",
 }
+AUDIO_EXTENSIONS = {
+    ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".webm",
+}
+MAX_METADATA_FILE_BYTES = 10_000_000
 
 
 class RevealRequest(BaseModel):
-    path: str
+    path: str = Field(min_length=1, max_length=4096)
 
 
 class MetadataReadRequest(BaseModel):
-    path: str
+    path: str = Field(min_length=1, max_length=4096)
 
 
 class RenameRequest(BaseModel):
-    audio_path: str
-    metadata_path: str | None = None
-    new_stem: str
+    audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    new_stem: str = Field(min_length=1, max_length=500)
 
 
 class DeleteRequest(BaseModel):
-    audio_path: str
-    metadata_path: str | None = None
+    audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
 
 
 class BulkDeleteRequest(BaseModel):
@@ -59,8 +64,11 @@ def sanitize_filename_stem(stem: str) -> str:
 
 def _resolve_output_file(file_path: str) -> Path:
     root = settings.project_root.resolve()
-    raw = Path(file_path).expanduser()
-    target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    try:
+        raw = Path(file_path).expanduser()
+        target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid output file path.") from exc
     output_root = settings.output_root.resolve()
 
     try:
@@ -84,8 +92,10 @@ def read_output_metadata(request: MetadataReadRequest) -> dict:
     if target.suffix.lower() != ".json":
         raise HTTPException(status_code=422, detail="Metadata path must point to a JSON file.")
     try:
+        if target.stat().st_size > MAX_METADATA_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="Metadata file exceeds the 10 MB limit.")
         metadata = json.loads(target.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise HTTPException(
             status_code=422,
             detail=f"Metadata is not valid JSON: {request.path}",
@@ -94,6 +104,10 @@ def read_output_metadata(request: MetadataReadRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"Failed to read metadata file: {exc}") from exc
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=422, detail="Metadata JSON must contain an object.")
+    try:
+        validate_json_compatible(metadata, label="metadata")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return metadata
 
 
@@ -102,7 +116,16 @@ def reveal_output_file(request: RevealRequest) -> dict[str, str]:
     target = _resolve_output_file(request.path)
     if platform.system() != "Darwin":
         raise HTTPException(status_code=400, detail="Reveal is only supported on macOS.")
-    subprocess.Popen(["open", "-R", str(target)])
+    try:
+        subprocess.Popen(
+            ["/usr/bin/open", "-R", str(target)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to reveal output file: {exc}") from exc
     return {"status": "ok", "path": str(target)}
 
 
@@ -117,15 +140,17 @@ def serve_output_file(file_path: str) -> FileResponse:
 @router.post("/files/rename")
 def rename_output_file(request: RenameRequest) -> dict[str, str]:
     audio_path = _resolve_output_file(request.audio_path)
+    if audio_path.suffix.lower() not in AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=422, detail="Audio path must point to an audio file.")
     metadata_path = None
     if request.metadata_path:
         metadata_path = _resolve_output_file(request.metadata_path)
         if metadata_path.suffix.lower() != ".json":
             raise HTTPException(status_code=422, detail="Metadata path must point to a JSON file.")
+        if metadata_path.stat().st_size > MAX_METADATA_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="Metadata file exceeds the 10 MB limit.")
 
     sanitized_stem = sanitize_filename_stem(request.new_stem)
-    if not sanitized_stem:
-        raise HTTPException(status_code=400, detail="Invalid filename stem.")
 
     new_audio_path = audio_path.parent / f"{sanitized_stem}{audio_path.suffix}"
     if new_audio_path.exists() and new_audio_path.resolve() != audio_path.resolve():
@@ -140,10 +165,16 @@ def rename_output_file(request: RenameRequest) -> dict[str, str]:
             raise HTTPException(status_code=400, detail=f"Target metadata file already exists: {new_metadata_path.name}")
         try:
             metadata_data = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
+        except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
             raise HTTPException(status_code=422, detail=f"Metadata is not valid JSON: {request.metadata_path}") from exc
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Failed to read metadata file: {exc}") from exc
+        if not isinstance(metadata_data, dict):
+            raise HTTPException(status_code=422, detail="Metadata JSON must contain an object.")
+        try:
+            validate_json_compatible(metadata_data, label="metadata")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
         audio_path.rename(new_audio_path)
@@ -213,23 +244,32 @@ def rename_output_file(request: RenameRequest) -> dict[str, str]:
 def delete_output_files(request: BulkDeleteRequest) -> dict[str, str | int]:
     if len(request.items) > 500:
         raise HTTPException(status_code=400, detail="Too many items in one delete request (max 500).")
-    deleted_count = 0
+    resolved_items: list[tuple[Path, Path | None]] = []
     for item in request.items:
-        try:
-            audio_path = _resolve_output_file(item.audio_path)
-            if audio_path.exists() and audio_path.is_file():
-                audio_path.unlink()
-                deleted_count += 1
-        except HTTPException:
-            pass
-
+        audio_path = _resolve_output_file(item.audio_path)
+        metadata_path = None
         if item.metadata_path:
-            try:
-                metadata_path = _resolve_output_file(item.metadata_path)
-                if metadata_path.exists() and metadata_path.is_file():
-                    metadata_path.unlink()
-            except HTTPException:
-                pass
+            metadata_path = _resolve_output_file(item.metadata_path)
+            if metadata_path.suffix.lower() != ".json":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Metadata path must point to a JSON file.",
+                )
+        resolved_items.append((audio_path, metadata_path))
+
+    deleted_audio: set[Path] = set()
+    deleted_paths: set[Path] = set()
+    try:
+        for audio_path, metadata_path in resolved_items:
+            for target in (audio_path, metadata_path):
+                if target is None or target in deleted_paths:
+                    continue
+                target.unlink()
+                deleted_paths.add(target)
+            deleted_audio.add(audio_path)
+    except OSError as exc:
+        storage.touch_library()
+        raise HTTPException(status_code=500, detail=f"Failed to delete output file: {exc}") from exc
 
     storage.touch_library()
-    return {"status": "ok", "deleted_count": deleted_count}
+    return {"status": "ok", "deleted_count": len(deleted_audio)}

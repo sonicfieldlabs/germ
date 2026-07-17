@@ -139,13 +139,17 @@ def post_prompt_wavetable(request: WavetablePromptRequest) -> WavetableOperation
                 source_metadata_files=source_metadata_files,
                 error=generation_result.error or "wavetable source generation failed",
             )
+        pairs = _provider_artifact_pairs(generation_result)
+        if pairs is None:
+            return WavetableOperationResult(
+                status="error",
+                source_audio_files=source_audio_files,
+                source_metadata_files=source_metadata_files,
+                error="wavetable source provider returned incomplete output artifacts",
+            )
         source_audio_files.extend(generation_result.audio_files)
         source_metadata_files.extend(generation_result.metadata_files)
-        for audio_path, metadata_path in zip(
-            generation_result.audio_files,
-            generation_result.metadata_files,
-            strict=False,
-        ):
+        for audio_path, metadata_path in pairs:
             converted = _convert_generated_audio_to_wavetable(
                 audio_path=audio_path,
                 metadata_path=metadata_path,
@@ -259,15 +263,23 @@ def post_mutate_wavetable(request: WavetableMutationRequest) -> WavetableOperati
                 status="error",
                 audio_files=mutated_audio_files,
                 metadata_files=mutated_metadata_files,
+                source_audio_files=[render_audio],
+                source_metadata_files=[render_metadata_file],
                 error=mutation_result.error or "wavetable mutation failed",
+            )
+        pairs = _provider_artifact_pairs(mutation_result)
+        if pairs is None:
+            return WavetableOperationResult(
+                status="error",
+                audio_files=mutated_audio_files,
+                metadata_files=mutated_metadata_files,
+                source_audio_files=[render_audio],
+                source_metadata_files=[render_metadata_file],
+                error="wavetable mutation provider returned incomplete output artifacts",
             )
         mutated_audio_files.extend(mutation_result.audio_files)
         mutated_metadata_files.extend(mutation_result.metadata_files)
-        for audio_path, metadata_path in zip(
-            mutation_result.audio_files,
-            mutation_result.metadata_files,
-            strict=False,
-        ):
+        for audio_path, metadata_path in pairs:
             converted = _convert_generated_audio_to_wavetable(
                 audio_path=audio_path,
                 metadata_path=metadata_path,
@@ -428,6 +440,15 @@ def _build_prompt_contract(request: WavetablePromptRequest) -> WavetablePromptCo
 def _lineage_operation_params(lineage: dict) -> dict:
     params = lineage.get("operation_params") if isinstance(lineage.get("operation_params"), dict) else {}
     return dict(params)
+
+
+def _provider_artifact_pairs(result) -> list[tuple[str, str]] | None:
+    if not result.audio_files or len(result.audio_files) != len(result.metadata_files):
+        return None
+    pairs = list(zip(result.audio_files, result.metadata_files, strict=True))
+    if any(not audio_path.strip() or not metadata_path.strip() for audio_path, metadata_path in pairs):
+        return None
+    return pairs
 
 
 def _convert_generated_audio_to_wavetable(

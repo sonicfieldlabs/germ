@@ -21,12 +21,11 @@ from __future__ import annotations
 import html
 import json
 import os
-from io import BytesIO
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from server.akousma_store import (
     AkousmaUnavailable,
@@ -36,8 +35,9 @@ from server.akousma_store import (
     record_generation,
     resolve_audio_path,
 )
-from server.registry import storage
+from server.registry import settings, storage
 from server.routes.import_audio import import_audio
+from server.schemas import JSONRequestModel
 from server.storage import utc_now_iso
 
 router = APIRouter()
@@ -56,11 +56,13 @@ def _get_record(store, akousma_id: str) -> dict[str, Any]:
     record = store.get(akousma_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"akousma not found: {akousma_id}")
+    if not isinstance(record, dict):
+        raise HTTPException(status_code=502, detail=f"invalid akousma record: {akousma_id}")
     return record
 
 
 def _oida_url() -> str:
-    return os.getenv("GERM_OIDA_URL", "http://127.0.0.1:8765").rstrip("/")
+    return settings.oida_url
 
 
 def _akousmata_url() -> str:
@@ -114,9 +116,16 @@ async def _import_as_sound(store, record: dict[str, Any]) -> dict[str, Any]:
             detail="akousma record has no resolvable audio (audio.uri missing or file absent)",
         )
 
-    data = path.read_bytes()
-    lineage = record.get("lineage") or {}
-    provenance = record.get("provenance") or {}
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="akousma audio cannot be read") from exc
+    if size > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="akousma audio exceeds the import size limit")
+    lineage = record.get("lineage") if isinstance(record.get("lineage"), dict) else {}
+    provenance = (
+        record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    )
     source: dict[str, Any] = {
         "type": "imported",
         "kind": "akousma",
@@ -132,7 +141,10 @@ async def _import_as_sound(store, record: dict[str, Any]) -> dict[str, Any]:
     metadata = {
         "prompt": derive_prompt(record),
         "output_name": record["akousma_id"].lower(),
-        "tags": [str(t) for t in record.get("tags") or []],
+        "tags": [
+            str(tag)
+            for tag in (record.get("tags") if isinstance(record.get("tags"), list) else [])
+        ],
         "source_type": "imported",
         "source": source,
         "lineage": {
@@ -141,10 +153,17 @@ async def _import_as_sound(store, record: dict[str, Any]) -> dict[str, Any]:
             "parents": list(lineage.get("parent_akousma_ids") or []),
         },
     }
-    upload = UploadFile(file=BytesIO(data), filename=path.name, size=len(data))
-    result = await import_audio(file=upload, metadata=json.dumps(metadata))
+    upload = UploadFile(file=path.open("rb"), filename=path.name, size=size)
+    try:
+        result = await import_audio(file=upload, metadata=json.dumps(metadata))
+    finally:
+        await upload.close()
 
-    record.setdefault("extensions", {})["germ.import"] = {
+    extensions = record.get("extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+        record["extensions"] = extensions
+    extensions["germ.import"] = {
         "job_id": result.job_id,
         "audio_files": result.audio_files,
         "imported_at": utc_now_iso(),
@@ -204,18 +223,18 @@ def get_akousma_lineage(akousma_id: str) -> dict[str, Any]:
         store.close()
 
 
-class GenerationAkousmaRequest(BaseModel):
-    audio_path: str
-    prompt: str = ""
-    model: str = ""
-    operation: str = "generate"
+class GenerationAkousmaRequest(JSONRequestModel):
+    audio_path: str = Field(min_length=1, max_length=4096)
+    prompt: str = Field(default="", max_length=10_000)
+    model: str = Field(default="", max_length=500)
+    operation: str = Field(default="generate", min_length=1, max_length=200)
     params: dict[str, Any] = Field(default_factory=dict)
-    parent_akousma_ids: list[str] = Field(default_factory=list)
-    relations: list[dict[str, Any]] = Field(default_factory=list)
+    parent_akousma_ids: list[str] = Field(default_factory=list, max_length=64)
+    relations: list[dict[str, Any]] = Field(default_factory=list, max_length=128)
     listening: dict[str, Any] = Field(default_factory=dict)
-    tags: list[str] = Field(default_factory=list)
-    summary: str = ""
-    session_id: str = ""
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    summary: str = Field(default="", max_length=500)
+    session_id: str = Field(default="", max_length=256)
     germ_lineage: dict[str, Any] = Field(default_factory=dict)
     covenant: dict[str, Any] = Field(default_factory=dict)
 

@@ -5,6 +5,7 @@ import platform
 import signal
 import subprocess
 import time
+import wave
 from pathlib import Path
 
 from server.config import Settings
@@ -90,9 +91,30 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         job_id = request.job_id or self.storage.new_job(
             mode, request.model_dump(exclude={"job_id"})
         )
+        if self.is_job_cancelled(job_id):
+            result = GenerationResult(
+                job_id=job_id,
+                status="cancelled",
+                error="job cancelled",
+                provider=self.provider_id,
+                model=request.model,
+                mode=mode,
+            )
+            self.storage.record_result(result)
+            return result
         count = request.batch_size if mode == "text-to-audio" else 1
         paths = self.storage.reserve_paths(request=request, mode=mode, job_id=job_id, count=count)
         first_seed = request.seed if request.seed >= 0 else self.storage.random_seed()
+
+        if request.seed >= 0 and first_seed + count - 1 > 4_294_967_294:
+            return self.storage.write_error_metadata(
+                request=request,
+                mode=mode,
+                job_id=job_id,
+                error="batch seed exceeds the supported maximum",
+                provider=self.provider_id,
+                model=request.model,
+            )
 
         if mode != "text-to-audio" and request.batch_size != 1:
             return self.storage.write_error_metadata(
@@ -151,6 +173,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
             if process["error"] is not None:
                 error = process["error"]
                 status = "cancelled" if process.get("cancelled") else "error"
+                audio_path.unlink(missing_ok=True)
                 self.storage.write_metadata(
                     metadata_path=metadata_path,
                     request=request,
@@ -158,8 +181,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     provider=self.provider_id,
                     model=request.model,
                     seed=seed,
-                    output_audio_path=audio_path if audio_path.exists() else None,
-                    sample_rate=self.sample_rate if audio_path.exists() else None,
+                    output_audio_path=None,
+                    sample_rate=None,
                     status=status,
                     error=error,
                     extra={
@@ -191,6 +214,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     f"MLX sa3 exited with code {returncode}. "
                     f"stderr: {stderr.strip() or 'empty'}"
                 )
+                audio_path.unlink(missing_ok=True)
                 self.storage.write_metadata(
                     metadata_path=metadata_path,
                     request=request,
@@ -198,8 +222,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     provider=self.provider_id,
                     model=request.model,
                     seed=seed,
-                    output_audio_path=audio_path if audio_path.exists() else None,
-                    sample_rate=self.sample_rate if audio_path.exists() else None,
+                    output_audio_path=None,
+                    sample_rate=None,
                     status="error",
                     error=error,
                     extra={
@@ -226,8 +250,11 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                 self.storage.record_result(result)
                 return result
 
-            if not audio_path.is_file() or audio_path.stat().st_size == 0:
-                error = "MLX sa3 exited successfully but did not write a non-empty output file."
+            try:
+                self._validate_output_wav(audio_path)
+            except (OSError, ValueError, wave.Error) as exc:
+                error = f"MLX sa3 produced an invalid WAV output: {exc}"
+                audio_path.unlink(missing_ok=True)
                 self.storage.write_metadata(
                     metadata_path=metadata_path,
                     request=request,
@@ -263,23 +290,27 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                 self.storage.record_result(result)
                 return result
 
-            self.storage.write_metadata(
-                metadata_path=metadata_path,
-                request=request,
-                mode=mode,
-                provider=self.provider_id,
-                model=request.model,
-                seed=seed,
-                output_audio_path=audio_path,
-                sample_rate=self.sample_rate,
-                status="done",
-                extra={
-                    "batch_index": index,
-                    "command": command_text,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                },
-            )
+            try:
+                self.storage.write_metadata(
+                    metadata_path=metadata_path,
+                    request=request,
+                    mode=mode,
+                    provider=self.provider_id,
+                    model=request.model,
+                    seed=seed,
+                    output_audio_path=audio_path,
+                    sample_rate=self.sample_rate,
+                    status="done",
+                    extra={
+                        "batch_index": index,
+                        "command": command_text,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                    },
+                )
+            except (OSError, TypeError, ValueError):
+                self._cleanup_paths([path for pair in paths for path in pair])
+                raise
             audio_files.append(self.storage.relative_path(audio_path))
             metadata_files.append(self.storage.relative_path(metadata_path))
 
@@ -366,7 +397,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         first_seed: int,
     ) -> GenerationResult:
         audio_path, metadata_path = paths
-        scratch_dir = self.settings.output_root / "intermediate"
+        scratch_dir = self.settings.scratch_dir / "mlx-inpaint"
         scratch_dir.mkdir(parents=True, exist_ok=True)
 
         current_source = self._resolve_input(request.input_audio_path)
@@ -423,14 +454,17 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     f"{index + 1}/{len(request.inpaint_ranges)}. "
                     f"stderr: {process['stderr'].strip() or 'empty'}"
                 )
-            if error is None and (not target_path.is_file() or target_path.stat().st_size == 0):
-                error = (
-                    "MLX sa3 exited successfully but did not write a non-empty output "
-                    f"for range {index + 1}/{len(request.inpaint_ranges)}."
-                )
+            if error is None:
+                try:
+                    self._validate_output_wav(target_path)
+                except (OSError, ValueError, wave.Error) as exc:
+                    error = (
+                        "MLX sa3 produced an invalid WAV output for range "
+                        f"{index + 1}/{len(request.inpaint_ranges)}: {exc}"
+                    )
             if error is not None:
                 status = "cancelled" if process.get("cancelled") else "error"
-                self._cleanup_paths(intermediate_paths)
+                self._cleanup_paths([*intermediate_paths, target_path])
                 self.storage.write_metadata(
                     metadata_path=metadata_path,
                     request=request,
@@ -438,8 +472,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                     provider=self.provider_id,
                     model=request.model,
                     seed=first_seed,
-                    output_audio_path=target_path if target_path.exists() else None,
-                    sample_rate=self.sample_rate if target_path.exists() else None,
+                    output_audio_path=None,
+                    sample_rate=None,
                     status=status,
                     error=error,
                     extra={
@@ -478,27 +512,31 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         # per-range scratch files so output/intermediate does not grow unbounded.
         self._cleanup_paths(intermediate_paths)
 
-        self.storage.write_metadata(
-            metadata_path=metadata_path,
-            request=request,
-            mode=mode,
-            provider=self.provider_id,
-            model=request.model,
-            seed=first_seed,
-            output_audio_path=audio_path,
-            sample_rate=self.sample_rate,
-            status="done",
-            extra={
-                "multi_range_strategy": "sequential_mlx_inpaint",
-                "commands": commands,
-                "stdout": stdouts,
-                "stderr": stderrs,
-                "returncodes": returncodes,
-                "range_seeds": range_seeds,
-                "intermediate_files": intermediate_files,
-                "intermediate_files_cleaned": True,
-            },
-        )
+        try:
+            self.storage.write_metadata(
+                metadata_path=metadata_path,
+                request=request,
+                mode=mode,
+                provider=self.provider_id,
+                model=request.model,
+                seed=first_seed,
+                output_audio_path=audio_path,
+                sample_rate=self.sample_rate,
+                status="done",
+                extra={
+                    "multi_range_strategy": "sequential_mlx_inpaint",
+                    "commands": commands,
+                    "stdout": stdouts,
+                    "stderr": stderrs,
+                    "returncodes": returncodes,
+                    "range_seeds": range_seeds,
+                    "intermediate_files": intermediate_files,
+                    "intermediate_files_cleaned": True,
+                },
+            )
+        except (OSError, TypeError, ValueError):
+            self._cleanup_paths([audio_path, metadata_path])
+            raise
         result = GenerationResult(
             job_id=job_id,
             status="done",
@@ -515,7 +553,16 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         return result
 
     def _run_process(self, command: list[str], *, job_id: str | None = None) -> dict:
-        command_text = " ".join(command)
+        command_text = " ".join(command)[:20_000]
+        if job_id and self.is_job_cancelled(job_id):
+            return {
+                "command": command_text,
+                "stdout": "",
+                "stderr": "",
+                "returncode": -15,
+                "error": "MLX sa3 cancelled.",
+                "cancelled": True,
+            }
         deadline = time.monotonic() + self.settings.provider_timeout_seconds
         try:
             process = subprocess.Popen(
@@ -523,6 +570,8 @@ class StableAudioMLXProvider(AudioGenerationProvider):
                 stdin=subprocess.DEVNULL,
                 cwd=str(self.mlx_dir()),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
@@ -539,10 +588,19 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         while True:
             try:
                 stdout, stderr = process.communicate(timeout=0.25)
+                if job_id and self.is_job_cancelled(job_id):
+                    return {
+                        "command": command_text,
+                        "stdout": (stdout or "")[-20_000:],
+                        "stderr": (stderr or "")[-20_000:],
+                        "returncode": process.returncode,
+                        "error": "MLX sa3 cancelled.",
+                        "cancelled": True,
+                    }
                 return {
                     "command": command_text,
-                    "stdout": stdout or "",
-                    "stderr": stderr or "",
+                    "stdout": (stdout or "")[-20_000:],
+                    "stderr": (stderr or "")[-20_000:],
                     "returncode": process.returncode,
                     "error": None,
                     "cancelled": False,
@@ -579,7 +637,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         except subprocess.TimeoutExpired:
             self._signal_process(process, kill=True)
             stdout, stderr = process.communicate()
-        return stdout or "", stderr or ""
+        return (stdout or "")[-20_000:], (stderr or "")[-20_000:]
 
     @staticmethod
     def _signal_process(process: subprocess.Popen[str], *, kill: bool) -> None:
@@ -625,3 +683,22 @@ class StableAudioMLXProvider(AudioGenerationProvider):
 
     def _resolve_input(self, path: str) -> str:
         return str(self.storage.resolve_existing_input_audio_path(path, label="input audio"))
+
+    def _validate_output_wav(self, path: Path) -> None:
+        if not path.is_file() or path.stat().st_size < 44:
+            raise ValueError("output file is missing or empty")
+        with wave.open(str(path), "rb") as wav:
+            channels = wav.getnchannels()
+            sample_width = wav.getsampwidth()
+            sample_rate = wav.getframerate()
+            frame_count = wav.getnframes()
+            compression = wav.getcomptype()
+        if compression != "NONE" or sample_width != 2:
+            raise ValueError("output must be uncompressed 16-bit PCM")
+        if channels not in {1, 2} or sample_rate != self.sample_rate or frame_count <= 0:
+            raise ValueError("output has unsupported channel, sample-rate, or frame parameters")
+        if frame_count > sample_rate * 380:
+            raise ValueError("output exceeds 380 seconds")
+        minimum_size = 44 + (frame_count * channels * sample_width)
+        if path.stat().st_size < minimum_size:
+            raise ValueError("output sample data is truncated")
