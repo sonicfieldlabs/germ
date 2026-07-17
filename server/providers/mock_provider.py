@@ -22,6 +22,8 @@ class MockProvider(AudioGenerationProvider):
         return ["mock-sine", "mock-silence", "small-music", "small-sfx", "medium"]
 
     def load_model(self, model_id: str, device: str = "auto") -> dict:
+        if model_id not in self.list_models():
+            raise ValueError(f"unknown mock model: {model_id}")
         self.loaded_model_id = model_id
         self.current_device = "cpu"
         self.last_error = None
@@ -77,67 +79,70 @@ class MockProvider(AudioGenerationProvider):
         audio_files: list[str] = []
         metadata_files: list[str] = []
 
-        if not self.loaded_model_id:
+        if self.loaded_model_id != request.model:
             self.load_model(request.model, "cpu")
 
-        for index, (audio_path, metadata_path) in enumerate(paths):
-            if self.is_job_cancelled(job_id):
-                result = GenerationResult(
-                    job_id=job_id,
-                    status="cancelled",
-                    audio_files=audio_files,
-                    metadata_files=metadata_files,
-                    seed=seed,
-                    duration=request.duration,
-                    sample_rate=self.sample_rate,
-                    error="job cancelled",
+        try:
+            for index, (audio_path, metadata_path) in enumerate(paths):
+                if self.is_job_cancelled(job_id):
+                    self._cleanup_paths(paths)
+                    result = GenerationResult(
+                        job_id=job_id,
+                        status="cancelled",
+                        seed=seed,
+                        duration=request.duration,
+                        sample_rate=self.sample_rate,
+                        error="job cancelled",
+                        provider=self.provider_id,
+                        model=request.model,
+                        mode=mode,
+                    )
+                    self.storage.record_result(result)
+                    return result
+                actual_seed = seed + index
+                if request.model == "mock-silence":
+                    write_silence_wav(
+                        audio_path,
+                        duration=request.duration,
+                        sample_rate=self.sample_rate,
+                        channels=2,
+                    )
+                else:
+                    frequency = 180.0 + ((actual_seed * 37) % 540)
+                    write_sine_wav(
+                        audio_path,
+                        duration=request.duration,
+                        sample_rate=self.sample_rate,
+                        frequency=frequency,
+                        amplitude=0.10,
+                        channels=2,
+                    )
+
+                self.storage.write_metadata(
+                    metadata_path=metadata_path,
+                    request=request,
+                    mode=mode,
                     provider=self.provider_id,
                     model=request.model,
-                    mode=mode,
-                )
-                self.storage.record_result(result)
-                return result
-            actual_seed = seed + index
-            if request.model == "mock-silence":
-                write_silence_wav(
-                    audio_path,
-                    duration=request.duration,
+                    seed=actual_seed,
+                    output_audio_path=audio_path,
                     sample_rate=self.sample_rate,
-                    channels=2,
+                    status="done",
+                    extra={
+                        "mock": True,
+                        "batch_index": index,
+                        "absolute_input_audio_path": self.storage.absolute_path(
+                            getattr(request, "input_audio_path", "")
+                        )
+                        if getattr(request, "input_audio_path", None)
+                        else None,
+                    },
                 )
-            else:
-                frequency = 180.0 + ((actual_seed * 37) % 540)
-                write_sine_wav(
-                    audio_path,
-                    duration=request.duration,
-                    sample_rate=self.sample_rate,
-                    frequency=frequency,
-                    amplitude=0.10,
-                    channels=2,
-                )
-
-            self.storage.write_metadata(
-                metadata_path=metadata_path,
-                request=request,
-                mode=mode,
-                provider=self.provider_id,
-                model=request.model,
-                seed=actual_seed,
-                output_audio_path=audio_path,
-                sample_rate=self.sample_rate,
-                status="done",
-                extra={
-                    "mock": True,
-                    "batch_index": index,
-                    "absolute_input_audio_path": self.storage.absolute_path(
-                        getattr(request, "input_audio_path", "")
-                    )
-                    if getattr(request, "input_audio_path", None)
-                    else None,
-                },
-            )
-            audio_files.append(self.storage.relative_path(audio_path))
-            metadata_files.append(self.storage.relative_path(metadata_path))
+                audio_files.append(self.storage.relative_path(audio_path))
+                metadata_files.append(self.storage.relative_path(metadata_path))
+        except Exception:
+            self._cleanup_paths(paths)
+            raise
 
         result = GenerationResult(
             job_id=job_id,
@@ -153,6 +158,15 @@ class MockProvider(AudioGenerationProvider):
         )
         self.storage.record_result(result)
         return result
+
+    @staticmethod
+    def _cleanup_paths(paths) -> None:
+        for audio_path, metadata_path in paths:
+            for path in (audio_path, metadata_path):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    continue
 
     def _require_input_audio(self, path: str) -> None:
         self.storage.resolve_existing_input_audio_path(path, label="input audio")

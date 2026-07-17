@@ -4,8 +4,6 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-mkdir -p output/audio output/metadata output/uploads
-
 UVICORN_ARGS=(
   server.main:app
   --host "${GERM_HOST:-${GERMINATOR_HOST:-127.0.0.1}}"

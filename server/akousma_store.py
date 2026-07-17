@@ -43,7 +43,7 @@ def open_store():
 
 def resolve_audio_path(store, record: dict[str, Any]) -> Path | None:
     """Resolve a record's audio to a local file path (store object or file uri)."""
-    audio = record.get("audio") or {}
+    audio = record.get("audio") if isinstance(record.get("audio"), dict) else {}
     uri = str(audio.get("uri") or "")
     if not uri:
         return None
@@ -142,7 +142,7 @@ def _prompt_text(value: Any, *, depth: int = 0) -> str | None:
 def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
     """Build the editable, provenance-preserving Oída → Germ prompt handoff."""
     evidence: list[dict[str, Any]] = []
-    listening = record.get("listening") or {}
+    listening = record.get("listening") if isinstance(record.get("listening"), dict) else {}
     record_summary = record.get("summary")
 
     # A producer may use versioned/dynamic AKOÚŌ namespace names. Prefer an
@@ -191,7 +191,10 @@ def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
                 break
 
     if not evidence:
-        tags = [str(t) for t in record.get("tags") or []]
+        tags = [
+            str(tag)
+            for tag in (record.get("tags") if isinstance(record.get("tags"), list) else [])
+        ]
         if tags:
             evidence.append({"namespace": "record.tags", "text": ", ".join(tags)})
 
@@ -334,13 +337,15 @@ def _maybe_link_recurrence(store, record: dict[str, Any]) -> None:
     """Same audio content already in the store → ``same_source_as`` kinship to
     the most recent holder (spec v1.1 relations)."""
     akousma = _akousma()
-    content_hash = str(record.get("audio", {}).get("content_hash") or "")
+    audio = record.get("audio") if isinstance(record.get("audio"), dict) else {}
+    content_hash = str(audio.get("content_hash") or "")
     if not content_hash:
         return
     matches = [
         candidate
         for candidate in store.find_by_hash(content_hash)
-        if candidate.get("akousma_id") != record.get("akousma_id")
+        if isinstance(candidate, dict)
+        and candidate.get("akousma_id") != record.get("akousma_id")
     ]
     if not matches:
         return
@@ -433,7 +438,10 @@ def record_generation(
     path = Path(audio_path).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError(f"audio_path must point to a file: {audio_path}")
-    data = path.read_bytes()
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
 
     all_extensions = dict(extensions or {})
     if germ_lineage:
@@ -459,7 +467,7 @@ def record_generation(
                 "asset_id": path.stem,
                 "type": "generation",
                 "uri": path.as_uri(),
-                "content_hash": f"sha256:{sha256(data).hexdigest()}",
+                "content_hash": f"sha256:{digest.hexdigest()}",
             },
             originating_app="germ",
             source_type="generated",

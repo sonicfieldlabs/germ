@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server.earworm import metadata_to_earworm_session, write_earworm_session
 from server.registry import settings, storage
+from server.schemas import validate_json_compatible
 from server.storage import safe_stem
 
 
@@ -16,9 +17,9 @@ router = APIRouter(prefix="/earworm", tags=["earworm"])
 
 
 class EarwormExportRequest(BaseModel):
-    metadata_path: str
+    metadata_path: str = Field(min_length=1, max_length=4096)
     persist: bool = True
-    output_name: str | None = None
+    output_name: str | None = Field(default=None, max_length=120)
 
 
 @router.post("/export")
@@ -26,10 +27,16 @@ def export_earworm_session(request: EarwormExportRequest) -> dict[str, Any]:
     metadata_path = _resolve_metadata_path(request.metadata_path)
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise HTTPException(status_code=422, detail="metadata_path must contain JSON") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="metadata_path could not be read") from exc
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=422, detail="metadata_path must contain a JSON object")
+    try:
+        validate_json_compatible(metadata, label="Earworm metadata")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     session = metadata_to_earworm_session(metadata)
     session_file = None
@@ -68,4 +75,9 @@ def _resolve_metadata_path(raw_path: str) -> Path:
     output_root = settings.output_root.resolve()
     if not (path == output_root or output_root in path.parents):
         raise HTTPException(status_code=422, detail="metadata_path must stay inside output/")
+    try:
+        if path.stat().st_size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="metadata_path exceeds the 10 MB limit")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="metadata_path could not be inspected") from exc
     return path

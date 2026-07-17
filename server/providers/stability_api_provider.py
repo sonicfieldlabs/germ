@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import time
 import wave
+from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+from uuid import uuid4
 
 import httpx
 
 from server.config import Settings
+from server.identity import __version__
 from server.providers.base import AudioGenerationProvider
 from server.schemas import (
     AudioToAudioRequest,
@@ -34,7 +38,10 @@ class StabilityAPIProvider(AudioGenerationProvider):
     api_model = "stable-audio-3"
     sample_rate = 44_100
     credit_cost_per_request = 26
-    _model_aliases = {"large": api_model, "stable-audio-3": api_model}
+    _model_aliases: ClassVar[dict[str, str]] = {
+        "large": api_model,
+        "stable-audio-3": api_model,
+    }
 
     def __init__(self, storage, settings: Settings) -> None:
         super().__init__(storage)
@@ -273,26 +280,43 @@ class StabilityAPIProvider(AudioGenerationProvider):
             )
 
         self._cleanup(intermediates)
-        self.storage.write_metadata(
-            metadata_path=metadata_path,
-            request=request,
-            mode=mode,
-            provider=self.provider_id,
-            model=self.api_model,
-            seed=first_seed,
-            output_audio_path=audio_path,
-            sample_rate=self.sample_rate,
-            status="done",
-            extra={
-                "multi_range_strategy": "sequential_stability_api_inpaint",
-                "api_generation_ids": generation_ids,
-                "range_seeds": range_seeds,
-                "api_model": self.api_model,
-                "api_credit_estimate": self.credit_cost_per_request * len(generation_ids),
-                "api_ignored_controls": self._ignored_controls(request),
-                "intermediate_files_cleaned": True,
-            },
-        )
+        try:
+            self.storage.write_metadata(
+                metadata_path=metadata_path,
+                request=request,
+                mode=mode,
+                provider=self.provider_id,
+                model=self.api_model,
+                seed=first_seed,
+                output_audio_path=audio_path,
+                sample_rate=self.sample_rate,
+                status="done",
+                extra={
+                    "multi_range_strategy": "sequential_stability_api_inpaint",
+                    "api_generation_ids": generation_ids,
+                    "range_seeds": range_seeds,
+                    "api_model": self.api_model,
+                    "api_credit_estimate": self.credit_cost_per_request * len(generation_ids),
+                    "api_ignored_controls": self._ignored_controls(request),
+                    "intermediate_files_cleaned": True,
+                },
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            audio_path.unlink(missing_ok=True)
+            return self._failure_result(
+                request=request,
+                mode=mode,
+                job_id=job_id,
+                paths=(audio_path, metadata_path),
+                seed=first_seed,
+                error=f"failed to persist Stability API result metadata: {exc}",
+                cancelled=False,
+                extra={
+                    "multi_range_strategy": "sequential_stability_api_inpaint",
+                    "api_generation_ids": generation_ids,
+                    "range_seeds": range_seeds,
+                },
+            )
         result = GenerationResult(
             job_id=job_id,
             status="done",
@@ -316,23 +340,27 @@ class StabilityAPIProvider(AudioGenerationProvider):
         seed: int,
         job_id: str,
     ) -> tuple[bytes, str, int | None]:
+        if self.is_job_cancelled(job_id):
+            raise StabilityAPICancelled("Stable Audio 3 API submission cancelled.")
         endpoint, data, input_path = self._request_parts(request, seed)
+        fields = {key: (None, value) for key, value in data.items()}
         if input_path is None:
-            response = client.post(endpoint, data=data, files={"none": ("", b"")})
+            response = client.post(endpoint, files=fields)
         else:
             mime = mimetypes.guess_type(input_path.name)[0] or "application/octet-stream"
             with input_path.open("rb") as handle:
                 response = client.post(
                     endpoint,
-                    data=data,
-                    files={"audio": (input_path.name, handle, mime)},
+                    files={**fields, "audio": (input_path.name, handle, mime)},
                 )
         if response.status_code != 202:
             raise StabilityAPIError(self._response_error(response, "submission"))
         try:
             generation_id = str(response.json()["id"])
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise StabilityAPIError("Stability API returned no generation id") from exc
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,256}", generation_id):
+            raise StabilityAPIError("Stability API returned an invalid generation id")
         deadline = time.monotonic() + self.settings.provider_timeout_seconds
         result_url = f"{self.settings.stability_api_url}/v2beta/audio/results/{generation_id}"
         while True:
@@ -340,6 +368,8 @@ class StabilityAPIProvider(AudioGenerationProvider):
                 raise StabilityAPICancelled("Stable Audio 3 API polling cancelled.")
             result = client.get(result_url)
             if result.status_code == 200:
+                if self.is_job_cancelled(job_id):
+                    raise StabilityAPICancelled("Stable Audio 3 API polling cancelled.")
                 if not result.content:
                     raise StabilityAPIError("Stability API returned an empty audio result")
                 actual_seed = self._header_seed(result.headers.get("seed"))
@@ -402,7 +432,7 @@ class StabilityAPIProvider(AudioGenerationProvider):
                     "sequential Stability API inpainting requires duration >= 6 seconds "
                     "so each intermediate remains a valid edit source"
                 )
-            for start, end in request.inpaint_ranges:
+            for _start, end in request.inpaint_ranges:
                 if end > request.duration:
                     raise ValueError("inpaint range end cannot exceed duration")
 
@@ -415,9 +445,24 @@ class StabilityAPIProvider(AudioGenerationProvider):
         if path.suffix.lower() == ".wav":
             try:
                 with wave.open(str(path), "rb") as source:
-                    duration = source.getnframes() / float(source.getframerate())
-            except (wave.Error, ZeroDivisionError) as exc:
+                    frame_count = source.getnframes()
+                    sample_rate = source.getframerate()
+                    channels = source.getnchannels()
+                    sample_width = source.getsampwidth()
+                    compression = source.getcomptype()
+                    duration = frame_count / float(sample_rate)
+                    self._validate_pcm_frame_data(source, frame_count, channels, sample_width)
+            except (EOFError, OSError, wave.Error, ZeroDivisionError) as exc:
                 raise ValueError("Stability API input must be a readable PCM WAV or MP3") from exc
+            if (
+                compression != "NONE"
+                or channels not in {1, 2}
+                or sample_width not in {1, 2, 3, 4}
+                or sample_rate <= 0
+                or sample_rate > 768_000
+                or frame_count <= 0
+            ):
+                raise ValueError("Stability API input must be a non-empty PCM WAV or MP3")
             if duration < 6 or duration > 380:
                 raise ValueError("Stability API input audio must be between 6 and 380 seconds")
         return path
@@ -479,7 +524,7 @@ class StabilityAPIProvider(AudioGenerationProvider):
             "authorization": f"Bearer {self.settings.stability_api_key.strip()}",
             "accept": "audio/*",
             "stability-client-id": "germ",
-            "stability-client-version": "0.2.0",
+            "stability-client-version": __version__,
         }
 
     def _resolve_model(self, model_id: str) -> str:
@@ -501,9 +546,10 @@ class StabilityAPIProvider(AudioGenerationProvider):
     @staticmethod
     def _header_seed(value: str | None) -> int | None:
         try:
-            return int(value) if value is not None else None
+            seed = int(value) if value is not None else None
         except (TypeError, ValueError):
             return None
+        return seed if seed is not None and 0 <= seed <= 4_294_967_294 else None
 
     @staticmethod
     def _write_audio_atomic(path: Path, audio: bytes) -> None:
@@ -511,9 +557,59 @@ class StabilityAPIProvider(AudioGenerationProvider):
             raise OSError("refusing to write an empty audio response")
         if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
             raise OSError("Stability API returned a non-WAV response")
-        temp = path.with_name(f".{path.name}.tmp")
-        temp.write_bytes(audio)
-        temp.replace(path)
+        try:
+            with wave.open(BytesIO(audio), "rb") as wav:
+                channels = wav.getnchannels()
+                sample_rate = wav.getframerate()
+                frame_count = wav.getnframes()
+                sample_width = wav.getsampwidth()
+                compression = wav.getcomptype()
+                StabilityAPIProvider._validate_pcm_frame_data(
+                    wav,
+                    frame_count,
+                    channels,
+                    sample_width,
+                )
+        except (EOFError, wave.Error) as exc:
+            raise OSError(f"Stability API returned an invalid WAV response: {exc}") from exc
+        if (
+            compression != "NONE"
+            or channels not in {1, 2}
+            or sample_width not in {1, 2, 3, 4}
+            or sample_rate != StabilityAPIProvider.sample_rate
+            or frame_count <= 0
+            or frame_count > sample_rate * 380
+        ):
+            raise OSError("Stability API returned unsupported WAV parameters")
+        temp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            temp.write_bytes(audio)
+            temp.replace(path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    @staticmethod
+    def _validate_pcm_frame_data(
+        wav: wave.Wave_read,
+        frame_count: int,
+        channels: int,
+        sample_width: int,
+    ) -> None:
+        if frame_count <= 0 or channels <= 0 or sample_width <= 0:
+            raise wave.Error("invalid PCM parameters")
+        frames_read = 0
+        frame_width = channels * sample_width
+        while frames_read < frame_count:
+            requested = min(65_536, frame_count - frames_read)
+            chunk = wav.readframes(requested)
+            if not chunk or len(chunk) % frame_width:
+                raise wave.Error("truncated PCM sample data")
+            decoded_frames = len(chunk) // frame_width
+            if decoded_frames > requested:
+                raise wave.Error("malformed PCM sample data")
+            frames_read += decoded_frames
+        if frames_read != frame_count:
+            raise wave.Error("truncated PCM sample data")
 
     @staticmethod
     def _cleanup(paths: list[Path]) -> None:
@@ -526,19 +622,22 @@ class StabilityAPIProvider(AudioGenerationProvider):
     @staticmethod
     def _response_error(response: httpx.Response, action: str) -> str:
         request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
+        request_id = str(request_id)[:256] if request_id else None
         try:
             body = response.json()
             if isinstance(body, dict):
                 errors = body.get("errors") or body.get("message") or body.get("name")
-                detail = (
-                    "; ".join(str(item) for item in errors)
-                    if isinstance(errors, list)
-                    else str(errors)
-                )
+                if isinstance(errors, list):
+                    detail = "; ".join(str(item) for item in errors)
+                elif errors not in (None, ""):
+                    detail = str(errors)
+                else:
+                    detail = response.text[:500] or "no error detail returned"
             else:
                 detail = str(body)
-        except ValueError:
+        except (ValueError, RecursionError):
             detail = response.text[:500]
+        detail = str(detail)[:2_000] or "no error detail returned"
         suffix = f" (request {request_id})" if request_id else ""
         return f"Stability API {action} failed with HTTP {response.status_code}{suffix}: {detail}"
 

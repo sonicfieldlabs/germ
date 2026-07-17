@@ -2046,7 +2046,9 @@ function updateModels(preserve = true) {
   const provider = $("provider").value;
   const previous = $("model").value;
   const models = providerModels[provider] || [];
-  $("model").innerHTML = models.map((model) => `<option value="${model}">${model}</option>`).join("");
+  $("model").replaceChildren(
+    ...models.map((model) => new Option(String(model), String(model))),
+  );
   if (preserve && models.includes(previous)) $("model").value = previous;
   $("activeProvider").textContent = provider;
   $("activeModel").textContent = $("model").value || "-";
@@ -3576,7 +3578,10 @@ function normalizeTimeState(raw = {}) {
   const bpm = Math.min(300, Math.max(20, Number(raw?.bpm) || defaults.bpm));
   const bars = Math.min(128, Math.max(1, Math.round(Number(raw?.bars) || defaults.bars)));
   const ppq = Math.min(3840, Math.max(24, Math.round(Number(raw?.ppq) || defaults.ppq)));
-  const sampleRate = Math.round(Number(raw?.sampleRate ?? raw?.sample_rate) || defaults.sampleRate);
+  // Backend time renders are fixed to SAME's 44.1 kHz clock. Session data
+  // created by older builds may contain another rate, so normalize it here
+  // before the clock reaches the API.
+  const sampleRate = 44100;
   const snapDivision = ["1/4", "1/8", "1/16", "1/32", "triplet"].includes(raw?.snapDivision ?? raw?.snap_division)
     ? (raw.snapDivision ?? raw.snap_division)
     : defaults.snapDivision;
@@ -3599,9 +3604,14 @@ function timeClockDerived(clock = timeState) {
   const normalized = normalizeTimeState(clock);
   const secondsPerBeat = 60 / normalized.bpm;
   const totalBeats = normalized.bars * normalized.timeSignature.beatsPerBar;
-  const loopSeconds = totalBeats * secondsPerBeat;
   const ticksPerBar = normalized.timeSignature.beatsPerBar * normalized.ppq;
   const totalTicks = normalized.bars * ticksPerBar;
+  const loopStartTick = Math.min(totalTicks - 1, normalized.loopStartTick);
+  const requestedLoopEnd = Number(normalized.loopEndTick);
+  const loopEndTick = Number.isFinite(requestedLoopEnd) && requestedLoopEnd > loopStartTick
+    ? Math.min(totalTicks, Math.round(requestedLoopEnd))
+    : totalTicks;
+  const loopSeconds = ((loopEndTick - loopStartTick) / normalized.ppq) * secondsPerBeat;
   return {
     secondsPerBeat,
     totalBeats,
@@ -3609,24 +3619,26 @@ function timeClockDerived(clock = timeState) {
     loopSamples: Math.round(loopSeconds * normalized.sampleRate),
     ticksPerBar,
     totalTicks,
-    loopStartTick: normalized.loopStartTick,
-    loopEndTick: normalized.loopEndTick || totalTicks,
+    loopStartTick,
+    loopEndTick,
   };
 }
 
 function timeStateApiClock() {
+  const normalized = normalizeTimeState(timeState);
+  const derived = timeClockDerived(normalized);
   return {
-    enabled: Boolean(timeState.enabled),
-    bpm: Number(timeState.bpm),
-    beats_per_bar: Number(timeState.timeSignature.beatsPerBar),
-    beat_unit: Number(timeState.timeSignature.beatUnit),
-    bars: Number(timeState.bars),
-    ppq: Number(timeState.ppq),
-    sample_rate: Number(timeState.sampleRate),
-    snap_division: timeState.snapDivision,
-    swing: Number(timeState.swing) || 0,
-    loop_start_tick: Number(timeState.loopStartTick) || 0,
-    loop_end_tick: timeState.loopEndTick || null,
+    enabled: Boolean(normalized.enabled),
+    bpm: normalized.bpm,
+    beats_per_bar: normalized.timeSignature.beatsPerBar,
+    beat_unit: normalized.timeSignature.beatUnit,
+    bars: normalized.bars,
+    ppq: normalized.ppq,
+    sample_rate: normalized.sampleRate,
+    snap_division: normalized.snapDivision,
+    swing: normalized.swing,
+    loop_start_tick: derived.loopStartTick,
+    loop_end_tick: derived.loopEndTick,
   };
 }
 
@@ -7963,19 +7975,20 @@ function renderSnapshotLibrary() {
     const nodeCount = record.nodes?.length || 0;
     const edgeCount = record.edges?.length || 0;
     const date = record.createdAt ? new Date(record.createdAt).toLocaleString() : "—";
-    return `<div class="snapshot-card" data-snapshot-id="${record.id}">
-      <button class="snapshot-card-fav${isFav ? " is-fav" : ""}" data-action="snapshot-toggle-fav" data-snapshot-id="${record.id}" title="${isFav ? "Unfavorite" : "Favorite"}" type="button">
+    const safeRecordId = escapeHtml(record.id);
+    return `<div class="snapshot-card" data-snapshot-id="${safeRecordId}">
+      <button class="snapshot-card-fav${isFav ? " is-fav" : ""}" data-action="snapshot-toggle-fav" data-snapshot-id="${safeRecordId}" title="${isFav ? "Unfavorite" : "Favorite"}" type="button">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="${isFav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
       </button>
-      <div class="snapshot-card-info" data-action="snapshot-load" data-snapshot-id="${record.id}">
+      <div class="snapshot-card-info" data-action="snapshot-load" data-snapshot-id="${safeRecordId}">
         <div class="snapshot-card-name">${escapeHtml(record.name || record.id)}</div>
-        <div class="snapshot-card-meta">${nodeCount} nodes · ${edgeCount} edges · ${date}</div>
+        <div class="snapshot-card-meta">${escapeHtml(nodeCount)} nodes · ${escapeHtml(edgeCount)} edges · ${escapeHtml(date)}</div>
       </div>
       <div class="snapshot-card-actions">
-        <button data-action="snapshot-rename" data-snapshot-id="${record.id}" title="Rename" type="button">
+        <button data-action="snapshot-rename" data-snapshot-id="${safeRecordId}" title="Rename" type="button">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
-        <button class="snapshot-delete" data-action="snapshot-delete" data-snapshot-id="${record.id}" title="Delete" type="button">
+        <button class="snapshot-delete" data-action="snapshot-delete" data-snapshot-id="${safeRecordId}" title="Delete" type="button">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
         </button>
       </div>
@@ -8076,7 +8089,7 @@ function renderSessionLibrary() {
     return `<div class="snapshot-card" data-session-id="${escapeHtml(session.id)}">
       <div class="snapshot-card-info" data-action="session-load" data-session-id="${escapeHtml(session.id)}">
         <div class="snapshot-card-name">${escapeHtml(session.name || session.id)}</div>
-        <div class="snapshot-card-meta">${session.node_count} nodes · ${session.edge_count} edges · ${date}</div>
+        <div class="snapshot-card-meta">${escapeHtml(session.node_count)} nodes · ${escapeHtml(session.edge_count)} edges · ${escapeHtml(date)}</div>
       </div>
       <div class="snapshot-card-actions">
         <button class="snapshot-delete" data-action="session-delete" data-session-id="${escapeHtml(session.id)}" title="Delete session" aria-label="Delete session" type="button">
@@ -16160,7 +16173,9 @@ async function canvasAcceptCandidate(candidateId, acceptAs) {
   if (!candidate || !candidateAsset) return;
   const sourceNode = canvasNodes.find((node) => node.id === candidate.sourceNodeId) || canvasSelectedNode();
   if (acceptAs === "branch" || !sourceNode || sourceNode.type !== "sound") {
-    const sourceEl = sourceNode ? document.querySelector(`.canvas-node[data-node-id="${sourceNode.id}"]`) : null;
+    const sourceEl = sourceNode
+      ? document.querySelector(`.canvas-node[data-node-id="${CSS.escape(sourceNode.id)}"]`)
+      : null;
     const sourceH = sourceEl ? sourceEl.offsetHeight : (sourceNode?.height || 262);
     let newX = (sourceNode?.x || 210) + 48;
     let newY = (sourceNode?.y || 110) + 260;

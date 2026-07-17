@@ -1836,17 +1836,20 @@ function openMicrocosmosSettings() {
     return;
   }
 
-  const providersOptions = Array.from(providerSelect.options).map(opt => 
-    `<option value="${opt.value}" ${opt.value === providerSelect.value ? 'selected' : ''}>${opt.text}</option>`
-  ).join("");
+  const optionMarkup = (opt, selectedValue) =>
+    `<option value="${E.escapeHtml(opt.value)}" ${opt.value === selectedValue ? 'selected' : ''}>${E.escapeHtml(opt.text)}</option>`;
 
-  const modelsOptions = Array.from(modelSelect.options).map(opt => 
-    `<option value="${opt.value}" ${opt.value === modelSelect.value ? 'selected' : ''}>${opt.text}</option>`
-  ).join("");
+  const providersOptions = Array.from(providerSelect.options)
+    .map((opt) => optionMarkup(opt, providerSelect.value))
+    .join("");
 
-  const devicesOptions = Array.from(deviceSelect.options).map(opt => 
-    `<option value="${opt.value}" ${opt.value === deviceSelect.value ? 'selected' : ''}>${opt.text}</option>`
-  ).join("");
+  const modelsOptions = Array.from(modelSelect.options)
+    .map((opt) => optionMarkup(opt, modelSelect.value))
+    .join("");
+
+  const devicesOptions = Array.from(deviceSelect.options)
+    .map((opt) => optionMarkup(opt, deviceSelect.value))
+    .join("");
 
   const serverUrlVal = serverUrlInput.value;
 
@@ -1913,9 +1916,9 @@ function openMicrocosmosSettings() {
     // Wait for app.js to update modelSelect dropdown based on new provider,
     // then re-populate dishModel select list inside settings menu.
     setTimeout(() => {
-      dishModel.innerHTML = Array.from(modelSelect.options).map(opt => 
-        `<option value="${opt.value}" ${opt.value === modelSelect.value ? 'selected' : ''}>${opt.text}</option>`
-      ).join("");
+      dishModel.innerHTML = Array.from(modelSelect.options)
+        .map((opt) => optionMarkup(opt, modelSelect.value))
+        .join("");
     }, 80);
   });
 
@@ -1940,9 +1943,9 @@ function openMicrocosmosSettings() {
         await E.refreshAll();
         // Update values in the settings menu
         dishProv.value = providerSelect.value;
-        dishModel.innerHTML = Array.from(modelSelect.options).map(opt => 
-          `<option value="${opt.value}" ${opt.value === modelSelect.value ? 'selected' : ''}>${opt.text}</option>`
-        ).join("");
+        dishModel.innerHTML = Array.from(modelSelect.options)
+          .map((opt) => optionMarkup(opt, modelSelect.value))
+          .join("");
         dishDev.value = deviceSelect.value;
         dishServ.value = serverUrlInput.value;
       } catch (err) {

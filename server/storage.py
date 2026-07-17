@@ -27,10 +27,18 @@ def utc_now_iso() -> str:
 
 
 def safe_stem(value: str | None, fallback: str = "sa3_output") -> str:
-    if not value:
-        value = fallback
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()).strip("._-")
-    return stem[:80] or fallback
+    raw = str(value if value else fallback)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", raw.strip()).strip("._-")
+    if stem:
+        return stem[:80]
+    if fallback == "":
+        return ""
+    fallback_stem = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "_",
+        str(fallback or "sa3_output").strip(),
+    ).strip("._-")
+    return fallback_stem[:80] or "sa3_output"
 
 
 def safe_suffix(value: str | None, fallback: str = ".wav") -> str:
@@ -41,9 +49,20 @@ def safe_suffix(value: str | None, fallback: str = ".wav") -> str:
 
 
 MAX_TRACKED_JOBS = 500
+MAX_TRACKED_JOBS_HARD = 1000
 JOB_EVICTION_GRACE_SECONDS = 15 * 60
 MAX_LINEAGE_CHILD_LOCKS = 512
-AUDIO_EXTENSIONS = {".aif", ".aiff", ".flac", ".m4a", ".mp3", ".ogg", ".wav", ".webm"}
+AUDIO_EXTENSIONS = {
+    ".aif",
+    ".aiff",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".webm",
+}
 MODEL_FILE_EXTENSIONS = {".bin", ".ckpt", ".gguf", ".mlmodel", ".pt", ".pth", ".safetensors"}
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 
@@ -101,6 +120,18 @@ class StorageManager:
                 ):
                     self.jobs.pop(job_id, None)
                     self.job_listeners.pop(job_id, None)
+            # Bound bursts inside the dashboard grace period without evicting
+            # queued/running jobs or terminal jobs with active listeners.
+            if len(self.jobs) > MAX_TRACKED_JOBS_HARD:
+                for job_id, job in list(self.jobs.items()):
+                    if len(self.jobs) <= MAX_TRACKED_JOBS_HARD:
+                        return
+                    if (
+                        job.get("status") in terminal
+                        and self.job_listeners.get(job_id, 0) <= 0
+                    ):
+                        self.jobs.pop(job_id, None)
+                        self.job_listeners.pop(job_id, None)
 
     def ensure_dirs(self) -> None:
         self.audio_dir.mkdir(parents=True, exist_ok=True)
@@ -223,6 +254,8 @@ class StorageManager:
         resolved = self.resolve_existing_path(path, label=label)
         if not self.is_within(resolved, self.metadata_dir):
             raise PermissionError(f"{label} must be inside the metadata directory: {path}")
+        if not resolved.is_file():
+            raise ValueError(f"{label} must point to a file: {path}")
         return resolved
 
     def resolve_existing_input_audio_path(self, path: str | Path, *, label: str = "input audio") -> Path:
@@ -245,14 +278,22 @@ class StorageManager:
             raise PermissionError(f"{label} must be inside an allowed model root ({roots}): {path}")
         if resolved.suffix.lower() not in MODEL_FILE_EXTENSIONS:
             raise ValueError(f"{label} has an unsupported extension: {path}")
+        if not resolved.is_file():
+            raise ValueError(f"{label} must point to a file: {path}")
         return resolved
 
     @staticmethod
     def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-        temp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-        temp_path.replace(path)
+        try:
+            temp_path.write_text(
+                json.dumps(data, indent=2, sort_keys=True, allow_nan=False),
+                encoding="utf-8",
+            )
+            temp_path.replace(path)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     def write_json_atomic(
         self,
@@ -484,6 +525,17 @@ class StorageManager:
         if extra:
             metadata.update(extra)
 
+        metadata_path = Path(metadata_path)
+        initial_akousmata = self._initial_akousmata_state(request_data)
+        metadata["akousmata"] = initial_akousmata
+        with self._lock:
+            self._write_json_atomic(metadata_path, metadata)
+            self.library_version += 1
+
+        # Commit the local sound before touching shared memory. If this
+        # optional companion write succeeds, annotate the already-valid local
+        # record; a failure to rewrite that annotation must not delete audio
+        # or leave Akousmata pointing at a rolled-back render.
         metadata["akousmata"] = self._remember_generation_as_akousma(
             metadata=metadata,
             request_data=request_data,
@@ -492,17 +544,34 @@ class StorageManager:
         )
         if metadata["akousmata"].get("akousma_id"):
             metadata["akousma_id"] = metadata["akousmata"]["akousma_id"]
+        if metadata["akousmata"] != initial_akousmata:
+            try:
+                with self._lock:
+                    self._write_json_atomic(metadata_path, metadata)
+            except (OSError, TypeError, ValueError):
+                pass
 
-        metadata_path = Path(metadata_path)
-        with self._lock:
-            self._write_json_atomic(metadata_path, metadata)
-            self.library_version += 1
-            if output_audio_path:
-                self._append_lineage_child(
-                    lineage.get("parent_metadata_paths") or [],
-                    lineage["id"],
-                )
+        if output_audio_path:
+            self._append_lineage_child(
+                lineage.get("parent_metadata_paths") or [],
+                lineage["id"],
+            )
         return metadata
+
+    def _initial_akousmata_state(self, request_data: dict[str, Any]) -> dict[str, Any]:
+        requested = bool(request_data.get("remember_to_akousmata"))
+        source = request_data.get("source") if isinstance(request_data.get("source"), dict) else {}
+        parents = self._string_list(request_data.get("parent_akousma_ids"))
+        source_akousma_id = source.get("akousma_id")
+        if isinstance(source_akousma_id, (str, int)) and not isinstance(source_akousma_id, bool):
+            source_akousma_id = str(source_akousma_id).strip()[:256]
+            if source_akousma_id and source_akousma_id not in parents:
+                parents.append(source_akousma_id)
+        return {
+            "status": "pending" if requested else "not_requested",
+            "requested": requested,
+            "parent_akousma_ids": parents,
+        }
 
     def _remember_generation_as_akousma(
         self,
@@ -512,17 +581,10 @@ class StorageManager:
         output_audio_path: str | Path | None,
         status: str,
     ) -> dict[str, Any]:
-        requested = bool(request_data.get("remember_to_akousmata"))
+        state = self._initial_akousmata_state(request_data)
+        requested = state["requested"]
         source = request_data.get("source") if isinstance(request_data.get("source"), dict) else {}
-        parents = self._string_list(request_data.get("parent_akousma_ids"))
-        source_akousma_id = str(source.get("akousma_id") or "").strip()
-        if source_akousma_id and source_akousma_id not in parents:
-            parents.append(source_akousma_id)
-        state: dict[str, Any] = {
-            "status": "not_requested" if not requested else "pending",
-            "requested": requested,
-            "parent_akousma_ids": parents,
-        }
+        parents = state["parent_akousma_ids"]
         if not requested:
             return state
         if status != "done" or not output_audio_path:
@@ -588,7 +650,7 @@ class StorageManager:
         except Exception as exc:
             # Audio generation succeeded.  Memory is an explicit companion
             # write and must report failure without disguising the valid sound.
-            return {**state, "status": "error", "error": str(exc)}
+            return {**state, "status": "error", "error": str(exc)[:2_000]}
 
     def _lineage_metadata(
         self,
@@ -603,10 +665,12 @@ class StorageManager:
         metadata_path: str | Path,
     ) -> dict[str, Any]:
         raw = request_data.get("lineage") if isinstance(request_data.get("lineage"), dict) else {}
-        sound_id = str(raw.get("id") or f"sound_{Path(metadata_path).stem}")
+        sound_id = str(raw.get("id") or f"sound_{Path(metadata_path).stem}").strip()[:256]
+        if not sound_id:
+            sound_id = f"sound_{Path(metadata_path).stem}"[:256]
         parents = self._string_list(raw.get("parents"))
         children = self._string_list(raw.get("children"))
-        operation = str(raw.get("operation") or germinator_mode or mode)
+        operation = str(raw.get("operation") or germinator_mode or mode).strip()[:200]
         operation_params = raw.get("operation_params") if isinstance(raw.get("operation_params"), dict) else {}
         operation_params = {
             "prompt": request_data.get("prompt"),
@@ -688,7 +752,14 @@ class StorageManager:
     def _string_list(value: Any) -> list[str]:
         if not isinstance(value, list):
             return []
-        return [str(item) for item in value if item not in (None, "")]
+        values: list[str] = []
+        for item in value:
+            if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+                continue
+            cleaned = str(item).strip()[:500]
+            if cleaned and cleaned not in values:
+                values.append(cleaned)
+        return values[:512]
 
     @staticmethod
     def _compact_lora_specs(value: Any) -> list[dict[str, Any]]:
@@ -738,7 +809,16 @@ class StorageManager:
             with lock:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
-                except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError):
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    UnicodeError,
+                    json.JSONDecodeError,
+                    RecursionError,
+                    OSError,
+                ):
+                    continue
+                if not isinstance(data, dict):
                     continue
                 children = self._string_list(data.get("children"))
                 if child_id not in children:
@@ -747,7 +827,10 @@ class StorageManager:
                 lineage = data.get("lineage") if isinstance(data.get("lineage"), dict) else {}
                 lineage["children"] = children
                 data["lineage"] = lineage
-                self._write_json_atomic(path, data)
+                try:
+                    self._write_json_atomic(path, data)
+                except (OSError, TypeError, ValueError):
+                    continue
 
     def _lineage_child_lock(self, path: Path) -> RLock:
         key = path.resolve()
@@ -802,6 +885,7 @@ class StorageManager:
         provider: str | None = None,
         model: str | None = None,
     ) -> GenerationResult:
+        error = str(error)[:10_000]
         metadata_path = self.reserve_paths(request=request, mode=mode, job_id=job_id)[0][1]
         request_data = request.model_dump(exclude={"job_id"})
         provider = provider or request_data.get("provider", "unknown")
@@ -863,6 +947,7 @@ class StorageManager:
             job["metadata_files"] = result.metadata_files
             job["error"] = result.error
             job["updated_at"] = utc_now_iso()
+            self._evict_old_jobs()
 
     def get_job(self, job_id: str) -> JobStatus | None:
         with self._lock:

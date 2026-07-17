@@ -18,7 +18,10 @@ def list_strains() -> StrainRegistryResponse:
 @router.post("", response_model=StrainCard)
 @router.post("/", response_model=StrainCard)
 def save_strain(strain: StrainCard) -> StrainCard:
-    return strain_registry.save_strain(strain)
+    try:
+        return strain_registry.save_strain(strain)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{strain_id}", response_model=StrainCard)

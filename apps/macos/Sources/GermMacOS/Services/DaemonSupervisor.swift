@@ -89,34 +89,36 @@ final class DaemonSupervisor {
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             self?.emitLines(from: handle.availableData)
         }
-        proc.terminationHandler = { [weak self] process in
+        proc.terminationHandler = { [weak self] terminatedProcess in
             DispatchQueue.main.async {
-                self?.onExit?(process.terminationStatus)
-                self?.cleanup()
+                guard self?.process === terminatedProcess else { return }
+                self?.onExit?(terminatedProcess.terminationStatus)
+                self?.cleanup(expected: terminatedProcess)
             }
-        }
-
-        do {
-            try proc.run()
-        } catch {
-            cleanup()
-            throw DaemonSupervisorError.launchFailed(error.localizedDescription)
         }
 
         process = proc
         self.outputPipe = outputPipe
         self.errorPipe = errorPipe
+        do {
+            try proc.run()
+        } catch {
+            cleanup(expected: proc)
+            throw DaemonSupervisorError.launchFailed(error.localizedDescription)
+        }
         onLogLine?("Started germ daemon from \(root.path)")
     }
 
     func stop() {
-        guard let process else { return }
-        process.terminate()
-        cleanup()
+        guard let managedProcess = process else { return }
+        managedProcess.terminationHandler = nil
+        managedProcess.terminate()
+        cleanup(expected: managedProcess)
         onLogLine?("Stopped managed daemon")
     }
 
-    private func cleanup() {
+    private func cleanup(expected: Process? = nil) {
+        if let expected, process !== expected { return }
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil

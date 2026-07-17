@@ -10,6 +10,7 @@ import struct
 import sys
 import wave
 from collections import OrderedDict
+from itertools import pairwise
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -43,6 +44,7 @@ from server.schemas import (
     ControlRoute,
     ControlRouteEnableRequest,
     ControlRoutesResponse,
+    validate_json_compatible,
 )
 from server.storage import safe_stem, utc_now_iso
 
@@ -50,6 +52,7 @@ from server.storage import safe_stem, utc_now_iso
 router = APIRouter(prefix="/control", tags=["control"])
 
 MAX_CONTROL_POINTS_PER_FEATURE = 20000
+MAX_OSC_PACKET_BYTES = 8192
 MICRO_MODULE_TYPES = {
     "grain_culture",
     "particle_engine",
@@ -65,6 +68,7 @@ MICRO_MODULE_TYPES = {
 }
 
 CONTROL_GRAPH_JSON_CACHE_LIMIT = 600
+CONTROL_GRAPH_JSON_MAX_BYTES = 10_000_000
 _CONTROL_GRAPH_JSON_CACHE_LOCK = Lock()
 _CONTROL_GRAPH_JSON_CACHE: OrderedDict[str, tuple[int, dict[str, Any] | None]] = OrderedDict()
 
@@ -179,6 +183,11 @@ def _safe_osc_target(host: str) -> str:
 def send_osc(message: ControlOSCMessage) -> ControlOSCResult:
     target = _safe_osc_target(message.host)
     packet = _osc_packet(message)
+    if len(packet) > MAX_OSC_PACKET_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"OSC packet exceeds {MAX_OSC_PACKET_BYTES} bytes",
+        )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(0.5)
@@ -321,8 +330,10 @@ def _midi_bytes(message: ControlMIDIMessage) -> list[int]:
     if message.type == "transport":
         return [0xFA if message.value > 0 else 0xFC]
     if message.type in {"note_on", "note_off"}:
-        return [_midi_status_byte(message), int(message.note or 60), int(message.velocity)]
-    return [_midi_status_byte(message), int(message.cc or 1), int(message.value)]
+        note = message.note if message.note is not None else 60
+        return [_midi_status_byte(message), int(note), int(message.velocity)]
+    cc = message.cc if message.cc is not None else 1
+    return [_midi_status_byte(message), int(cc), int(message.value)]
 
 
 @router.post("/midi/send", response_model=ControlMIDIResult)
@@ -333,7 +344,11 @@ def send_midi(message: ControlMIDIMessage) -> ControlMIDIResult:
                 kind="midi",
                 source=f"midi_{message.backend}",
                 value={"bytes": _midi_bytes(message), "type": message.type, "device": message.device},
-                metadata={**message.metadata, "sent": message.backend == "browser"},
+                metadata={
+                    **message.metadata,
+                    "sent": False,
+                    "browser_intent": message.backend == "browser",
+                },
             )
         )
         return ControlMIDIResult(
@@ -360,16 +375,35 @@ def send_midi(message: ControlMIDIMessage) -> ControlMIDIResult:
     try:
         import mido  # type: ignore[import-not-found]
 
-        midi_type = "control_change" if message.type == "cc" else message.type
-        kwargs: dict[str, Any] = {"channel": message.channel - 1}
-        if message.type == "cc":
-            kwargs.update({"control": message.cc or 1, "value": message.value})
-        elif message.type in {"note_on", "note_off"}:
-            kwargs.update({"note": message.note or 60, "velocity": message.velocity})
-        mido_message = mido.Message(midi_type, **kwargs)
+        if message.type == "clock":
+            mido_message = mido.Message("clock")
+        elif message.type == "transport":
+            mido_message = mido.Message("start" if message.value > 0 else "stop")
+        else:
+            midi_type = "control_change" if message.type == "cc" else message.type
+            kwargs: dict[str, Any] = {"channel": message.channel - 1}
+            if message.type == "cc":
+                control = message.cc if message.cc is not None else 1
+                kwargs.update({"control": control, "value": message.value})
+            else:
+                note = message.note if message.note is not None else 60
+                kwargs.update({"note": note, "velocity": message.velocity})
+            mido_message = mido.Message(midi_type, **kwargs)
         with mido.open_output(message.device) as output:
             output.send(mido_message)
     except Exception as exc:
+        control_registry.add_event(
+            ControlEvent(
+                kind="midi",
+                source="midi_native_optional",
+                value={
+                    "bytes": _midi_bytes(message),
+                    "type": message.type,
+                    "device": message.device,
+                },
+                metadata={**message.metadata, "sent": False, "error": str(exc)},
+            )
+        )
         return ControlMIDIResult(status="error", sent=False, backend="native_optional", detail=str(exc))
     control_registry.add_event(
         ControlEvent(
@@ -445,9 +479,19 @@ def _cached_json_items_for_control_graph(
     if not root.exists():
         return []
     entries: list[tuple[Path, int]] = []
+    root_resolved = root.resolve()
     for path in root.glob("*.json"):
         try:
-            entries.append((path, path.stat().st_mtime_ns))
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.resolve().parent != root_resolved
+            ):
+                continue
+            stat = path.stat()
+            if stat.st_size > CONTROL_GRAPH_JSON_MAX_BYTES:
+                continue
+            entries.append((path, stat.st_mtime_ns))
         except OSError:
             continue
     entries.sort(key=lambda item: item[1], reverse=True)
@@ -464,7 +508,9 @@ def _cached_json_items_for_control_graph(
             try:
                 loaded = json.loads(path.read_text(encoding="utf-8"))
                 data = loaded if isinstance(loaded, dict) else None
-            except (json.JSONDecodeError, OSError):
+                if data is not None:
+                    validate_json_compatible(data, label="control graph metadata")
+            except (UnicodeError, json.JSONDecodeError, OSError, RecursionError, ValueError):
                 data = None
             with _CONTROL_GRAPH_JSON_CACHE_LOCK:
                 _CONTROL_GRAPH_JSON_CACHE[cache_key] = (mtime_ns, data)
@@ -770,6 +816,12 @@ def _resolve_output_wav(path: str) -> Path:
 
 def _read_pcm16_wav(path: Path) -> tuple[array.array, int, int, int]:
     try:
+        file_size = path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot inspect WAV file: {exc}") from exc
+    if file_size > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="WAV file exceeds the configured size limit")
+    try:
         with wave.open(str(path), "rb") as wav:
             if wav.getcomptype() != "NONE":
                 raise HTTPException(status_code=422, detail="Compressed WAV files are not supported.")
@@ -778,12 +830,19 @@ def _read_pcm16_wav(path: Path) -> tuple[array.array, int, int, int]:
             sample_rate = wav.getframerate()
             frame_count = wav.getnframes()
             raw = wav.readframes(frame_count)
-    except wave.Error as exc:
+    except (EOFError, wave.Error) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid WAV file: {exc}") from exc
     if sample_width != 2:
         raise HTTPException(status_code=422, detail="Control analysis requires 16-bit PCM WAV audio.")
     if channels not in {1, 2}:
         raise HTTPException(status_code=422, detail="Control analysis supports mono or stereo WAV audio.")
+    if sample_rate <= 0 or frame_count <= 0:
+        raise HTTPException(status_code=422, detail="Control analysis requires non-empty WAV audio.")
+    if frame_count > sample_rate * 380:
+        raise HTTPException(status_code=422, detail="Control analysis supports at most 380 seconds.")
+    expected_bytes = frame_count * channels * sample_width
+    if len(raw) != expected_bytes:
+        raise HTTPException(status_code=422, detail="WAV sample data is truncated.")
     samples = array.array("h")
     samples.frombytes(raw)
     if sys.byteorder != "little":
@@ -839,10 +898,13 @@ def _chroma_unit(frequency: float) -> float:
     return (midi % 12) / 11.0
 
 
-def _decimate_points(points: list[dict[str, float]]) -> list[dict[str, float]]:
-    if len(points) <= MAX_CONTROL_POINTS_PER_FEATURE:
+def _decimate_points(
+    points: list[dict[str, float]],
+    max_points: int = MAX_CONTROL_POINTS_PER_FEATURE,
+) -> list[dict[str, float]]:
+    if len(points) <= max_points:
         return points
-    stride = math.ceil(len(points) / MAX_CONTROL_POINTS_PER_FEATURE)
+    stride = math.ceil(len(points) / max_points)
     return points[::stride]
 
 
@@ -876,9 +938,12 @@ def _analyze_features(
     sample_rate: int,
     frame_count: int,
     request: ControlAudioAnalysisRequest,
+    max_points: int = MAX_CONTROL_POINTS_PER_FEATURE,
 ) -> tuple[dict[str, list[dict[str, float]]], list[ControlFeatureSummary]]:
     window_frames = max(1, round((request.window_ms / 1000.0) * sample_rate))
     hop_frames = max(1, round((request.hop_ms / 1000.0) * sample_rate))
+    max_points = max(1, min(max_points, MAX_CONTROL_POINTS_PER_FEATURE))
+    hop_frames = max(hop_frames, math.ceil(frame_count / max_points))
     raw_values: dict[str, list[float]] = {feature: [] for feature in request.features}
     transient_values: list[float] = []
     times: list[float] = []
@@ -905,7 +970,11 @@ def _analyze_features(
         transient = max(0.0, rms - previous_rms)
         previous_rms = rms
         spectral_proxy = min(1.0, diff_total / max(total, 1e-9))
-        pitch_hz = _estimated_pitch_hz(samples, channels, frame, end, sample_rate)
+        pitch_hz = (
+            _estimated_pitch_hz(samples, channels, frame, end, sample_rate)
+            if "pitch" in request.features or "chroma" in request.features
+            else 0.0
+        )
         feature_values = {
             "envelope": envelope,
             "rms": rms,
@@ -939,7 +1008,7 @@ def _analyze_features(
             onset_times = [times[index] for index, flag in enumerate(onset_flags) if flag]
             intervals = [
                 right - left
-                for left, right in zip(onset_times, onset_times[1:])
+                for left, right in pairwise(onset_times)
                 if 0.05 <= right - left <= 4.0
             ]
             if intervals:
@@ -960,7 +1029,7 @@ def _analyze_features(
             {"t": round(times[index], 6), "value": round(max(0.0, min(1.0, value)), 6)}
             for index, value in enumerate(values)
         ]
-        points = _decimate_points(points)
+        points = _decimate_points(points, max_points)
         feature_points[feature] = points
         summaries.append(_feature_summary(feature, points))
     return feature_points, summaries
@@ -1111,8 +1180,17 @@ def _load_control_points(request: ControlCVRenderRequest) -> list[dict[str, floa
     try:
         artifact_path = control_registry.resolve_control_artifact(request.input_control_path)
         artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError) as exc:
+    except (
+        FileNotFoundError,
+        PermissionError,
+        UnicodeError,
+        json.JSONDecodeError,
+        OSError,
+        RecursionError,
+    ) as exc:
         raise HTTPException(status_code=422, detail=f"invalid control artifact: {exc}") from exc
+    if not isinstance(artifact, dict):
+        raise HTTPException(status_code=422, detail="control artifact must be a JSON object")
     features = artifact.get("features") if isinstance(artifact.get("features"), dict) else {}
     if not features:
         raise HTTPException(status_code=422, detail="control artifact has no features")
@@ -1120,29 +1198,24 @@ def _load_control_points(request: ControlCVRenderRequest) -> list[dict[str, floa
     points = features.get(feature)
     if not isinstance(points, list) or not points:
         raise HTTPException(status_code=422, detail=f"control feature not found: {feature}")
-    return [
-        {
-            "t": max(0.0, float(point.get("t", 0.0))),
-            "value": max(-1.0, min(1.0, float(point.get("value", 0.0)))),
-        }
-        for point in points
-        if isinstance(point, dict)
-    ]
-
-
-def _interpolate(points: list[dict[str, float]], t: float) -> float:
-    if not points:
-        return 0.0
-    if t <= points[0]["t"]:
-        return points[0]["value"]
-    for index in range(1, len(points)):
-        left = points[index - 1]
-        right = points[index]
-        if t <= right["t"]:
-            span = max(1e-9, right["t"] - left["t"])
-            unit = (t - left["t"]) / span
-            return left["value"] + (right["value"] - left["value"]) * unit
-    return points[-1]["value"]
+    parsed: dict[float, float] = {}
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        try:
+            t = float(point.get("t", 0.0))
+            value = float(point.get("value", 0.0))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise HTTPException(status_code=422, detail="control points must be numeric") from exc
+        if not math.isfinite(t) or not math.isfinite(value):
+            raise HTTPException(status_code=422, detail="control points must be finite")
+        parsed[max(0.0, t)] = max(-1.0, min(1.0, value))
+        if len(parsed) > MAX_CONTROL_POINTS_PER_FEATURE:
+            raise HTTPException(
+                status_code=422,
+                detail=f"control artifact exceeds {MAX_CONTROL_POINTS_PER_FEATURE} points",
+            )
+    return [{"t": t, "value": value} for t, value in sorted(parsed.items())]
 
 
 def _cv_signal_value(request: ControlCVRenderRequest, value: float) -> float:
@@ -1163,9 +1236,22 @@ def _render_cv_bytes(request: ControlCVRenderRequest, points: list[dict[str, flo
     max_delta = None
     if request.slew_ms > 0:
         max_delta = 1.0 / max(1.0, (request.slew_ms / 1000.0) * request.sample_rate)
+    point_index = 0
     for frame in range(frame_count):
         t = frame / request.sample_rate
-        value = _cv_signal_value(request, _interpolate(points, t))
+        while point_index + 1 < len(points) and t > points[point_index + 1]["t"]:
+            point_index += 1
+        if t <= points[0]["t"]:
+            interpolated = points[0]["value"]
+        elif point_index + 1 < len(points):
+            left = points[point_index]
+            right = points[point_index + 1]
+            span = max(1e-9, right["t"] - left["t"])
+            unit = (t - left["t"]) / span
+            interpolated = left["value"] + (right["value"] - left["value"]) * unit
+        else:
+            interpolated = points[-1]["value"]
+        value = _cv_signal_value(request, interpolated)
         if max_delta is not None:
             delta = max(-max_delta, min(max_delta, value - last_value))
             value = last_value + delta

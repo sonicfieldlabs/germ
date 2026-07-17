@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -78,23 +79,84 @@ WavetableGenerationMode = Literal[
 SUPPORTED_WAVETABLE_FRAME_SIZES = {512, 1024, 2048, 4096}
 
 
+def validate_json_compatible(value: Any, *, label: str = "payload") -> Any:
+    """Reject non-finite, excessively deep, or non-JSON data before persistence."""
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    nodes = 0
+    text_characters = 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if nodes > 50_000:
+            raise ValueError(f"{label} is too complex")
+        if depth > 32:
+            raise ValueError(f"{label} is nested too deeply")
+        if item is None or isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            if not -(2**63) <= item < 2**63:
+                raise ValueError(f"{label} contains an integer outside the signed 64-bit range")
+            continue
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                raise ValueError(f"{label} contains a non-finite number")
+            continue
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ValueError(f"{label} contains invalid Unicode") from exc
+            text_characters += len(item)
+            if text_characters > 2_000_000:
+                raise ValueError(f"{label} contains too much text")
+            continue
+        if isinstance(item, (list, tuple)):
+            stack.extend((child, depth + 1) for child in item)
+            continue
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise ValueError(f"{label} contains a non-string object key")
+                if len(key) > 1_000:
+                    raise ValueError(f"{label} contains an object key that is too long")
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError as exc:
+                    raise ValueError(f"{label} contains an invalid Unicode object key") from exc
+                text_characters += len(key)
+                if text_characters > 2_000_000:
+                    raise ValueError(f"{label} contains too much text")
+                stack.append((child, depth + 1))
+            continue
+        raise ValueError(f"{label} contains a non-JSON value")
+    return value
+
+
+class JSONRequestModel(BaseModel):
+    @model_validator(mode="after")
+    def validate_json_payload(self) -> "JSONRequestModel":
+        validate_json_compatible(self.model_dump(mode="python"), label=self.__class__.__name__)
+        return self
+
+
 class LoraSpec(BaseModel):
-    path: str
-    id: str | None = None
-    name: str | None = None
+    path: str = Field(min_length=1, max_length=4096)
+    id: str | None = Field(default=None, max_length=256)
+    name: str | None = Field(default=None, max_length=500)
     enabled: bool = True
     strength: float | None = Field(default=None, ge=0.0, le=10.0)
     step_range: str | None = Field(
         default=None,
+        max_length=100,
         description="Optional MLX diffusion-step range, for example '2-8', '2-', or '-4'.",
     )
-    tags: list[str] = Field(default_factory=list)
-    author: str | None = None
-    license: str | None = None
-    source_dataset: str | None = None
-    prompt_vocabulary: list[str] = Field(default_factory=list)
-    recommended_modules: list[str] = Field(default_factory=list)
-    provenance_notes: str | None = None
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    author: str | None = Field(default=None, max_length=500)
+    license: str | None = Field(default=None, max_length=500)
+    source_dataset: str | None = Field(default=None, max_length=1000)
+    prompt_vocabulary: list[str] = Field(default_factory=list, max_length=128)
+    recommended_modules: list[str] = Field(default_factory=list, max_length=128)
+    provenance_notes: str | None = Field(default=None, max_length=10_000)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("path")
@@ -126,26 +188,26 @@ class LoraSpec(BaseModel):
         return cleaned
 
 
-class StrainCard(BaseModel):
-    id: str | None = None
-    name: str
-    path: str | None = None
-    description: str | None = None
-    source_dataset: str | None = None
-    license: str | None = None
-    author: str | None = None
+class StrainCard(JSONRequestModel):
+    id: str | None = Field(default=None, max_length=256)
+    name: str = Field(min_length=1, max_length=500)
+    path: str | None = Field(default=None, max_length=4096)
+    description: str | None = Field(default=None, max_length=10_000)
+    source_dataset: str | None = Field(default=None, max_length=1000)
+    license: str | None = Field(default=None, max_length=500)
+    author: str | None = Field(default=None, max_length=500)
     training_settings: dict[str, Any] = Field(default_factory=dict)
-    prompt_vocabulary: list[str] = Field(default_factory=list)
-    recommended_modules: list[str] = Field(default_factory=list)
-    example_sounds: list[str] = Field(default_factory=list)
-    provenance_notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    prompt_vocabulary: list[str] = Field(default_factory=list, max_length=128)
+    recommended_modules: list[str] = Field(default_factory=list, max_length=128)
+    example_sounds: list[str] = Field(default_factory=list, max_length=128)
+    provenance_notes: str | None = Field(default=None, max_length=10_000)
+    tags: list[str] = Field(default_factory=list, max_length=128)
     strength_min: float = Field(default=0.0, ge=0.0, le=10.0)
     strength_max: float = Field(default=1.5, ge=0.0, le=10.0)
     default_strength: float = Field(default=0.7, ge=0.0, le=10.0)
     enabled: bool = True
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: str | None = Field(default=None, max_length=100)
+    updated_at: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name")
@@ -155,6 +217,13 @@ class StrainCard(BaseModel):
         if not cleaned:
             raise ValueError("strain name is required")
         return cleaned
+
+    @field_validator("path")
+    @classmethod
+    def validate_optional_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @model_validator(mode="after")
     def validate_strength_range(self) -> "StrainCard":
@@ -171,19 +240,33 @@ class StrainRegistryResponse(BaseModel):
 
 class StrainLoadRequest(BaseModel):
     provider: ProviderId = "stable_audio_python"
-    strain_ids: list[str] = Field(default_factory=list)
-    paths: list[str] = Field(default_factory=list)
+    strain_ids: list[str] = Field(default_factory=list, max_length=64)
+    paths: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("strain_ids", "paths")
+    @classmethod
+    def validate_strain_references(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 4096 for value in cleaned):
+            raise ValueError("strain references must contain 1 to 4096 characters")
+        return list(dict.fromkeys(cleaned))
 
 
-class MicroMatterRequest(BaseModel):
-    input_audio_path: str
-    metadata_path: str | None = None
-    source_id: str | None = None
-    module: str = "microscope"
+class MicroMatterRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    source_id: str | None = Field(default=None, max_length=256)
+    module: str = Field(default="microscope", min_length=1, max_length=120)
     window_ms: float = Field(default=20.0, ge=5.0, le=1000.0)
     hop_ms: float = Field(default=10.0, ge=5.0, le=1000.0)
-    output_name: str | None = None
+    output_name: str | None = Field(default=None, max_length=120)
     lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_analysis_window(self) -> "MicroMatterRequest":
+        if self.window_ms > self.hop_ms * 4:
+            raise ValueError("window_ms cannot exceed four times hop_ms")
+        return self
 
 
 class MicroMatterProfileResult(BaseModel):
@@ -200,7 +283,7 @@ class MicroMatterProfileResult(BaseModel):
     error: str | None = None
 
 
-class MicroBiomeSaveRequest(BaseModel):
+class MicroBiomeSaveRequest(JSONRequestModel):
     name: str = Field(min_length=1, max_length=120)
     state: dict[str, Any] = Field(default_factory=dict)
 
@@ -221,12 +304,12 @@ class MicroBiomeResult(BaseModel):
     state: dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionSaveRequest(BaseModel):
+class SessionSaveRequest(JSONRequestModel):
     name: str = Field(min_length=1, max_length=120)
     graph: dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionCurrentRequest(BaseModel):
+class SessionCurrentRequest(JSONRequestModel):
     graph: dict[str, Any] = Field(default_factory=dict)
     client_id: str | None = Field(default=None, max_length=64)
 
@@ -249,16 +332,16 @@ class SessionResult(BaseModel):
     graph: dict[str, Any] = Field(default_factory=dict)
 
 
-class WavetableConvertRequest(BaseModel):
-    input_audio_path: str
-    metadata_path: str | None = None
-    name: str | None = None
+class WavetableConvertRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    name: str | None = Field(default=None, max_length=500)
     frame_size: int = 2048
     frame_count: int = Field(default=128, ge=1, le=512)
-    root_note: str = "C3"
+    root_note: str = Field(default="C3", min_length=1, max_length=16)
     extraction_mode: WavetableExtractionMode = "simple"
-    output_name: str | None = None
-    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"])
+    output_name: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"], max_length=128)
     operation_params: dict[str, Any] = Field(default_factory=dict)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
@@ -277,26 +360,26 @@ class WavetableConvertRequest(BaseModel):
         return value
 
 
-class WavetableRenderRequest(BaseModel):
-    wavetable_id: str
+class WavetableRenderRequest(JSONRequestModel):
+    wavetable_id: str = Field(min_length=1, max_length=256)
     duration: float = Field(default=2.0, gt=0.0, le=60.0)
-    root_note: str | None = None
-    note: str = "C3"
+    root_note: str | None = Field(default=None, max_length=16)
+    note: str = Field(default="C3", min_length=1, max_length=16)
     scan_start: float = Field(default=0.0, ge=0.0, le=1.0)
     scan_end: float = Field(default=1.0, ge=0.0, le=1.0)
     gain: float = Field(default=0.7, ge=0.0, le=2.0)
-    output_name: str | None = None
-    tags: list[str] = Field(default_factory=lambda: ["wavetable-render"])
+    output_name: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=lambda: ["wavetable-render"], max_length=128)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
 
-class WavetableImportRequest(BaseModel):
-    input_audio_path: str
+class WavetableImportRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
     frame_size: int = 2048
-    name: str = "imported table"
-    root_note: str = "C3"
-    output_name: str | None = None
-    tags: list[str] = Field(default_factory=lambda: ["wavetable", "imported"])
+    name: str = Field(default="imported table", min_length=1, max_length=500)
+    root_note: str = Field(default="C3", min_length=1, max_length=16)
+    output_name: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "imported"], max_length=128)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("frame_size")
@@ -314,21 +397,21 @@ class WavetablePromptContract(BaseModel):
     negative_prompt: str
 
 
-class WavetablePromptRequest(BaseModel):
+class WavetablePromptRequest(JSONRequestModel):
     provider: ProviderId = "mock"
-    model: str = "mock-sine"
-    prompt: str
-    negative_prompt: str = ""
+    model: str = Field(default="mock-sine", min_length=1, max_length=500)
+    prompt: str = Field(min_length=1, max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
     duration: float = Field(default=2.0, gt=0.0, le=380.0)
-    root_note: str = "C3"
+    root_note: str = Field(default="C3", min_length=1, max_length=16)
     generation_mode: WavetableGenerationMode = "single_cycle_tone"
     extraction_mode: WavetableExtractionMode = "simple"
     frame_count: int = Field(default=64, ge=1, le=512)
     frame_size: int = 2048
-    output_name: str | None = None
-    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"])
+    output_name: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=lambda: ["wavetable", "germ"], max_length=128)
     variation_count: int = Field(default=1, ge=1, le=16)
-    modulators: list[dict[str, Any]] = Field(default_factory=list)
+    modulators: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("frame_size")
@@ -346,20 +429,20 @@ class WavetablePromptRequest(BaseModel):
         return value
 
 
-class WavetableMutationRequest(BaseModel):
-    wavetable_id: str
+class WavetableMutationRequest(JSONRequestModel):
+    wavetable_id: str = Field(min_length=1, max_length=256)
     provider: ProviderId = "mock"
-    model: str = "mock-sine"
-    prompt: str
-    negative_prompt: str = ""
+    model: str = Field(default="mock-sine", min_length=1, max_length=500)
+    prompt: str = Field(min_length=1, max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
     init_noise_level: float = Field(default=0.42, ge=0.0, le=1.0)
     render_duration: float = Field(default=2.0, gt=0.0, le=60.0)
-    root_note: str = "C3"
+    root_note: str = Field(default="C3", min_length=1, max_length=16)
     extraction_mode: WavetableExtractionMode = "simple"
     frame_count: int = Field(default=64, ge=1, le=512)
     frame_size: int = 2048
     variation_count: int = Field(default=1, ge=1, le=16)
-    modulators: list[dict[str, Any]] = Field(default_factory=list)
+    modulators: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("frame_size")
@@ -421,58 +504,58 @@ class WavetableOperationResult(BaseModel):
     error: str | None = None
 
 
-class BaseGenerationRequest(BaseModel):
+class BaseGenerationRequest(JSONRequestModel):
     provider: ProviderId = "mock"
-    model: str = "mock-sine"
+    model: str = Field(default="mock-sine", min_length=1, max_length=500)
     prompt: str = Field(default="", max_length=10_000)
     negative_prompt: str = Field(default="", max_length=10_000)
     base_prompt: str | None = Field(default=None, max_length=10_000)
     modulated_prompt: str | None = Field(default=None, max_length=10_000)
     base_negative_prompt: str | None = Field(default=None, max_length=10_000)
     modulated_negative_prompt: str | None = Field(default=None, max_length=10_000)
-    modulators: list[dict[str, Any]] = Field(default_factory=list)
-    semantic_layers: list[dict[str, Any]] = Field(default_factory=list)
-    semantic_effects: list[dict[str, Any]] = Field(default_factory=list)
+    modulators: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    semantic_layers: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    semantic_effects: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     generation_context: dict[str, Any] = Field(default_factory=dict)
-    prompt_weight: float | None = None
-    negative_prompt_weight: float | None = None
-    seed_drift: float | None = None
-    batch_spread: float | None = None
-    inpaint_density: float | None = None
-    mask_feather: float | None = None
-    continuation_divergence: float | None = None
-    brightness_language: float | None = None
-    lora_strength: float | None = None
-    region_roles: list[dict[str, Any]] = Field(default_factory=list)
-    preserve_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    accent_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    forbidden_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    seed_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    texture_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    variation_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    bridge_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    silence_ranges: list[tuple[float, float]] = Field(default_factory=list)
-    genetic_identities: list[dict[str, Any]] = Field(default_factory=list)
-    generation_sequences: list[dict[str, Any]] = Field(default_factory=list)
+    prompt_weight: float | None = Field(default=None, allow_inf_nan=False)
+    negative_prompt_weight: float | None = Field(default=None, allow_inf_nan=False)
+    seed_drift: float | None = Field(default=None, allow_inf_nan=False)
+    batch_spread: float | None = Field(default=None, allow_inf_nan=False)
+    inpaint_density: float | None = Field(default=None, allow_inf_nan=False)
+    mask_feather: float | None = Field(default=None, allow_inf_nan=False)
+    continuation_divergence: float | None = Field(default=None, allow_inf_nan=False)
+    brightness_language: float | None = Field(default=None, allow_inf_nan=False)
+    lora_strength: float | None = Field(default=None, allow_inf_nan=False)
+    region_roles: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    preserve_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    accent_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    forbidden_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    seed_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    texture_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    variation_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    bridge_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    silence_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=512)
+    genetic_identities: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    generation_sequences: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     duration: float = Field(default=4.0, gt=0.0, le=380.0)
     steps: int = Field(default=8, ge=1, le=250)
     cfg_scale: float = Field(default=1.0, ge=0.0, le=25.0)
     seed: int = Field(default=-1, ge=-1, le=4_294_967_294)
     batch_size: int = Field(default=1, ge=1, le=16)
-    lora: list[LoraSpec] = Field(default_factory=list)
-    output_name: str | None = None
-    culture_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = None
+    lora: list[LoraSpec] = Field(default_factory=list, max_length=32)
+    output_name: str | None = Field(default=None, max_length=120)
+    culture_id: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    notes: str | None = Field(default=None, max_length=10_000)
     ratings: dict[str, Any] = Field(default_factory=dict)
-    waveform_preview: str | None = None
-    control_routes: list[dict[str, Any]] = Field(default_factory=list)
-    control_snapshots: list[dict[str, Any]] = Field(default_factory=list)
-    control_sources: list[dict[str, Any]] = Field(default_factory=list)
+    waveform_preview: str | None = Field(default=None, max_length=4096)
+    control_routes: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    control_snapshots: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    control_sources: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     source: dict[str, Any] = Field(default_factory=dict)
     latents: dict[str, Any] = Field(default_factory=dict)
-    latent_file: str | None = None
-    latent_fingerprint: str | None = None
+    latent_file: str | None = Field(default=None, max_length=4096)
+    latent_fingerprint: str | None = Field(default=None, max_length=500)
     chunked_decode: bool = True
     lineage: dict[str, Any] = Field(default_factory=dict)
     remember_to_akousmata: bool = False
@@ -541,13 +624,13 @@ class GenerateRequest(BaseGenerationRequest):
 
 
 class AudioToAudioRequest(BaseGenerationRequest):
-    input_audio_path: str
+    input_audio_path: str = Field(min_length=1, max_length=4096)
     init_noise_level: float = Field(default=0.45, ge=0.0, le=1.0)
 
 
 class InpaintRequest(BaseGenerationRequest):
-    input_audio_path: str
-    inpaint_ranges: list[tuple[float, float]] = Field(default_factory=list)
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    inpaint_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=64)
 
     @field_validator("inpaint_ranges")
     @classmethod
@@ -569,7 +652,7 @@ class InpaintRequest(BaseGenerationRequest):
 
 
 class ContinueRequest(BaseGenerationRequest):
-    input_audio_path: str
+    input_audio_path: str = Field(min_length=1, max_length=4096)
     source_duration: float = Field(gt=0.0)
     target_duration: float = Field(gt=0.0, le=380.0)
 
@@ -584,8 +667,8 @@ class ContinueRequest(BaseGenerationRequest):
 
 class LoadModelRequest(BaseModel):
     provider: ProviderId
-    model: str
-    device: str = "auto"
+    model: str = Field(min_length=1, max_length=500)
+    device: str = Field(default="auto", min_length=1, max_length=100)
 
 
 class LoadModelResponse(BaseModel):
@@ -598,7 +681,15 @@ class LoadModelResponse(BaseModel):
 
 class LoraLoadRequest(BaseModel):
     provider: ProviderId = "stable_audio_python"
-    paths: list[str]
+    paths: list[str] = Field(min_length=1, max_length=32)
+
+    @field_validator("paths")
+    @classmethod
+    def validate_lora_paths(cls, paths: list[str]) -> list[str]:
+        cleaned = [path.strip() for path in paths]
+        if any(not path or len(path) > 4096 for path in cleaned):
+            raise ValueError("LoRA paths must contain 1 to 4096 characters")
+        return list(dict.fromkeys(cleaned))
 
 
 class LoraStrengthRequest(BaseModel):
@@ -665,6 +756,15 @@ class TimeClock(BaseModel):
             raise ValueError("beat_unit must be a common note denominator")
         return beat_unit
 
+    @model_validator(mode="after")
+    def validate_loop_range(self) -> "TimeClock":
+        loop_end = self.resolved_loop_end_tick()
+        if loop_end > self.total_ticks():
+            raise ValueError("loop_end_tick cannot exceed the clock length")
+        if self.loop_start_tick >= loop_end:
+            raise ValueError("loop_start_tick must be less than loop_end_tick")
+        return self
+
     def seconds_per_beat(self) -> float:
         return 60.0 / self.bpm
 
@@ -672,7 +772,8 @@ class TimeClock(BaseModel):
         return float(self.bars * self.beats_per_bar)
 
     def loop_seconds(self) -> float:
-        return self.total_beats() * self.seconds_per_beat()
+        loop_ticks = self.resolved_loop_end_tick() - self.loop_start_tick
+        return (loop_ticks / self.ppq) * self.seconds_per_beat()
 
     def loop_samples(self) -> int:
         return round(self.loop_seconds() * self.sample_rate)
@@ -688,17 +789,17 @@ class TimeClock(BaseModel):
 
 
 class TimeRenderSource(BaseModel):
-    id: str
-    audio_path: str
-    metadata_path: str | None = None
-    label: str | None = None
+    id: str = Field(min_length=1, max_length=128)
+    audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    label: str | None = Field(default=None, max_length=500)
     gain: float = Field(default=1.0, ge=0.0, le=2.0)
     pan: float = Field(default=0.0, ge=-1.0, le=1.0)
 
 
 class TimeRenderEvent(BaseModel):
     tick: int = Field(ge=0)
-    source_id: str
+    source_id: str = Field(min_length=1, max_length=128)
     lane: int | None = Field(default=None, ge=0)
     pad: int | None = Field(default=None, ge=0)
     velocity: float = Field(default=1.0, ge=0.0, le=2.0)
@@ -722,30 +823,30 @@ class TimeRenderEvent(BaseModel):
         return self
 
 
-class TimeRenderRequest(BaseModel):
+class TimeRenderRequest(JSONRequestModel):
     module_type: TimeModuleType
-    module_id: str
+    module_id: str = Field(min_length=1, max_length=128)
     clock: TimeClock = Field(default_factory=TimeClock)
     sources: list[TimeRenderSource] = Field(min_length=1, max_length=64)
     events: list[TimeRenderEvent] = Field(min_length=1, max_length=4096)
-    output_name: str | None = None
-    culture_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = None
-    prompt: str = ""
-    negative_prompt: str = ""
+    output_name: str | None = Field(default=None, max_length=120)
+    culture_id: str | None = Field(default=None, max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=128)
+    notes: str | None = Field(default=None, max_length=10_000)
+    prompt: str = Field(default="", max_length=10_000)
+    negative_prompt: str = Field(default="", max_length=10_000)
     duration: float | None = Field(default=None, gt=0.0, le=380.0)
     seed: int = -1
     normalize: bool = True
-    lora: list[LoraSpec] = Field(default_factory=list)
+    lora: list[LoraSpec] = Field(default_factory=list, max_length=32)
     source: dict[str, Any] = Field(default_factory=dict)
     latents: dict[str, Any] = Field(default_factory=dict)
-    waveform_preview: str | None = None
+    waveform_preview: str | None = Field(default=None, max_length=4096)
     lineage: dict[str, Any] = Field(default_factory=dict)
-    modulators: list[dict[str, Any]] = Field(default_factory=list)
-    control_routes: list[dict[str, Any]] = Field(default_factory=list)
-    control_snapshots: list[dict[str, Any]] = Field(default_factory=list)
-    control_sources: list[dict[str, Any]] = Field(default_factory=list)
+    modulators: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    control_routes: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    control_snapshots: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
+    control_sources: list[dict[str, Any]] = Field(default_factory=list, max_length=512)
     job_id: str | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
@@ -753,6 +854,19 @@ class TimeRenderRequest(BaseModel):
         ids = [source.id for source in self.sources]
         if len(set(ids)) != len(ids):
             raise ValueError("time render sources must have unique ids")
+        missing_ids = sorted({event.source_id for event in self.events} - set(ids))
+        if missing_ids:
+            raise ValueError(
+                f"time render event references missing source: {', '.join(missing_ids)}"
+            )
+        loop_start = self.clock.loop_start_tick
+        loop_end = self.clock.resolved_loop_end_tick()
+        if any(not loop_start <= event.tick < loop_end for event in self.events):
+            raise ValueError("time render event ticks must fall inside the clock loop")
+        if self.duration is not None:
+            tolerance = 1.0 / self.clock.sample_rate
+            if abs(self.duration - self.clock.loop_seconds()) > tolerance:
+                raise ValueError("duration must match the clock loop duration")
         return self
 
 
@@ -760,12 +874,12 @@ ListenerProvider = Literal["neutral", "mock", "local", "oida", "api"]
 ListenerTask = Literal["prompt_enhance", "negative_prompt", "curate", "repair"]
 
 
-class ListenerEnhanceRequest(BaseModel):
+class ListenerEnhanceRequest(JSONRequestModel):
     provider: ListenerProvider = "neutral"
     task: ListenerTask = "prompt_enhance"
     prompt: str = Field(default="", max_length=10_000)
     negative_prompt: str = Field(default="", max_length=10_000)
-    model: str = "neutral-compiler"
+    model: str = Field(default="neutral-compiler", min_length=1, max_length=500)
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -781,12 +895,12 @@ class ListenerEnhanceResult(BaseModel):
     repair_proposals: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ListenerScoreRequest(BaseModel):
+class ListenerScoreRequest(JSONRequestModel):
     provider: ListenerProvider = "neutral"
     prompt: str = Field(default="", max_length=10_000)
-    audio_path: str
-    metadata_path: str | None = None
-    model: str = "local-signal-check"
+    audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    model: str = Field(default="local-signal-check", min_length=1, max_length=500)
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -804,9 +918,9 @@ class ListenerScoreResult(BaseModel):
     features: dict[str, Any] = Field(default_factory=dict)
 
 
-class ListenerRelistenRequest(BaseModel):
-    audio_path: str
-    metadata_path: str | None = None
+class ListenerRelistenRequest(JSONRequestModel):
+    audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
     prompt: str = Field(default="", max_length=10_000)
     negative_prompt: str = Field(default="", max_length=10_000)
     route_preset: str = Field(default="generative", min_length=1, max_length=80)
@@ -867,19 +981,19 @@ class JobSubmitResponse(BaseModel):
 
 
 class ControlTransform(BaseModel):
-    amount: float = Field(default=1.0, ge=0.0, le=4.0)
+    amount: float = Field(default=1.0, ge=0.0, le=4.0, allow_inf_nan=False)
     polarity: ControlPolarity = "normal"
     curve: ControlCurve = "linear"
-    min: float | None = None
-    max: float | None = None
-    smoothing_ms: float = Field(default=0.0, ge=0.0, le=60000.0)
-    slew_ms: float = Field(default=0.0, ge=0.0, le=60000.0)
+    min: float | None = Field(default=None, allow_inf_nan=False)
+    max: float | None = Field(default=None, allow_inf_nan=False)
+    smoothing_ms: float = Field(default=0.0, ge=0.0, le=60000.0, allow_inf_nan=False)
+    slew_ms: float = Field(default=0.0, ge=0.0, le=60000.0, allow_inf_nan=False)
     quantize_steps: int | None = Field(default=None, ge=2, le=4096)
-    probability: float = Field(default=1.0, ge=0.0, le=1.0)
+    probability: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
     clock_sync: bool = False
     division: SnapDivision | None = None
-    clamp_min: float | None = None
-    clamp_max: float | None = None
+    clamp_min: float | None = Field(default=None, allow_inf_nan=False)
+    clamp_max: float | None = Field(default=None, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_ranges(self) -> "ControlTransform":
@@ -906,18 +1020,18 @@ class ControlPort(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ControlRoute(BaseModel):
-    id: str | None = None
-    label: str | None = None
-    source_port_id: str
-    target_port_id: str
+class ControlRoute(JSONRequestModel):
+    id: str | None = Field(default=None, max_length=256)
+    label: str | None = Field(default=None, max_length=500)
+    source_port_id: str = Field(min_length=1, max_length=256)
+    target_port_id: str = Field(min_length=1, max_length=256)
     source_kind: ControlPortKind
     target_kind: ControlPortKind
     enabled: bool = True
     transform: ControlTransform = Field(default_factory=ControlTransform)
     lineage_role: ControlLineageRole = "control-parent"
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: str | None = Field(default=None, max_length=100)
+    updated_at: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("source_port_id", "target_port_id")
@@ -929,14 +1043,14 @@ class ControlRoute(BaseModel):
         return value
 
 
-class ControlEvent(BaseModel):
-    id: str | None = None
-    route_id: str | None = None
-    port_id: str | None = None
+class ControlEvent(JSONRequestModel):
+    id: str | None = Field(default=None, max_length=256)
+    route_id: str | None = Field(default=None, max_length=256)
+    port_id: str | None = Field(default=None, max_length=256)
     kind: ControlPortKind = "event"
-    source: str = "dashboard"
+    source: str = Field(default="dashboard", min_length=1, max_length=256)
     value: Any = None
-    timestamp: str | None = None
+    timestamp: str | None = Field(default=None, max_length=100)
     tick: int | None = Field(default=None, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -965,10 +1079,10 @@ class ControlRouteEnableRequest(BaseModel):
     enabled: bool
 
 
-class ControlAudioAnalysisRequest(BaseModel):
-    input_audio_path: str
-    metadata_path: str | None = None
-    source_id: str | None = None
+class ControlAudioAnalysisRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    source_id: str | None = Field(default=None, max_length=256)
     features: list[ControlAnalysisFeature] = Field(
         default_factory=lambda: ["envelope", "rms", "transient", "spectral_centroid"]
     )
@@ -976,7 +1090,7 @@ class ControlAudioAnalysisRequest(BaseModel):
     hop_ms: float = Field(default=20.0, ge=5.0, le=1000.0)
     smooth: float = Field(default=0.15, ge=0.0, le=1.0)
     normalize: bool = True
-    output_name: str | None = None
+    output_name: str | None = Field(default=None, max_length=120)
     lineage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("features")
@@ -986,6 +1100,12 @@ class ControlAudioAnalysisRequest(BaseModel):
             raise ValueError("at least one feature is required")
         unique = list(dict.fromkeys(value))
         return unique
+
+    @model_validator(mode="after")
+    def validate_analysis_window(self) -> "ControlAudioAnalysisRequest":
+        if self.window_ms > self.hop_ms * 4:
+            raise ValueError("window_ms cannot exceed four times hop_ms")
+        return self
 
 
 class ControlFeatureSummary(BaseModel):
@@ -1016,13 +1136,13 @@ class ControlPoint(BaseModel):
     value: float = Field(ge=-1.0, le=1.0)
 
 
-class ControlCVRenderRequest(BaseModel):
-    input_control_path: str | None = None
+class ControlCVRenderRequest(JSONRequestModel):
+    input_control_path: str | None = Field(default=None, max_length=4096)
     feature: ControlAnalysisFeature | None = None
-    points: list[ControlPoint] = Field(default_factory=list)
+    points: list[ControlPoint] = Field(default_factory=list, max_length=20000)
     duration: float = Field(default=4.0, gt=0.0, le=380.0)
     sample_rate: Literal[44100] = 44100
-    output_name: str | None = None
+    output_name: str | None = Field(default=None, max_length=120)
     mode: ControlCVMode = "cv"
     range: ControlCVRange = "unipolar"
     scale: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -1065,11 +1185,11 @@ class ControlBridgeStatus(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
-class ControlOSCMessage(BaseModel):
-    host: str = "127.0.0.1"
+class ControlOSCMessage(JSONRequestModel):
+    host: str = Field(default="127.0.0.1", min_length=1, max_length=253)
     port: int = Field(default=9000, ge=1, le=65535)
-    address: str = "/germ/value"
-    values: list[float | int | str] = Field(default_factory=list)
+    address: str = Field(default="/germ/value", min_length=1, max_length=256)
+    values: list[float | int | str] = Field(default_factory=list, max_length=32)
     rate_limit_hz: float = Field(default=60.0, gt=0.0, le=1000.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -1077,8 +1197,22 @@ class ControlOSCMessage(BaseModel):
     @classmethod
     def validate_osc_address(cls, value: str) -> str:
         value = value.strip()
-        if not value.startswith("/") or " " in value:
-            raise ValueError("OSC address must start with / and contain no spaces")
+        if not value.startswith("/") or any(character.isspace() for character in value):
+            raise ValueError("OSC address must start with / and contain no whitespace")
+        if "\0" in value:
+            raise ValueError("OSC address cannot contain null bytes")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("OSC address must contain valid Unicode") from exc
+        return value
+
+    @field_validator("host")
+    @classmethod
+    def validate_osc_host(cls, value: str) -> str:
+        value = value.strip()
+        if not value or "\0" in value:
+            raise ValueError("OSC host is invalid")
         return value
 
     @model_validator(mode="after")
@@ -1087,6 +1221,20 @@ class ControlOSCMessage(BaseModel):
             self.values = [0.0]
         if len(self.values) > 32:
             raise ValueError("OSC messages support up to 32 values")
+        for value in self.values:
+            if isinstance(value, bool):
+                raise ValueError("OSC values cannot be booleans")
+            if isinstance(value, int) and not -(2**31) <= value < 2**31:
+                raise ValueError("OSC integer values must fit signed 32-bit encoding")
+            if isinstance(value, float) and (
+                not math.isfinite(value) or abs(value) > 3.4028235e38
+            ):
+                raise ValueError("OSC float values must fit finite 32-bit encoding")
+            if isinstance(value, str):
+                if len(value.encode("utf-8")) > 1024:
+                    raise ValueError("OSC string values cannot exceed 1024 UTF-8 bytes")
+                if "\0" in value:
+                    raise ValueError("OSC string values cannot contain null bytes")
         return self
 
 
@@ -1100,8 +1248,8 @@ class ControlOSCResult(BaseModel):
     error: str | None = None
 
 
-class ControlNornsBridgeRequest(BaseModel):
-    host: str = "127.0.0.1"
+class ControlNornsBridgeRequest(JSONRequestModel):
+    host: str = Field(default="127.0.0.1", min_length=1, max_length=253)
     port: int = Field(default=10111, ge=1, le=65535)
     profile: Literal["norns", "fates"] = "fates"
     gravity: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -1109,6 +1257,14 @@ class ControlNornsBridgeRequest(BaseModel):
     energy: float | None = Field(default=None, ge=0.0, le=1.0)
     spawn: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("host")
+    @classmethod
+    def validate_norns_host(cls, value: str) -> str:
+        value = value.strip()
+        if not value or "\0" in value:
+            raise ValueError("norns host is invalid")
+        return value
 
 
 class ControlNornsBridgeResult(BaseModel):
@@ -1121,9 +1277,9 @@ class ControlNornsBridgeResult(BaseModel):
     error: str | None = None
 
 
-class ControlMIDIMessage(BaseModel):
+class ControlMIDIMessage(JSONRequestModel):
     backend: Literal["browser", "native_optional", "event"] = "event"
-    device: str | None = None
+    device: str | None = Field(default=None, max_length=500)
     channel: int = Field(default=1, ge=1, le=16)
     type: Literal["note_on", "note_off", "cc", "clock", "transport"] = "cc"
     note: int | None = Field(default=None, ge=0, le=127)
@@ -1140,10 +1296,10 @@ class ControlMIDIResult(BaseModel):
     detail: str | None = None
 
 
-class ControlCVProfile(BaseModel):
-    id: str | None = None
-    name: str
-    interface_label: str | None = None
+class ControlCVProfile(JSONRequestModel):
+    id: str | None = Field(default=None, max_length=256)
+    name: str = Field(min_length=1, max_length=120)
+    interface_label: str | None = Field(default=None, max_length=500)
     output_channel: int = Field(ge=1, le=256)
     mode: ControlCVMode = "cv"
     range: ControlCVRange = "unipolar"
@@ -1157,12 +1313,15 @@ class ControlCVProfile(BaseModel):
     speaker_protection: bool = True
     calibrated: bool = False
     armed: bool = False
-    created_at: str | None = None
-    updated_at: str | None = None
+    created_at: str | None = Field(default=None, max_length=100)
+    updated_at: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_cv_profile(self) -> "ControlCVProfile":
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("CV profile name cannot be empty")
         if self.clamp_max_volts < self.clamp_min_volts:
             raise ValueError("clamp_max_volts must be greater than or equal to clamp_min_volts")
         if self.armed and (not self.calibrated or not self.speaker_protection):

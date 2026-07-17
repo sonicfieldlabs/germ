@@ -7,6 +7,9 @@ from uuid import uuid4
 from server.schemas import StrainCard
 from server.storage import StorageManager, safe_stem, utc_now_iso
 
+MAX_STRAINS = 512
+MAX_STRAIN_REGISTRY_BYTES = 10_000_000
+
 
 class StrainRegistry:
     def __init__(self, storage: StorageManager) -> None:
@@ -32,6 +35,8 @@ class StrainRegistry:
         with self._lock:
             strains = self._load()
             existing = next((item for item in strains if item.id and item.id == strain.id), None)
+            if existing is None and len(strains) >= MAX_STRAINS:
+                raise ValueError(f"strain registry limit reached ({MAX_STRAINS})")
             strain_id = strain.id or self._next_id(strain)
             created_at = strain.created_at or (existing.created_at if existing else None) or now
             saved = strain.model_copy(
@@ -79,14 +84,20 @@ class StrainRegistry:
         if not self.registry_path.exists():
             return []
         try:
+            if (
+                self.registry_path.is_symlink()
+                or not self.registry_path.is_file()
+                or self.registry_path.stat().st_size > MAX_STRAIN_REGISTRY_BYTES
+            ):
+                return []
             data = json.loads(self.registry_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             return []
         raw_strains = data.get("strains") if isinstance(data, dict) else data
         if not isinstance(raw_strains, list):
             return []
         strains: list[StrainCard] = []
-        for item in raw_strains:
+        for item in raw_strains[:MAX_STRAINS]:
             if not isinstance(item, dict):
                 continue
             try:

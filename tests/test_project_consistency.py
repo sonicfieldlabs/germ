@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from server.identity import __version__
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_GERM_PORT = "5178"
@@ -39,3 +41,11 @@ def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None
     assert 'tag = "v0.4.0"' in project
     assert 'subdirectory = "packages/py-akousma"' in project
     assert 'path = "../earworm' not in project
+
+
+def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
+    assert __version__ == "0.2.5"
+    assert 'version = "0.2.5"' in _read("pyproject.toml")
+    assert 'Current release: `0.2.5`.' in _read("README.md")
+    assert 'version: "0.2.5"' in _read("CITATION.cff")
+    assert 'MARKETING_VERSION="0.2.5"' in _read("apps/macos/script/build_and_run.sh")

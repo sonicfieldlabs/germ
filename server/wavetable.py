@@ -11,13 +11,20 @@ from typing import Any
 from uuid import uuid4
 
 from server.registry import storage
-from server.schemas import GenerateRequest, WavetableConvertRequest, WavetableImportRequest
+from server.schemas import (
+    GenerateRequest,
+    GenerationResult,
+    WavetableConvertRequest,
+    WavetableImportRequest,
+    validate_json_compatible,
+)
 from server.storage import safe_stem, utc_now_iso
 
 
 SUPPORTED_FRAME_SIZES = {512, 1024, 2048, 4096}
 WAVETABLE_SAMPLE_RATE = 44100
 WAVETABLE_TYPE = "germ_wavetable"
+MAX_WAVETABLE_METADATA_BYTES = 2_000_000
 
 
 def note_to_frequency(note: str) -> float:
@@ -31,6 +38,8 @@ def note_to_frequency(note: str) -> float:
     elif accidental == "b":
         semitone -= 1
     midi_note = (int(octave_text) + 1) * 12 + semitone
+    if not 0 <= midi_note <= 127:
+        raise ValueError(f"note is outside the supported MIDI range: {note}")
     return 440.0 * (2.0 ** ((midi_note - 69) / 12.0))
 
 
@@ -47,12 +56,11 @@ def convert_audio_to_wavetable(request: WavetableConvertRequest) -> dict[str, An
         raise ValueError("wavetable conversion currently requires PCM WAV input")
     source_metadata = _read_source_metadata(request.metadata_path)
     samples, sample_rate = _read_mono_pcm_wav(source_path)
-    frames = _extract_simple_frames(
+    frames, descriptors = _extract_simple_frames(
         samples=samples,
         frame_count=request.frame_count,
         frame_size=request.frame_size,
     )
-    descriptors = dict(_LAST_DESCRIPTORS)
     name = request.name or request.output_name or source_metadata.get("prompt") or source_path.stem
     metadata = _metadata_for_table(
         name=name,
@@ -94,7 +102,9 @@ def import_wav_stack(request: WavetableImportRequest) -> dict[str, Any]:
     samples, sample_rate = _read_mono_pcm_wav(source_path)
     samples = _remove_dc(samples)
     samples = _normalize(samples)
-    frame_count = max(1, len(samples) // request.frame_size)
+    frame_count = max(1, math.ceil(len(samples) / request.frame_size))
+    if frame_count > 512:
+        raise ValueError("wavetable stacks support at most 512 frames")
     frames: list[float] = []
     frame_rows: list[list[float]] = []
     for index in range(frame_count):
@@ -215,55 +225,87 @@ def render_wavetable_to_wav(
         job_id=job_id,
         extension=".wav",
     )[0]
-    _write_pcm16_wav(
-        audio_path,
-        pcm.tobytes(),
-        channels=2,
-        sample_rate=sample_rate,
-    )
-    audio_metadata = storage.write_metadata(
-        metadata_path=metadata_path,
-        request=request,
-        mode="wavetable-render",
-        provider="mock",
-        model="wavetable-render",
-        seed=-1,
-        output_audio_path=audio_path,
-        sample_rate=sample_rate,
-        status="done",
-        extra={
-            "wavetable_id": wavetable_id,
-            "wavetable_metadata_path": metadata.get("metadata_path"),
-            "wavetable_data_path": metadata.get("data_path"),
-            "source_type": "wavetable",
-            "source": {
-                "type": "wavetable",
+    try:
+        _write_pcm16_wav(
+            audio_path,
+            pcm.tobytes(),
+            channels=2,
+            sample_rate=sample_rate,
+        )
+        audio_metadata = storage.write_metadata(
+            metadata_path=metadata_path,
+            request=request,
+            mode="wavetable-render",
+            provider="mock",
+            model="wavetable-render",
+            seed=-1,
+            output_audio_path=audio_path,
+            sample_rate=sample_rate,
+            status="done",
+            extra={
                 "wavetable_id": wavetable_id,
-                "metadata_path": metadata.get("metadata_path"),
-                "data_path": metadata.get("data_path"),
+                "wavetable_metadata_path": metadata.get("metadata_path"),
+                "wavetable_data_path": metadata.get("data_path"),
+                "source_type": "wavetable",
+                "source": {
+                    "type": "wavetable",
+                    "wavetable_id": wavetable_id,
+                    "metadata_path": metadata.get("metadata_path"),
+                    "data_path": metadata.get("data_path"),
+                },
             },
-        },
-    )
-    result = storage.get_job(job_id)
-    if result:
-        storage.update_job(
-            job_id,
+        )
+    except Exception as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error=str(exc),
+                provider="mock",
+                model="wavetable-render",
+                mode="wavetable-render",
+            )
+        )
+        raise
+    storage.record_result(
+        GenerationResult(
+            job_id=job_id,
             status="done",
             audio_files=[storage.relative_path(audio_path)],
             metadata_files=[storage.relative_path(metadata_path)],
+            duration=duration,
+            sample_rate=sample_rate,
+            provider="mock",
+            model="wavetable-render",
+            mode="wavetable-render",
         )
+    )
     return audio_path, metadata_path, audio_metadata
 
 
 def load_wavetable(wavetable_id: str) -> dict[str, Any]:
     metadata_path = _metadata_path_for_id(wavetable_id)
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    data_path = storage.resolve_path(metadata["data_path"])
+    try:
+        if metadata_path.stat().st_size > MAX_WAVETABLE_METADATA_BYTES:
+            raise ValueError("wavetable metadata exceeds the 2 MB limit")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (UnicodeError, json.JSONDecodeError, OSError, RecursionError) as exc:
+        raise ValueError(f"invalid wavetable metadata: {exc}") from exc
+    validate_json_compatible(metadata, label="wavetable metadata")
+    frame_size, frame_count, data_path_value = _validate_wavetable_metadata(
+        metadata,
+        expected_id=wavetable_id,
+    )
+    data_path = storage.resolve_path(data_path_value)
     if not storage.is_within(data_path, storage.settings.wavetable_data_dir):
         raise PermissionError("wavetable data path is outside the wavetable table directory")
-    if not data_path.exists():
-        raise FileNotFoundError(f"wavetable data not found: {metadata['data_path']}")
-    expected = int(metadata["frame_count"]) * int(metadata["frame_size"])
+    if not data_path.is_file() or not data_path.name.endswith(".gwt.bin"):
+        raise FileNotFoundError(f"wavetable data not found: {data_path_value}")
+    expected = frame_count * frame_size
+    if data_path.stat().st_size != expected * 4:
+        raise ValueError("wavetable binary size does not match metadata")
     data = data_path.read_bytes()
     frames = _float32_values(data)
     if len(frames) != expected:
@@ -302,8 +344,18 @@ def write_wavetable(frames: list[float], metadata: dict[str, Any]) -> dict[str, 
         "metadata_path": storage.relative_path(metadata_path),
     }
     metadata.update(_quality_metadata(metadata, frames))
-    _write_float32(data_path, [max(-1.0, min(1.0, float(value))) for value in frames])
-    storage.write_json_atomic(metadata_path, metadata, touch_library=True)
+    normalized_frames: list[float] = []
+    for value in frames:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError("wavetable frame values must be finite")
+        normalized_frames.append(max(-1.0, min(1.0, parsed)))
+    _write_float32(data_path, normalized_frames)
+    try:
+        storage.write_json_atomic(metadata_path, metadata, touch_library=True)
+    except Exception:
+        data_path.unlink(missing_ok=True)
+        raise
     return metadata
 
 
@@ -340,19 +392,33 @@ def list_wavetables(limit: int = 5000) -> list[dict[str, Any]]:
         return []
     items: list[dict[str, Any]] = []
     entries: list[tuple[Path, int]] = []
+    root_resolved = root.resolve()
     for path in root.glob("*.json"):
         try:
-            entries.append((path, path.stat().st_mtime_ns))
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.resolve().parent != root_resolved
+            ):
+                continue
+            stat = path.stat()
+            if stat.st_size > MAX_WAVETABLE_METADATA_BYTES:
+                continue
+            entries.append((path, stat.st_mtime_ns))
         except OSError:
             continue
     entries.sort(key=lambda item: item[1], reverse=True)
     for path, _mtime in entries[: max(1, limit)]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             continue
-        if data.get("type") == WAVETABLE_TYPE:
-            items.append(data)
+        try:
+            validate_json_compatible(data, label="wavetable metadata")
+            _validate_wavetable_metadata(data)
+        except ValueError:
+            continue
+        items.append(data)
     return items
 
 
@@ -463,12 +529,24 @@ def _read_source_metadata(path: str | None) -> dict[str, Any]:
         raise PermissionError("source metadata must be inside the metadata directory")
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    try:
+        validate_json_compatible(data, label="source metadata")
+    except ValueError:
+        return {}
+    return data
 
 
 def _read_mono_pcm_wav(path: Path) -> tuple[list[float], int]:
+    try:
+        file_size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"cannot inspect WAV file: {exc}") from exc
+    if file_size > storage.settings.max_upload_bytes:
+        raise ValueError("WAV file exceeds the configured size limit")
     try:
         with wave.open(str(path), "rb") as wav:
             if wav.getcomptype() != "NONE":
@@ -478,12 +556,17 @@ def _read_mono_pcm_wav(path: Path) -> tuple[list[float], int]:
             sample_rate = wav.getframerate()
             frame_count = wav.getnframes()
             raw = wav.readframes(frame_count)
-    except wave.Error as exc:
+    except (EOFError, wave.Error) as exc:
         raise ValueError(f"invalid WAV file: {exc}") from exc
     if channels <= 0 or sample_rate <= 0 or frame_count <= 0:
         raise ValueError("invalid WAV parameters")
     if sample_width != 2:
         raise ValueError("wavetable conversion currently supports 16-bit PCM WAV files")
+    if frame_count > sample_rate * 380:
+        raise ValueError("wavetable conversion supports at most 380 seconds")
+    expected_bytes = frame_count * channels * sample_width
+    if len(raw) != expected_bytes:
+        raise ValueError("WAV sample data is truncated")
     ints = array.array("h")
     ints.frombytes(raw)
     if sys.byteorder != "little":
@@ -503,7 +586,7 @@ def _extract_simple_frames(
     samples: list[float],
     frame_count: int,
     frame_size: int,
-) -> list[float]:
+) -> tuple[list[float], dict[str, Any]]:
     signal = _normalize(_trim_silence(_remove_dc(samples)))
     if not signal:
         signal = [0.0] * frame_size
@@ -520,12 +603,7 @@ def _extract_simple_frames(
         frames.append(frame)
     descriptors = _compute_descriptors(frames)
     flattened = [value for frame in frames for value in frame]
-    _LAST_DESCRIPTORS.clear()
-    _LAST_DESCRIPTORS.update(descriptors)
-    return flattened
-
-
-_LAST_DESCRIPTORS: dict[str, Any] = {}
+    return flattened, descriptors
 
 
 def _compute_descriptors(frames: list[list[float]]) -> dict[str, Any]:
@@ -663,7 +741,12 @@ def _write_float32(path: Path, values: list[float]) -> None:
     floats = array.array("f", values)
     if sys.byteorder != "little":
         floats.byteswap()
-    path.write_bytes(floats.tobytes())
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(floats.tobytes())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _float32_values(data: bytes) -> list[float]:
@@ -713,8 +796,41 @@ def _metadata_path_for_id(wavetable_id: str) -> Path:
     if not re.fullmatch(r"wt_[A-Za-z0-9]+", wavetable_id or ""):
         raise ValueError("invalid wavetable id")
     for path in root.glob(f"*_{wavetable_id}.json"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.resolve().parent != root.resolve():
+                continue
+        except OSError:
+            continue
         return path
     raise FileNotFoundError(f"wavetable not found: {wavetable_id}")
+
+
+def _validate_wavetable_metadata(
+    metadata: Any,
+    *,
+    expected_id: str | None = None,
+) -> tuple[int, int, str]:
+    if not isinstance(metadata, dict) or metadata.get("type") != WAVETABLE_TYPE:
+        raise ValueError("wavetable metadata must be a germ_wavetable object")
+    wavetable_id = metadata.get("id")
+    if not isinstance(wavetable_id, str) or not re.fullmatch(r"wt_[A-Za-z0-9]+", wavetable_id):
+        raise ValueError("wavetable metadata has an invalid id")
+    if expected_id is not None and wavetable_id != expected_id:
+        raise ValueError("wavetable metadata id does not match the requested table")
+    try:
+        frame_size = int(metadata.get("frame_size"))
+        frame_count = int(metadata.get("frame_count"))
+        sample_rate = int(metadata.get("sample_rate"))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("wavetable metadata has invalid dimensions") from exc
+    if frame_size not in SUPPORTED_FRAME_SIZES or not 1 <= frame_count <= 512:
+        raise ValueError("wavetable metadata has unsupported frame dimensions")
+    if not 1 <= sample_rate <= 768_000:
+        raise ValueError("wavetable metadata has an invalid sample rate")
+    data_path = metadata.get("data_path")
+    if not isinstance(data_path, str) or not data_path:
+        raise ValueError("wavetable metadata has no data path")
+    return frame_size, frame_count, data_path
 
 
 def _lineage_parents(lineage: dict[str, Any], source_metadata: dict[str, Any]) -> list[str]:
@@ -728,4 +844,11 @@ def _lineage_parents(lineage: dict[str, Any], source_metadata: dict[str, Any]) -
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value if item not in (None, "")]
+    values: list[str] = []
+    for item in value[:512]:
+        if not isinstance(item, (str, int, float)) or isinstance(item, bool):
+            continue
+        cleaned = str(item).strip()[:500]
+        if cleaned and cleaned not in values:
+            values.append(cleaned)
+    return values

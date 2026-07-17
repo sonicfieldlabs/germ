@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from collections import OrderedDict
 from pathlib import Path
@@ -21,6 +20,7 @@ from server.schemas import (
     MicroBiomeSummary,
     MicroMatterProfileResult,
     MicroMatterRequest,
+    validate_json_compatible,
 )
 from server.storage import safe_stem, utc_now_iso
 
@@ -38,12 +38,14 @@ MICRO_FEATURES = [
     "pitch",
 ]
 
-MATTER_PROFILE_CACHE_LIMIT = 32
+MAX_MICRO_POINTS_PER_FEATURE = 4000
+MATTER_PROFILE_CACHE_LIMIT = 8
+MATTER_PROFILE_CACHE_MAX_POINTS = 160_000
 MAX_BIOME_COUNT = 128
 MAX_BIOME_STATE_BYTES = 1_000_000
 _MATTER_PROFILE_ANALYSIS_CACHE_LOCK = Lock()
 _MATTER_PROFILE_ANALYSIS_CACHE: OrderedDict[
-    tuple[str, int, int, int, tuple[str, ...]],
+    tuple[str, int, int, float, float, tuple[str, ...]],
     tuple[dict[str, list[dict[str, float]]], list[ControlFeatureSummary]],
 ] = OrderedDict()
 
@@ -124,14 +126,27 @@ def _micro_profile_items(limit: int = 100) -> list[dict[str, Any]]:
     if not micro_dir.exists():
         return []
     items: list[dict[str, Any]] = []
-    for path in sorted(micro_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+    entries: list[tuple[Path, float]] = []
+    for path in micro_dir.glob("*.json"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 10 * 1024 * 1024:
+                continue
+            entries.append((path, path.stat().st_mtime))
+        except OSError:
+            continue
+    entries.sort(key=lambda item: item[1], reverse=True)
+    for path, _ in entries:
         if len(items) >= limit:
             break
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (UnicodeError, json.JSONDecodeError, OSError, RecursionError):
             continue
         if isinstance(data, dict):
+            try:
+                validate_json_compatible(data, label="matter profile")
+            except ValueError:
+                continue
             data["_profile_file"] = storage.relative_path(path)
             items.append(data)
     return items
@@ -158,30 +173,65 @@ def _biome_summary(path: Path, data: dict[str, Any]) -> MicroBiomeSummary:
 
 def _read_biome(path: Path) -> dict[str, Any]:
     try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.resolve().parent != _biome_dir().resolve()
+            or path.stat().st_size > MAX_BIOME_STATE_BYTES + 100_000
+        ):
+            raise HTTPException(status_code=404, detail=f"Biome not found: {path.stem}")
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Biome not found: {path.stem}") from exc
+    try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+    except (UnicodeError, json.JSONDecodeError, OSError, RecursionError) as exc:
         raise HTTPException(status_code=404, detail=f"Biome not found: {path.stem}") from exc
     if not isinstance(data, dict):
         raise HTTPException(status_code=422, detail="Biome file must contain a JSON object")
+    try:
+        validate_json_compatible(data, label="biome")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return data
 
 
 @router.get("/biomes", response_model=list[MicroBiomeSummary])
 def list_biomes() -> list[MicroBiomeSummary]:
     items: list[MicroBiomeSummary] = []
-    for path in sorted(_biome_dir().glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        data = _read_biome(path)
+    entries: list[tuple[Path, float]] = []
+    for path in _biome_dir().glob("*.json"):
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            entries.append((path, path.stat().st_mtime))
+        except OSError:
+            continue
+    entries.sort(key=lambda item: item[1], reverse=True)
+    for path, _ in entries:
+        if len(items) >= MAX_BIOME_COUNT:
+            break
+        try:
+            data = _read_biome(path)
+        except HTTPException:
+            continue
         items.append(_biome_summary(path, data))
     return items
 
 
 @router.post("/biomes", response_model=MicroBiomeResult)
 def save_biome(request: MicroBiomeSaveRequest) -> MicroBiomeResult:
-    biome_id = safe_stem(request.name, fallback="biome")
+    biome_id = safe_stem(request.name, fallback="")
+    if not biome_id:
+        raise HTTPException(status_code=422, detail="Biome name must contain a letter or number.")
     path = _biome_dir() / f"{biome_id}.json"
     if not path.exists() and len(list(_biome_dir().glob("*.json"))) >= MAX_BIOME_COUNT:
         raise HTTPException(status_code=400, detail=f"Biome limit reached ({MAX_BIOME_COUNT}).")
-    state_bytes = len(json.dumps(request.state, separators=(",", ":")).encode("utf-8"))
+    try:
+        state_bytes = len(
+            json.dumps(request.state, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Biome state must be finite JSON") from exc
     if state_bytes > MAX_BIOME_STATE_BYTES:
         raise HTTPException(
             status_code=413,
@@ -203,7 +253,10 @@ def save_biome(request: MicroBiomeSaveRequest) -> MicroBiomeResult:
 
 @router.get("/biomes/{biome_id}", response_model=MicroBiomeResult)
 def get_biome(biome_id: str) -> MicroBiomeResult:
-    path = _biome_dir() / f"{safe_stem(biome_id, fallback='biome')}.json"
+    safe_id = safe_stem(biome_id, fallback="")
+    if not safe_id:
+        raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
+    path = _biome_dir() / f"{safe_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
     data = _read_biome(path)
@@ -213,7 +266,10 @@ def get_biome(biome_id: str) -> MicroBiomeResult:
 
 @router.delete("/biomes/{biome_id}", response_model=MicroBiomeResult)
 def delete_biome(biome_id: str) -> MicroBiomeResult:
-    path = _biome_dir() / f"{safe_stem(biome_id, fallback='biome')}.json"
+    safe_id = safe_stem(biome_id, fallback="")
+    if not safe_id:
+        raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
+    path = _biome_dir() / f"{safe_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Biome not found: {biome_id}")
     data = _read_biome(path)
@@ -240,6 +296,7 @@ def _cached_matter_analysis(
     key = (
         source_path.resolve().as_posix(),
         stat.st_mtime_ns,
+        stat.st_size,
         request.window_ms,
         request.hop_ms,
         tuple(request.features),
@@ -248,21 +305,32 @@ def _cached_matter_analysis(
         cached = _MATTER_PROFILE_ANALYSIS_CACHE.get(key)
         if cached is not None:
             _MATTER_PROFILE_ANALYSIS_CACHE.move_to_end(key)
-            return copy.deepcopy(cached[0]), [summary.model_copy(deep=True) for summary in cached[1]]
+            # Cached analysis is read-only within this module; JSON encoding
+            # and descriptor extraction do not mutate the point arrays.
+            return cached
     feature_points, summaries = _analyze_features(
         samples=samples,
         channels=channels,
         sample_rate=sample_rate,
         frame_count=frame_count,
         request=request,
+        max_points=MAX_MICRO_POINTS_PER_FEATURE,
     )
     with _MATTER_PROFILE_ANALYSIS_CACHE_LOCK:
-        _MATTER_PROFILE_ANALYSIS_CACHE[key] = (
-            copy.deepcopy(feature_points),
-            [summary.model_copy(deep=True) for summary in summaries],
+        _MATTER_PROFILE_ANALYSIS_CACHE[key] = (feature_points, summaries)
+        cached_points = sum(
+            len(points)
+            for cached_features, _cached_summaries in _MATTER_PROFILE_ANALYSIS_CACHE.values()
+            for points in cached_features.values()
         )
-        while len(_MATTER_PROFILE_ANALYSIS_CACHE) > MATTER_PROFILE_CACHE_LIMIT:
-            _MATTER_PROFILE_ANALYSIS_CACHE.popitem(last=False)
+        while (
+            len(_MATTER_PROFILE_ANALYSIS_CACHE) > MATTER_PROFILE_CACHE_LIMIT
+            or cached_points > MATTER_PROFILE_CACHE_MAX_POINTS
+        ):
+            _old_key, (old_features, _old_summaries) = (
+                _MATTER_PROFILE_ANALYSIS_CACHE.popitem(last=False)
+            )
+            cached_points -= sum(len(points) for points in old_features.values())
     return feature_points, summaries
 
 

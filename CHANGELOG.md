@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.5 — Backend integrity and integration hardening
+
+- Hardened request, persisted JSON, path, upload, WAV, and provider artifact
+  validation across generation, editing, control, listener, session, Micro,
+  wavetable, library, and file workflows.
+- Made provider execution, cancellation, job retention, caches, metadata,
+  lineage, Akousmata companion writes, and multi-step render transactions
+  bounded and failure-safe.
+- Updated Stability and Gemini integrations to their current contracts,
+  strengthened Python and MLX provider output checks, and aligned the test
+  client dependency with Starlette's `httpx2` backend.
+- Improved dashboard data escaping, native macOS daemon lifecycle handling,
+  launch scripts, and regression coverage for integration boundaries.
+
 ## 0.2.0 — Listening-informed cultivation
 
 - Added OÍDA re-listening, prompt derivation, immutable evidence summaries,

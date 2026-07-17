@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from server.routes._utils import (
     cleanup_transient_uploads,
@@ -23,7 +24,15 @@ async def audio_to_audio(request: Request) -> GenerationResult:
         try:
             model = AudioToAudioRequest(**payload)
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
-        return run_provider_method(model, "audio-to-audio", "audio_to_audio")
+            raise HTTPException(
+                status_code=422,
+                detail=exc.errors(include_context=False, include_input=False),
+            ) from exc
+        return await run_in_threadpool(
+            run_provider_method,
+            model,
+            "audio-to-audio",
+            "audio_to_audio",
+        )
     finally:
         cleanup_transient_uploads(transient_upload_paths)

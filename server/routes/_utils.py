@@ -142,6 +142,8 @@ async def payload_from_json_or_form(request: Request) -> dict[str, Any]:
                 uploads.append(value)
             else:
                 data[key] = coerce_form_value(value, key=key)
+        if len(uploads) > 1:
+            raise HTTPException(status_code=400, detail="only one audio upload is supported")
         transient_upload = bool(
             data.pop("transient_upload", False) or data.pop("scratch_upload", False)
         )
@@ -169,9 +171,12 @@ async def payload_from_json_or_form(request: Request) -> dict[str, Any]:
             data["_transient_upload_paths"] = transient_paths
         return data
     try:
-        return await request.json()
+        payload = await request.json()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="request body must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    return payload
 
 
 def coerce_form_value(value: Any, *, key: str | None = None) -> Any:
@@ -207,19 +212,20 @@ def coerce_form_value(value: Any, *, key: str | None = None) -> Any:
     if key in json_keys:
         try:
             return json.loads(value)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             if key == "tags":
                 return [tag.strip() for tag in value.split(",") if tag.strip()]
             return value
-    lowered = value.lower()
-    if lowered in {"true", "false"}:
-        return lowered == "true"
-    try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+    if key in {"transient_upload", "scratch_upload"}:
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off", ""}:
+            return False
+    # Pydantic performs field-aware coercion later. Keeping ordinary form
+    # strings intact prevents prompts such as "123" or "true" from being
+    # silently changed into numbers or booleans.
+    return value
 
 
 def pop_transient_upload_paths(payload: dict[str, Any]) -> list[Path]:
@@ -261,8 +267,8 @@ def parse_ranges_text(value: str | list | None) -> list[tuple[float, float]]:
     if isinstance(value, list):
         return [tuple(item) for item in value]
     ranges: list[tuple[float, float]] = []
-    for line in value.replace(";", "\n").splitlines():
-        line = line.strip()
+    for raw_line in value.replace(";", "\n").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         pieces = [piece.strip() for piece in line.split(",")]

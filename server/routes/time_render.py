@@ -6,6 +6,7 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from dataclasses import dataclass
@@ -89,6 +90,12 @@ def _resolve_render_source(source: TimeRenderSource) -> Path:
 
 def _read_wav_payload(source: TimeRenderSource, path: Path, clock: TimeClock, label: str) -> WavPayload:
     try:
+        file_size = path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail=f"cannot inspect WAV source: {label}") from exc
+    if file_size > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"WAV source exceeds the size limit: {label}")
+    try:
         with wave.open(str(path), "rb") as wav:
             channels = wav.getnchannels()
             sample_width = wav.getsampwidth()
@@ -96,7 +103,7 @@ def _read_wav_payload(source: TimeRenderSource, path: Path, clock: TimeClock, la
             frames = wav.getnframes()
             compression = wav.getcomptype()
             raw = wav.readframes(frames)
-    except wave.Error as exc:
+    except (EOFError, wave.Error) as exc:
         raise HTTPException(status_code=422, detail=f"invalid WAV source: {label}") from exc
 
     if compression != "NONE":
@@ -113,9 +120,18 @@ def _read_wav_payload(source: TimeRenderSource, path: Path, clock: TimeClock, la
         )
     if channels not in {1, 2}:
         raise HTTPException(status_code=422, detail=f"only mono or stereo WAV sources are supported: {label}")
+    if frames <= 0:
+        raise HTTPException(status_code=422, detail=f"WAV source is empty: {label}")
+    if frames > sample_rate * MAX_TIME_RENDER_SECONDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"WAV source exceeds {MAX_TIME_RENDER_SECONDS:g} seconds: {label}",
+        )
 
     samples = array.array("h")
     samples.frombytes(raw)
+    if sys.byteorder != "little":
+        samples.byteswap()
     if len(samples) != frames * channels:
         raise HTTPException(status_code=422, detail=f"WAV source has invalid sample data: {label}")
     return WavPayload(
@@ -134,7 +150,7 @@ def _read_source_wav(source: TimeRenderSource, clock: TimeClock) -> WavPayload:
 
 
 def _event_start_frame(tick: int, clock: TimeClock) -> int:
-    seconds = (tick / clock.ppq) * clock.seconds_per_beat()
+    seconds = ((tick - clock.loop_start_tick) / clock.ppq) * clock.seconds_per_beat()
     return int(round(seconds * clock.sample_rate))
 
 
@@ -212,6 +228,8 @@ def _frames_to_bytes(samples: Sequence[float], *, normalize: bool) -> bytes:
     peak = max((abs(value) for value in samples), default=0.0)
     scale = TARGET_PEAK / peak if normalize and peak > 0 else 1.0
     output = array.array("h", (_clip_sample(value * scale) for value in samples))
+    if sys.byteorder != "little":
+        output.byteswap()
     return output.tobytes()
 
 
@@ -251,12 +269,21 @@ def _pitch_shift_payload(
     output_path = temp_dir / f"pitch_{hashlib.sha256(cache_key.encode('utf-8')).hexdigest()}.wav"
     command = _rubberband_pitch_command(binary, payload.path, output_path, pitch_semitones)
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=settings.provider_timeout_seconds,
+            stdin=subprocess.DEVNULL,
+        )
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(status_code=504, detail="Rubber Band pitch processing timed out.") from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         raise HTTPException(status_code=422, detail=f"Rubber Band pitch processing failed: {detail}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=422, detail="Rubber Band pitch processing could not start") from exc
     return _read_wav_payload(
         payload.source,
         output_path,
@@ -274,7 +301,16 @@ def _read_parent_id(source: TimeRenderSource) -> str:
             label="parent metadata",
         )
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, PermissionError, json.JSONDecodeError, OSError):
+    except (
+        FileNotFoundError,
+        PermissionError,
+        UnicodeError,
+        json.JSONDecodeError,
+        OSError,
+        RecursionError,
+    ):
+        return source.id
+    if not isinstance(data, dict):
         return source.id
     lineage = data.get("lineage") if isinstance(data.get("lineage"), dict) else {}
     return str(data.get("sound_id") or lineage.get("id") or source.id)
@@ -353,7 +389,7 @@ def render_time(request: TimeRenderRequest) -> GenerationResult:
     pitch_engine = "none"
     pitch_event_count = sum(1 for event in request.events if abs(event.pitch_semitones) > 1e-6)
     pitch_payload_cache: dict[tuple[str, float], WavPayload] = {}
-    with tempfile.TemporaryDirectory(prefix="germinator_time_pitch_") as temp_root:
+    with tempfile.TemporaryDirectory(prefix="germ_time_pitch_") as temp_root:
         temp_dir = Path(temp_root)
         for event in request.events:
             payload = payloads[event.source_id]
@@ -457,14 +493,6 @@ def render_time(request: TimeRenderRequest) -> GenerationResult:
         job_id=job_id,
     )[0]
 
-    audio_path.parent.mkdir(parents=True, exist_ok=True)
-    rendered_bytes = _frames_to_bytes(mix, normalize=request.normalize)
-    with wave.open(str(audio_path), "wb") as wav:
-        wav.setnchannels(2)
-        wav.setsampwidth(2)
-        wav.setframerate(request.clock.sample_rate)
-        wav.writeframes(rendered_bytes)
-
     time_render_metadata = {
         "clock": clock_summary,
         "module_type": request.module_type,
@@ -482,24 +510,47 @@ def render_time(request: TimeRenderRequest) -> GenerationResult:
         "pitch_engine": pitch_engine,
         "pitch_event_count": pitch_event_count,
     }
-    storage.write_metadata(
-        metadata_path=metadata_path,
-        request=request_for_metadata,
-        mode=TIME_RENDER_MODE,
-        provider=TIME_RENDER_PROVIDER,
-        model=TIME_RENDER_MODEL,
-        seed=request.seed,
-        output_audio_path=audio_path,
-        sample_rate=request.clock.sample_rate,
-        status="done",
-        extra={
-            "germinator_mode": "harvest",
-            "source_type": "time_render",
-            "source": source_metadata,
-            "time_render": time_render_metadata,
-            "parents": parents,
-        },
-    )
+    try:
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        rendered_bytes = _frames_to_bytes(mix, normalize=request.normalize)
+        with wave.open(str(audio_path), "wb") as wav:
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(request.clock.sample_rate)
+            wav.writeframes(rendered_bytes)
+
+        storage.write_metadata(
+            metadata_path=metadata_path,
+            request=request_for_metadata,
+            mode=TIME_RENDER_MODE,
+            provider=TIME_RENDER_PROVIDER,
+            model=TIME_RENDER_MODEL,
+            seed=request.seed,
+            output_audio_path=audio_path,
+            sample_rate=request.clock.sample_rate,
+            status="done",
+            extra={
+                "germinator_mode": "harvest",
+                "source_type": "time_render",
+                "source": source_metadata,
+                "time_render": time_render_metadata,
+                "parents": parents,
+            },
+        )
+    except Exception as exc:
+        audio_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        storage.record_result(
+            GenerationResult(
+                job_id=job_id,
+                status="error",
+                error=str(exc),
+                provider=TIME_RENDER_PROVIDER,
+                model=TIME_RENDER_MODEL,
+                mode=TIME_RENDER_MODE,
+            )
+        )
+        raise
     result = GenerationResult(
         job_id=job_id,
         status="done",

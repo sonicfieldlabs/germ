@@ -47,13 +47,21 @@ def _run_hf(args: list[str], *, timeout: float = 20.0) -> dict[str, Any]:
             "stdout": exc.stdout or "",
             "stderr": f"hf command timed out after {timeout:.0f}s. {exc.stderr or ''}".strip(),
         }
+    except OSError as exc:
+        return {
+            "available": False,
+            "command": " ".join(command),
+            "returncode": -1,
+            "stdout": "",
+            "stderr": f"hf command could not start: {exc}",
+        }
 
     return {
         "available": True,
         "command": " ".join(command),
         "returncode": process.returncode,
-        "stdout": process.stdout,
-        "stderr": process.stderr,
+        "stdout": (process.stdout or "")[-20_000:],
+        "stderr": (process.stderr or "")[-20_000:],
     }
 
 
@@ -77,7 +85,7 @@ def auth_status() -> dict[str, Any]:
 
     try:
         account = json.loads(result["stdout"] or "{}")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         account = {"raw": result["stdout"].strip()}
 
     status["logged_in"] = True

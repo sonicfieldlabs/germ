@@ -26,6 +26,7 @@ from server.schemas import (
     SessionResult,
     SessionSaveRequest,
     SessionSummary,
+    validate_json_compatible,
 )
 from server.storage import safe_stem, utc_now_iso
 
@@ -54,30 +55,49 @@ def _session_summary(path: Path, data: dict[str, Any]) -> SessionSummary:
     graph = data.get("graph") if isinstance(data.get("graph"), dict) else {}
     node_count, edge_count, asset_count = _graph_counts(graph)
     return SessionSummary(
-        id=str(data.get("id") or path.stem),
-        name=str(data.get("name") or path.stem),
+        id=str(data.get("id") or path.stem)[:256],
+        name=str(data.get("name") or path.stem)[:500],
         session_file=storage.relative_path(path),
-        created_at=data.get("created_at"),
-        updated_at=data.get("updated_at"),
+        created_at=(str(data["created_at"])[:100] if isinstance(data.get("created_at"), str) else None),
+        updated_at=(str(data["updated_at"])[:100] if isinstance(data.get("updated_at"), str) else None),
         node_count=node_count,
         edge_count=edge_count,
         asset_count=asset_count,
-        client_id=data.get("client_id"),
+        client_id=(str(data["client_id"])[:64] if isinstance(data.get("client_id"), str) else None),
     )
 
 
 def _read_session(path: Path) -> dict[str, Any]:
     try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.resolve().parent != _session_dir().resolve()
+            or path.stat().st_size > MAX_SESSION_GRAPH_BYTES + 100_000
+        ):
+            raise HTTPException(status_code=404, detail=f"Session not found: {path.stem}")
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"Session not found: {path.stem}") from exc
+    try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+    except (UnicodeError, json.JSONDecodeError, OSError, RecursionError) as exc:
         raise HTTPException(status_code=404, detail=f"Session not found: {path.stem}") from exc
     if not isinstance(data, dict):
         raise HTTPException(status_code=422, detail="Session file must contain a JSON object")
+    try:
+        validate_json_compatible(data, label="session")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return data
 
 
 def _validate_graph_size(graph: dict[str, Any]) -> None:
-    graph_bytes = len(json.dumps(graph, separators=(",", ":")).encode("utf-8"))
+    try:
+        graph_bytes = len(
+            json.dumps(graph, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Session graph must be finite JSON") from exc
     if graph_bytes > MAX_SESSION_GRAPH_BYTES:
         raise HTTPException(
             status_code=413,
@@ -104,18 +124,31 @@ def _write_session(path: Path, *, name: str, graph: dict[str, Any], client_id: s
 @router.get("", response_model=list[SessionSummary])
 def list_sessions() -> list[SessionSummary]:
     items: list[SessionSummary] = []
-    for path in sorted(_session_dir().glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+    entries: list[tuple[Path, float]] = []
+    for path in _session_dir().glob("*.json"):
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            entries.append((path, path.stat().st_mtime))
+        except OSError:
+            continue
+    entries.sort(key=lambda item: item[1], reverse=True)
+    for path, _ in entries:
         if path.stem == CURRENT_SESSION_STEM:
             continue
-        items.append(_session_summary(path, _read_session(path)))
+        try:
+            data = _read_session(path)
+        except HTTPException:
+            continue
+        items.append(_session_summary(path, data))
     return items
 
 
 @router.post("", response_model=SessionResult)
 def save_session(request: SessionSaveRequest) -> SessionResult:
-    session_id = safe_stem(request.name, fallback="session")
-    if session_id == CURRENT_SESSION_STEM:
-        raise HTTPException(status_code=400, detail="Reserved session name.")
+    session_id = safe_stem(request.name, fallback="")
+    if not session_id:
+        raise HTTPException(status_code=422, detail="Session name must contain a letter or number.")
     path = _session_dir() / f"{session_id}.json"
     named = [item for item in _session_dir().glob("*.json") if item.stem != CURRENT_SESSION_STEM]
     if not path.exists() and len(named) >= MAX_SESSION_COUNT:
@@ -153,7 +186,10 @@ def clear_current_session() -> SessionResult:
 
 @router.get("/{session_id}", response_model=SessionResult)
 def get_session(session_id: str) -> SessionResult:
-    path = _session_dir() / f"{safe_stem(session_id, fallback='session')}.json"
+    safe_id = safe_stem(session_id, fallback="")
+    if not safe_id:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    path = _session_dir() / f"{safe_id}.json"
     if not path.exists() or path.stem == CURRENT_SESSION_STEM:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     data = _read_session(path)
@@ -163,7 +199,10 @@ def get_session(session_id: str) -> SessionResult:
 
 @router.delete("/{session_id}", response_model=SessionResult)
 def delete_session(session_id: str) -> SessionResult:
-    path = _session_dir() / f"{safe_stem(session_id, fallback='session')}.json"
+    safe_id = safe_stem(session_id, fallback="")
+    if not safe_id:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    path = _session_dir() / f"{safe_id}.json"
     if not path.exists() or path.stem == CURRENT_SESSION_STEM:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     data = _read_session(path)
