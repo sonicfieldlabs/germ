@@ -16,6 +16,7 @@ from server.routes import (
     audio_to_audio,
     continue_audio,
     control,
+    cosmoaudition,
     diagnostics,
     earworm,
     files,
@@ -29,6 +30,7 @@ from server.routes import (
     library,
     listener,
     lora,
+    matter,
     micro,
     models,
     performance,
@@ -110,6 +112,7 @@ app.include_router(huggingface.router)
 app.include_router(models.router)
 app.include_router(performance.router)
 app.include_router(control.router)
+app.include_router(cosmoaudition.router)
 app.include_router(generate.router)
 app.include_router(import_audio.router)
 app.include_router(image_to_audio.router)
@@ -119,6 +122,7 @@ app.include_router(inpaint.router)
 app.include_router(continue_audio.router)
 app.include_router(lora.router)
 app.include_router(strains.router)
+app.include_router(matter.router)
 app.include_router(micro.router)
 app.include_router(sessions.router)
 app.include_router(jobs.router)

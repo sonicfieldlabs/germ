@@ -8,7 +8,7 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.2.5`.
+Current release: `0.3.0`.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
@@ -42,6 +42,11 @@ checks but not a creative quality demonstration.
   Apple Silicon MLX, or opt-in Stability API providers.
 - Build a modular graph across grains, cells, swarms, tissues, controls,
   effects, and a realtime Chamber.
+- Use local Cosmoaudition observations as attributed modulation and event
+  material through explicit mappings, archives, and missing-data policies.
+- Measure spectral, temporal, spatial, and morphological properties with
+  Matter Analysis while keeping measurements, inference, and unavailable
+  states distinct.
 - Graft, inpaint, continue, compare, mutate, record, and collect sound while
   retaining prompts, seeds, models, parameters, parents, and operations.
 - Import an Oída listening as sound, prompt, or lineage and ask Oída to listen
@@ -90,6 +95,11 @@ promising one universal hardware minimum.
 - Micro/Matter modules for grains, cells, swarms, membranes, spectral tissue,
   quanta, microscope analysis, saved matter profiles, biomes, and incubated
   evolution.
+- A separate Cosmoaudition module category with cosmic, Earth, biosphere,
+  human-machine, relational, event, semantic, uncertainty, archive, mapping,
+  and matter-processing modules.
+- Optional MASA 0.1 sidecars for successful generations and Matter Analysis
+  artifacts. Sonic Lineage `sound_id` remains GERM's canonical identity.
 - Wavetable Forge conversion, prompt, mutation, render, import/export, and
   audition routes.
 - LoRA loading and a persistent Strain registry for adapter identity,
@@ -111,6 +121,22 @@ promising one universal hardware minimum.
 
 All three scales use the same module graph, semantic FX bridge, sessions,
 library, and lineage model.
+
+## Sonic Matter Observatory integration
+
+GERM keeps the Observatory components distinct while making their contracts
+usable inside the cultivation graph:
+
+| Component | Boundary in GERM |
+| --- | --- |
+| MASA 0.1 | Optional descriptive JSON sidecars under `output/masa/`; never replaces Sonic Lineage or changes a successful render into a failure. |
+| MATERIA | Matter Analysis provides a bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening. |
+| Cosmoaudition System | A loopback-only, response-bounded HTTP bridge reads snapshots and source status. GERM never contacts observatory providers directly. |
+
+Cosmoaudition mappings are operator-authored control relations. They do not
+claim that a dataset is the literal voice or identity of a source. Missing or
+unfetched observations do not silently become zero or a neutral modulation;
+the route remains inactive until its state is explicit.
 
 ## Listening Stack integration
 
@@ -211,7 +237,8 @@ The complete request and response contract is in
 | Models | `/models`, `/models/load`, `/diagnostics`, `/huggingface/status` |
 | Listening | `/listener/enhance`, `/listener/score`, `/listener/relisten` |
 | Memory | `/earworm/export`, `/import`, `/akousma/*` |
-| Micro/Matter | `/micro/matter-profile`, `/micro/biomes/*` |
+| Micro/Matter | `/micro/matter-profile`, `/matter/analyze`, `/micro/matter-analysis`, `/micro/biomes/*` |
+| Cosmoaudition | `/cosmoaudition/status`, `/cosmoaudition/modules`, `/cosmoaudition/sources`, `/cosmoaudition/snapshot`, `/cosmoaudition/map`, `/cosmoaudition/archives/*` |
 | Strains | `/strains/*`, `/lora/load`, `/lora/strength` |
 | Wavetables | `/wavetables/*` |
 | Control | `/control/*` |
@@ -269,6 +296,9 @@ curl -X POST http://127.0.0.1:5178/generate \
   derived material to their provider. The default mock route stays local.
 - GERM performs bounded signal checks but does not replace Oída's listening and
   claim-accountability layer.
+- Cosmoaudition live data requires the separate local Cosmoaudition System;
+  fixture mode and archived observations remain available without granting
+  GERM direct provider access.
 
 The [roadmap](ROADMAP.md) identifies current research priorities and non-goals.
 

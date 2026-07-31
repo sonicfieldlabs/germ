@@ -64,7 +64,9 @@ MICRO_MODULE_TYPES = {
     "spectral_tissue",
     "quanta",
     "microscope",
+    "matter_analysis",
     "incubator",
+    "cosmo_matter_modulator",
 }
 
 CONTROL_GRAPH_JSON_CACHE_LIMIT = 600

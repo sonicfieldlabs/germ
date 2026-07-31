@@ -1928,6 +1928,14 @@ body.canvas-active .canvas-board {
   gap: 7px;
 }
 
+.canvas-source-panel-note {
+  grid-column: 1 / -1;
+  margin: 0 4px 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
 .canvas-source-menu[hidden],
 .canvas-empty-state[hidden],
 .canvas-library-modal[hidden] {
@@ -3428,6 +3436,52 @@ body.canvas-active #tab-controllers.active {
   color: var(--ink);
   font-size: 11px;
   font-weight: 620;
+}
+
+.cosmo-observation-readout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: baseline;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-hover);
+  padding: 7px 8px;
+}
+
+.cosmo-observation-readout span,
+.cosmo-observation-readout small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cosmo-observation-readout span {
+  color: var(--ink-soft);
+  font-size: 10.5px;
+}
+
+.cosmo-observation-readout strong {
+  color: var(--muted);
+  font-family: 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.cosmo-observation-readout small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-family: 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 8.5px;
+}
+
+.cosmo-observation-readout.is-ready {
+  border-color: color-mix(in srgb, var(--leaf) 42%, var(--line));
+  background: color-mix(in srgb, var(--pale-green-bg) 52%, var(--panel));
+}
+
+.cosmo-observation-readout.is-ready strong {
+  color: var(--pale-green-text);
 }
 
 .gesture-point-strip {

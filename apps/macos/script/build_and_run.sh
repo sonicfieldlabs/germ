@@ -6,8 +6,8 @@ APP_NAME="germ"
 EXECUTABLE_NAME="germ-macos"
 BUNDLE_ID="org.sonicfield.germ"
 MIN_SYSTEM_VERSION="13.0"
-MARKETING_VERSION="0.2.5"
-BUNDLE_VERSION="2"
+MARKETING_VERSION="0.3.0"
+BUNDLE_VERSION="3"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Keep the runnable bundle where repository users expect to find apps. The

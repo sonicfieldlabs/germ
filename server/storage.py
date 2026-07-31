@@ -79,6 +79,8 @@ class StorageManager:
         self.wavetable_data_dir = settings.wavetable_data_dir
         self.wavetable_preview_dir = settings.wavetable_preview_dir
         self.micro_biome_dir = settings.micro_biome_dir
+        self.cosmoaudition_archive_dir = settings.cosmoaudition_archive_dir
+        self.masa_dir = settings.masa_dir
         self.jobs: dict[str, dict[str, Any]] = {}
         self.job_listeners: dict[str, int] = {}
         self._lock = RLock()
@@ -143,6 +145,8 @@ class StorageManager:
         self.wavetable_data_dir.mkdir(parents=True, exist_ok=True)
         self.wavetable_preview_dir.mkdir(parents=True, exist_ok=True)
         self.micro_biome_dir.mkdir(parents=True, exist_ok=True)
+        self.cosmoaudition_archive_dir.mkdir(parents=True, exist_ok=True)
+        self.masa_dir.mkdir(parents=True, exist_ok=True)
 
     def touch_library(self) -> None:
         with self._lock:
@@ -528,6 +532,11 @@ class StorageManager:
         metadata_path = Path(metadata_path)
         initial_akousmata = self._initial_akousmata_state(request_data)
         metadata["akousmata"] = initial_akousmata
+        initial_masa = self._initial_masa_state(
+            status=status,
+            output_audio_path=output_audio_path,
+        )
+        metadata["masa"] = initial_masa
         with self._lock:
             self._write_json_atomic(metadata_path, metadata)
             self.library_version += 1
@@ -544,10 +553,17 @@ class StorageManager:
         )
         if metadata["akousmata"].get("akousma_id"):
             metadata["akousma_id"] = metadata["akousmata"]["akousma_id"]
-        if metadata["akousmata"] != initial_akousmata:
+        metadata["masa"] = self._write_masa_sidecar(
+            metadata=metadata,
+            metadata_path=metadata_path,
+            status=status,
+            output_audio_path=output_audio_path,
+        )
+        if metadata["akousmata"] != initial_akousmata or metadata["masa"] != initial_masa:
             try:
                 with self._lock:
                     self._write_json_atomic(metadata_path, metadata)
+                    self.library_version += 1
             except (OSError, TypeError, ValueError):
                 pass
 
@@ -557,6 +573,66 @@ class StorageManager:
                 lineage["id"],
             )
         return metadata
+
+    def _initial_masa_state(
+        self,
+        *,
+        status: str,
+        output_audio_path: str | Path | None,
+    ) -> dict[str, Any]:
+        if not self.settings.masa_sidecars_enabled:
+            return {"status": "disabled", "requested": False}
+        if status != "done" or not output_audio_path:
+            return {
+                "status": "not_recorded",
+                "requested": True,
+                "reason": f"generation_status:{status}",
+            }
+        from server.masa_bridge import MASA_VERSION
+
+        return {"status": "pending", "requested": True, "version": MASA_VERSION}
+
+    def _write_masa_sidecar(
+        self,
+        *,
+        metadata: dict[str, Any],
+        metadata_path: Path,
+        status: str,
+        output_audio_path: str | Path | None,
+    ) -> dict[str, Any]:
+        initial = self._initial_masa_state(
+            status=status,
+            output_audio_path=output_audio_path,
+        )
+        if initial["status"] != "pending":
+            return initial
+        try:
+            from server.masa_bridge import MASA_VERSION, build_generation_record, sidecar_path_for
+            from server.schemas import validate_json_compatible
+
+            record = build_generation_record(metadata)
+            validate_json_compatible(record, label="MASA sidecar")
+            sidecar_path = sidecar_path_for(metadata_path, self.settings.masa_dir)
+            with self._lock:
+                self._write_json_atomic(sidecar_path, record)
+            return {
+                "status": "written",
+                "requested": True,
+                "version": MASA_VERSION,
+                "record_id": record["id"],
+                "representation_id": record["representations"][-1]["id"],
+                "sidecar_path": self.relative_path(sidecar_path),
+                "canonical_identity": "sound_id",
+            }
+        except Exception as exc:
+            # A MASA sidecar is an optional interoperability account. It may
+            # report failure, but must never invalidate a successfully
+            # committed GERM sound or mutate Sonic Lineage identity.
+            return {
+                **initial,
+                "status": "error",
+                "error": str(exc)[:2_000],
+            }
 
     def _initial_akousmata_state(self, request_data: dict[str, Any]) -> dict[str, Any]:
         requested = bool(request_data.get("remember_to_akousmata"))

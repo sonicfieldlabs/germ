@@ -17,6 +17,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server.audio_io import write_sine_wav
+from server.cosmoaudition import (
+    CosmoauditionBridge,
+    CosmoauditionBridgeError,
+    _decode_json_object,
+    validate_loopback_base_url,
+)
 from server.job_runner import JobQueueFullError
 from server.main import app
 from server.providers.stability_api_provider import StabilityAPIProvider
@@ -31,6 +37,7 @@ from server.registry import (
     strain_registry,
 )
 from server.routes import audio_tools
+from server.routes import cosmoaudition as cosmoaudition_routes
 from server.routes import image_to_audio as image_routes
 from server.routes import micro as micro_routes
 from server.routes import wavetables as wavetable_routes
@@ -89,6 +96,7 @@ def restore_strain_and_micro_state(request: pytest.FixtureRequest):
     if not (
         request.node.name.startswith("test_strain_")
         or request.node.name.startswith("test_micro_")
+        or request.node.name.startswith("test_matter_")
     ):
         yield
         return
@@ -96,12 +104,18 @@ def restore_strain_and_micro_state(request: pytest.FixtureRequest):
     strain_registry.strain_dir.mkdir(parents=True, exist_ok=True)
     micro_dir = settings.output_root / "micro"
     micro_dir.mkdir(parents=True, exist_ok=True)
+    masa_dir = settings.masa_dir
+    masa_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir = settings.audio_dir
+    audio_dir.mkdir(parents=True, exist_ok=True)
     strain_content = (
         strain_registry.registry_path.read_text(encoding="utf-8")
         if strain_registry.registry_path.exists()
         else None
     )
     existing_micro_files = set(micro_dir.iterdir())
+    existing_masa_files = set(masa_dir.iterdir())
+    existing_audio_files = set(audio_dir.iterdir())
 
     yield
 
@@ -109,6 +123,14 @@ def restore_strain_and_micro_state(request: pytest.FixtureRequest):
         if path in existing_micro_files or not path.name.startswith("pytest_"):
             continue
         path.unlink()
+    for directory, existing_files in (
+        (masa_dir, existing_masa_files),
+        (audio_dir, existing_audio_files),
+    ):
+        for path in directory.iterdir():
+            if path in existing_files or not path.name.startswith("pytest_"):
+                continue
+            path.unlink()
     if strain_content is None:
         if strain_registry.registry_path.exists():
             strain_registry.registry_path.unlink()
@@ -766,6 +788,297 @@ def test_micro_biome_rejects_oversized_state(monkeypatch: pytest.MonkeyPatch) ->
     assert response.status_code == 413
 
 
+def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBridge:
+        def status(self) -> dict:
+            return {
+                "available": True,
+                "contract": "cosmoaudition-germ/v0.1",
+                "remote": {"ok": True},
+            }
+
+        def get_json(self, path: str, *, params: dict | None = None) -> dict:
+            assert path == "/api/snapshot"
+            assert params == {"mode": "fixture"}
+            return {
+                "generatedAt": "2026-07-30T12:00:00Z",
+                "mode": "fixture",
+                "signals": [
+                    {
+                        "id": "solar_wind_speed",
+                        "label": "Solar wind speed",
+                        "layer": "earth",
+                        "unit": "km/s",
+                        "value": 450,
+                        "normalized": 0.5,
+                        "timestamp": "2026-07-30T12:00:00Z",
+                        "sourceId": "swpc_solar_wind",
+                        "sphere": "cosmos",
+                        "epistemicStatus": "reported",
+                        "temporalCharacter": "stream",
+                        "signalKind": "observation",
+                        "confidence": "high",
+                    }
+                ],
+                "sources": [],
+                "cache": [],
+            }
+
+    monkeypatch.setattr(cosmoaudition_routes, "_bridge", lambda: FakeBridge())
+    status = client.get("/cosmoaudition/status")
+    assert status.status_code == 200
+    assert status.json()["available"] is True
+
+    snapshot = client.get("/cosmoaudition/snapshot?mode=fixture")
+    assert snapshot.status_code == 200
+    assert snapshot.json()["payload"]["signals"][0]["sphere"] == "cosmos"
+
+    modules = client.get("/cosmoaudition/modules")
+    assert modules.status_code == 200
+    module_ids = {item["id"] for item in modules.json()["modules"]}
+    assert {"cosmo_observation", "cosmo_matter_modulator", "matter_analysis"} <= module_ids
+
+    mapping = {
+        "mapping": {
+            "id": "pytest_solar_to_density",
+            "signalId": "solar_wind_speed",
+            "layer": "earth",
+            "target": "generation:inpaint_density",
+            "scale": "linear",
+            "inputRange": [300, 600],
+            "outputRange": [0, 1],
+            "smoothingMs": 80,
+            "missingData": "hold-explicitly",
+            "epistemicNote": "Authored test relation; not a source identity claim.",
+        },
+        "signal": snapshot.json()["payload"]["signals"][0],
+        "amount": 1,
+    }
+    mapped = client.post("/cosmoaudition/map", json=mapping)
+    assert mapped.status_code == 200
+    assert mapped.json()["status"] == "applied"
+    assert mapped.json()["outputValue"] == pytest.approx(0.5)
+    assert mapped.json()["epistemicStatus"] == "reported"
+    assert mapped.json()["temporalCharacter"] == "stream"
+
+    log_mapping = {
+        **mapping,
+        "mapping": {
+            **mapping["mapping"],
+            "scale": "log",
+            "inputRange": [10, 100],
+        },
+    }
+    log_below = client.post(
+        "/cosmoaudition/map",
+        json={**log_mapping, "signal": {**mapping["signal"], "value": 1}},
+    )
+    log_above = client.post(
+        "/cosmoaudition/map",
+        json={**log_mapping, "signal": {**mapping["signal"], "value": 1_000}},
+    )
+    assert log_below.status_code == 200
+    assert log_below.json()["status"] == "applied"
+    assert log_below.json()["outputValue"] == 0
+    assert log_above.status_code == 200
+    assert log_above.json()["outputValue"] == 1
+
+    held = client.post(
+        "/cosmoaudition/map",
+        json={**mapping, "signal": None, "previousOutput": 0.37},
+    )
+    assert held.status_code == 200
+    assert held.json()["status"] == "held"
+    assert held.json()["outputValue"] == pytest.approx(0.37)
+
+    archived = client.post(
+        "/cosmoaudition/archives",
+        json={
+            "label": "pytest observatory fixture",
+            "module": "cosmo_cosmic_field",
+            "snapshot": snapshot.json()["payload"],
+        },
+    )
+    assert archived.status_code == 200
+    archive_id = archived.json()["id"]
+    loaded = client.get(f"/cosmoaudition/archives/{archive_id}")
+    assert loaded.status_code == 200
+    assert loaded.json()["snapshot"]["mode"] == "fixture"
+    deleted = client.delete(f"/cosmoaudition/archives/{archive_id}")
+    assert deleted.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("http://127.0.0.1:8797", "http://127.0.0.1:8797"),
+        ("http://localhost:8797/", "http://localhost:8797"),
+        ("http://[::1]:8797", "http://[::1]:8797"),
+    ],
+)
+def test_cosmoaudition_bridge_accepts_only_explicit_http_loopback(
+    value: str,
+    expected: str,
+) -> None:
+    assert validate_loopback_base_url(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://127.0.0.1:8797",
+        "http://example.com:8797",
+        "http://127.0.0.1:8797/api/snapshot",
+        "http://user:password@127.0.0.1:8797",
+    ],
+)
+def test_cosmoaudition_bridge_rejects_non_loopback_or_ambiguous_urls(value: str) -> None:
+    with pytest.raises(ValueError):
+        validate_loopback_base_url(value)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"value": NaN}',
+        b'{"value": Infinity}',
+        b'{"value": -Infinity}',
+        b'["not", "an", "object"]',
+    ],
+)
+def test_cosmoaudition_bridge_rejects_invalid_json_boundaries(payload: bytes) -> None:
+    with pytest.raises(CosmoauditionBridgeError):
+        _decode_json_object(payload)
+
+
+def test_cosmoaudition_bridge_rejects_excessively_nested_json() -> None:
+    payload = (b'{"value":' * 40) + b"null" + (b"}" * 40)
+    with pytest.raises(CosmoauditionBridgeError, match="invalid JSON"):
+        _decode_json_object(payload)
+
+
+def test_cosmoaudition_status_requires_boolean_remote_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = CosmoauditionBridge(
+        base_url="http://127.0.0.1:8797",
+        timeout_seconds=0.1,
+        max_response_bytes=1_024,
+    )
+    monkeypatch.setattr(bridge, "get_json", lambda path: {"ok": "false"})
+
+    assert bridge.status()["available"] is False
+
+
+def test_matter_analysis_persists_explicit_states_and_masa_sidecar() -> None:
+    source_path = settings.audio_dir / "pytest_matter_analysis_source.wav"
+    write_sine_wav(source_path, duration=0.25)
+    response = client.post(
+        "/matter/analyze",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "source_id": "sound_pytest_matter_source",
+            "fft_size": 512,
+            "max_frames": 8,
+            "output_name": "pytest_matter_analysis",
+            "lineage": {"parents": ["sound_pytest_matter_source"]},
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "done"
+    assert result["analysis"]["amplitude"]["state"] == "measured"
+    assert result["analysis"]["spectral"]["state"] == "measured"
+    assert result["analysis"]["morphology"]["state"] == "inferred"
+    assert result["masa_sidecar_file"]
+    assert result["masa"]["status"] == "written"
+
+    artifact = json.loads(Path(result["profile_file"]).read_text(encoding="utf-8"))
+    assert artifact["type"] == "matter_analysis"
+    assert artifact["lineage"]["operation"] == "matter_analysis"
+    assert artifact["masa"]["status"] == "written"
+    sidecar = json.loads(Path(result["masa_sidecar_file"]).read_text(encoding="utf-8"))
+    assert sidecar["masaVersion"] == "0.1.0"
+    assert sidecar["profiles"] == ["core", "audio", "analysis"]
+    assert sidecar["claims"] == []
+    assert sidecar["measurements"]
+
+
+def test_matter_analysis_rejects_malformed_lineage_parents() -> None:
+    source_path = settings.audio_dir / "pytest_matter_invalid_lineage.wav"
+    write_sine_wav(source_path, duration=0.1)
+    response = client.post(
+        "/matter/analyze",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "fft_size": 512,
+            "max_frames": 2,
+            "output_name": "pytest_matter_invalid_lineage",
+            "lineage": {"parents": 1},
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_matter_analysis_reports_disabled_masa_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = settings.audio_dir / "pytest_matter_masa_disabled.wav"
+    write_sine_wav(source_path, duration=0.1)
+    monkeypatch.setattr(settings, "masa_sidecars_enabled", False)
+    response = client.post(
+        "/matter/analyze",
+        json={
+            "input_audio_path": storage.relative_path(source_path),
+            "fft_size": 512,
+            "max_frames": 2,
+            "output_name": "pytest_matter_masa_disabled",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["masa_sidecar_file"] is None
+    assert result["masa"] == {"status": "disabled", "requested": False}
+
+
+def test_matter_analysis_does_not_invent_short_or_silent_morphology() -> None:
+    short_path = settings.audio_dir / "pytest_matter_short.wav"
+    write_sine_wav(short_path, duration=0.02)
+    short = client.post(
+        "/micro/matter-analysis",
+        json={
+            "input_audio_path": storage.relative_path(short_path),
+            "fft_size": 512,
+            "max_frames": 4,
+            "output_name": "pytest_matter_short",
+        },
+    )
+    assert short.status_code == 200
+    assert short.json()["analysis"]["spectral"]["state"] == "unavailable"
+    assert short.json()["analysis"]["morphology"]["state"] == "unavailable"
+
+    silent_path = settings.audio_dir / "pytest_matter_silent.wav"
+    with wave.open(str(silent_path), "wb") as silent_wav:
+        silent_wav.setnchannels(1)
+        silent_wav.setsampwidth(2)
+        silent_wav.setframerate(44_100)
+        silent_wav.writeframes(b"\x00\x00" * 11_025)
+    silent = client.post(
+        "/matter/analyze",
+        json={
+            "input_audio_path": storage.relative_path(silent_path),
+            "fft_size": 512,
+            "max_frames": 4,
+            "output_name": "pytest_matter_silent",
+        },
+    )
+    assert silent.status_code == 200
+    assert silent.json()["analysis"]["spectral"]["state"] == "unavailable"
+    assert silent.json()["analysis"]["morphology"]["state"] == "unavailable"
+
+
 def test_huggingface_status_reports_cli_auth_without_model_check() -> None:
     response = client.get("/huggingface/status?check_models=false")
     assert response.status_code == 200
@@ -811,6 +1124,11 @@ def test_mock_generate_creates_wav_and_metadata() -> None:
     assert metadata["tags"] == ["SFX", "review"]
     assert metadata["earworm"]["protocol"] == "earworm"
     assert metadata["earworm"]["export_route"] == "/earworm/export"
+    assert metadata["masa"]["status"] == "written"
+    assert metadata["masa"]["canonical_identity"] == "sound_id"
+    masa_sidecar = json.loads(Path(metadata["masa"]["sidecar_path"]).read_text(encoding="utf-8"))
+    assert masa_sidecar["masaVersion"] == "0.1.0"
+    assert masa_sidecar["extensions"]["germ:lineage"]["soundId"] == metadata["sound_id"]
 
 
 def test_generation_rejects_seed_below_random_sentinel() -> None:
@@ -2687,6 +3005,43 @@ def test_metadata_commit_precedes_optional_akousmata_write(
         )
 
     assert memory_called is False
+
+
+def test_metadata_companion_rewrite_advances_library_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        storage,
+        "_remember_generation_as_akousma",
+        lambda **kwargs: {  # noqa: ARG005
+            "status": "remembered",
+            "requested": False,
+            "parent_akousma_ids": [],
+            "akousma_id": "akousma_pytest_revision",
+        },
+    )
+    before = storage.library_version
+    request = GenerateRequest(
+        provider="mock",
+        model="mock-sine",
+        prompt="library revision companion write",
+        duration=0.25,
+    )
+
+    storage.write_metadata(
+        metadata_path=tmp_path / "metadata.json",
+        request=request,
+        mode="text-to-audio",
+        provider="mock",
+        model="mock-sine",
+        seed=1,
+        output_audio_path=None,
+        sample_rate=None,
+        status="error",
+    )
+
+    assert storage.library_version == before + 2
 
 
 def test_mock_audio_to_audio_accepts_input_path() -> None:

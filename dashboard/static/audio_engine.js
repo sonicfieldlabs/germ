@@ -344,7 +344,13 @@ class GermRecorderProcessor extends AudioWorkletProcessor {
     super();
     this.recording = true;
     this.port.onmessage = (event) => {
-      if (event.data === "stop") this.recording = false;
+      if (event.data === "stop") {
+        this.recording = false;
+        // Messages sent through one MessagePort are ordered. The main thread
+        // can therefore treat this acknowledgment as a flush boundary after
+        // every PCM block posted by earlier process() calls.
+        this.port.postMessage({ type: "stopped" });
+      }
     };
   }
   process(inputs) {
@@ -436,8 +442,15 @@ export async function createWavRecorder(context, sourceNode) {
   const right = [];
   let frames = 0;
   let active = false;
+  let stopping = false;
+  let stopPromise = null;
+  let resolveStopAck = null;
   tap.port.onmessage = (event) => {
-    if (!active || !event.data?.left) return;
+    if (event.data?.type === "stopped") {
+      resolveStopAck?.();
+      return;
+    }
+    if ((!active && !stopping) || !event.data?.left) return;
     left.push(event.data.left);
     right.push(event.data.right || event.data.left);
     frames += event.data.left.length;
@@ -449,23 +462,37 @@ export async function createWavRecorder(context, sourceNode) {
       sourceNode.connect(tap);
     },
     async stop() {
+      if (stopPromise) return stopPromise;
       if (!active) return null;
       active = false;
-      try { tap.port.postMessage("stop"); } catch {}
-      try { sourceNode.disconnect(tap); } catch {}
-      try { tap.disconnect(); } catch {}
-      const mergedLeft = new Float32Array(frames);
-      const mergedRight = new Float32Array(frames);
-      let offset = 0;
-      for (let i = 0; i < left.length; i += 1) {
-        mergedLeft.set(left[i], offset);
-        mergedRight.set(right[i], offset);
-        offset += left[i].length;
-      }
-      left.length = 0;
-      right.length = 0;
-      const blob = encodeWavBlob([mergedLeft, mergedRight], context.sampleRate, { bitDepth: 16, dither: true });
-      return { blob, duration: frames / context.sampleRate, sampleRate: context.sampleRate };
+      stopping = true;
+      stopPromise = (async () => {
+        await new Promise((resolve) => {
+          const timeout = window.setTimeout(resolve, 120);
+          resolveStopAck = () => {
+            window.clearTimeout(timeout);
+            resolve();
+          };
+          try { tap.port.postMessage("stop"); } catch { resolveStopAck(); }
+        });
+        stopping = false;
+        resolveStopAck = null;
+        try { sourceNode.disconnect(tap); } catch {}
+        try { tap.disconnect(); } catch {}
+        const mergedLeft = new Float32Array(frames);
+        const mergedRight = new Float32Array(frames);
+        let offset = 0;
+        for (let i = 0; i < left.length; i += 1) {
+          mergedLeft.set(left[i], offset);
+          mergedRight.set(right[i], offset);
+          offset += left[i].length;
+        }
+        left.length = 0;
+        right.length = 0;
+        const blob = encodeWavBlob([mergedLeft, mergedRight], context.sampleRate, { bitDepth: 16, dither: true });
+        return { blob, duration: frames / context.sampleRate, sampleRate: context.sampleRate };
+      })();
+      return stopPromise;
     },
     get recording() { return active; },
   };

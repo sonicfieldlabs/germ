@@ -1,6 +1,6 @@
 import { escapeHtml, iconSvg } from "./ui_utils.js";
 import { initOneBitDish } from "./dish.js?v=20260706-engine-p1";
-import { createGermSynthEngine } from "./wavetable_synth.js?v=20260706-engine-p1";
+import { createGermSynthEngine } from "./wavetable_synth.js?v=20260731-audit-p1";
 import {
   SMOOTH_FAST,
   SMOOTH_UI,
@@ -15,7 +15,15 @@ import {
   createGateNode,
   createWavRecorder,
   createVoicePool,
-} from "./audio_engine.js?v=20260706-engine-p1";
+} from "./audio_engine.js?v=20260731-audit-p1";
+import {
+  COSMOAUDITION_MODULATOR_TYPES,
+  finiteNumberOrNull,
+  cosmoauditionSelectedSignal,
+  cosmoauditionUnitFor,
+  cosmoauditionPreviousOutput,
+  cosmoauditionMappingSignal,
+} from "./cosmoaudition.js?v=20260731-audit-p1";
 
 /* Appearance preferences -------------------------------------------------
    Oída and germ share the same warm-neutral surface system. Germ keeps one
@@ -250,7 +258,7 @@ let canvasPendingSourcePosition = null;
 let canvasConnectionDraft = null;
 let canvasToolsAnchor = null;
 let rackSelectedKeys = new Set();
-const CANVAS_SOURCE_MENU_TABS = new Set(["core", "time", "micro", "fx", "modulators", "genetic"]);
+const CANVAS_SOURCE_MENU_TABS = new Set(["core", "time", "micro", "cosmoaudition", "fx", "modulators", "genetic"]);
 let canvasSourceMenuTab = CANVAS_SOURCE_MENU_TABS.has(localStorage.getItem("germinator-source-menu-tab"))
   ? localStorage.getItem("germinator-source-menu-tab")
   : "core";
@@ -334,6 +342,7 @@ const MODULATOR_TYPES = new Set([
   "audio_to_control",
   "gesture_recorder",
   "macro_modulator",
+  ...COSMOAUDITION_MODULATOR_TYPES,
 ]);
 const PROMPT_MODULATOR_TYPES = new Set(["prompt_modulator", "prompt_morph"]);
 const GENERATION_VALUE_MODULATOR_TYPES = new Set([
@@ -355,6 +364,7 @@ const GENERATION_VALUE_MODULATOR_TYPES = new Set([
   "region_envelope",
   "audio_to_control",
   "gesture_recorder",
+  ...COSMOAUDITION_MODULATOR_TYPES,
 ]);
 const REALTIME_VALUE_MODULATOR_TYPES = new Set([
   "lfo_modulator",
@@ -370,6 +380,7 @@ const REALTIME_VALUE_MODULATOR_TYPES = new Set([
   "spectral_follower",
   "audio_to_control",
   "gesture_recorder",
+  ...COSMOAUDITION_MODULATOR_TYPES,
 ]);
 const CLOCKED_VALUE_MODULATOR_TYPES = new Set([
   "lfo_modulator",
@@ -386,6 +397,7 @@ const CLOCKED_VALUE_MODULATOR_TYPES = new Set([
   "region_envelope",
   "audio_to_control",
   "gesture_recorder",
+  ...COSMOAUDITION_MODULATOR_TYPES,
 ]);
 const PROMPT_STACK_LAYERS = [
   { key: "material", label: "Material" },
@@ -532,7 +544,6 @@ const WAVE_REGION_TYPE_ALIASES = {
   preserve_region: "preserve",
 };
 const WAVE_REGION_MASK_TYPES = new Set(["mask", "variation", "texture", "silence", "bridge"]);
-const WAVE_REGION_PROTECT_TYPES = new Set(["preserve", "accent"]);
 const GENETIC_MODULE_TYPES = new Set(["identity_extractor", "generation_sequencer"]);
 const GENETIC_IDENTITY_TRAITS = {
   rhythm: {
@@ -763,7 +774,9 @@ const FX_MODULES = {
   spectral_tissue: { label: "Spectral Tissue", description: "Freeze, smear, mask, and reorganize spectra" },
   quanta: { label: "Quanta", description: "Gabor-style micro-event generator" },
   microscope: { label: "Microscope", description: "Inspect transients, partials, density, and grain behavior" },
+  matter_analysis: { label: "Matter Analysis", description: "Measure spectral, temporal, spatial, and inferred material qualities without altering audio" },
   incubator: { label: "Incubator", description: "Slowly evolve a sound population over time" },
+  cosmo_matter_modulator: { label: "Matter Modulator", description: "Route observatory control into granular, spectral, and temporal sound-matter processing" },
   loop_doctor: { label: "Loop Doctor", description: "Loop detection, seam repair, and cyclic export" },
   space: { label: "Space", description: "Simple reverb modes" },
   echo: { label: "Echo", description: "Delay modes and feedback" },
@@ -782,6 +795,7 @@ const MICRO_FX_TYPES = new Set([
   "quanta",
   "microscope",
   "incubator",
+  "cosmo_matter_modulator",
 ]);
 const MICRO_FX_DEFAULTS = {
   grain_culture: { grainSizeMs: 35, density: 0.62, selection: 0.7, mix: 0.45 },
@@ -795,6 +809,7 @@ const MICRO_FX_DEFAULTS = {
   quanta: { rateHz: 18, durationMs: 28, frequencyScatter: 0.35, mix: 0.45 },
   microscope: { zoom: 0.64, transientFocus: 0.6, partialFocus: 0.45, mix: 0.3 },
   incubator: { generation: 0.5, mutation: 0.38, timeScale: 0.55, mix: 0.48 },
+  cosmo_matter_modulator: { density: 0.5, spread: 0.45, rateHz: 12, smoothingMs: 180, mix: 0.42 },
 };
 const MICRO_FX_CONTROL_META = {
   grainSizeMs: { label: "Size", min: 8, max: 240, step: 1 },
@@ -980,6 +995,22 @@ const FX_SEMANTIC_PROFILES = {
       seedDrift: Number(params.mutation ?? 0.38) * 0.2 * amount,
       continuationDivergence: Number(params.timeScale ?? 0.55) * 0.18 * amount,
       batchSpread: Number(params.generation ?? 0.5) * 0.16 * amount,
+    }),
+  },
+  matter_analysis: {
+    family: "analysis",
+    prompt: () => "",
+    negative: () => "",
+    generation: () => ({}),
+  },
+  cosmo_matter_modulator: {
+    family: "cosmoaudition",
+    prompt: ({ params }) => `observatory-shaped sound matter, ${Number(params.density ?? 0.5) > 0.6 ? "dense" : "open"} material pulses, bounded planetary modulation`,
+    negative: () => "literal one-to-one data sonification, source identity claim",
+    generation: ({ params, amount }) => ({
+      inpaintDensity: Number(params.density ?? 0.5) * 0.18 * amount,
+      seedDrift: Number(params.spread ?? 0.45) * 0.14 * amount,
+      continuationDivergence: Math.min(1, Number(params.rateHz ?? 12) / 80) * 0.12 * amount,
     }),
   },
   loop_doctor: {
@@ -2053,23 +2084,6 @@ function updateModels(preserve = true) {
   $("activeProvider").textContent = provider;
   $("activeModel").textContent = $("model").value || "-";
   updateHomeReadouts();
-}
-
-function parseRanges(value) {
-  return value
-    .split(/[;\n]/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split(",").map((part) => Number(part.trim()));
-      if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
-        throw new Error(`Invalid inpaint range: ${line}`);
-      }
-      if (parts[1] <= parts[0]) {
-        throw new Error(`Invalid inpaint range, end must be greater than start: ${line}`);
-      }
-      return parts;
-    });
 }
 
 function loraPayload() {
@@ -3554,9 +3568,6 @@ function updatePetriPagination(page, totalPages) {
    Chamber — lineage-aware generative graph
    =================================================================== */
 
-const canvasLegacyStarterPrompt = "granular metallic insect texture, close mic, dry, irregular transient clusters";
-const canvasLegacyStarterNegative = "speech, vocals, melody, clipping, harsh artifact";
-
 function canvasId(prefix) {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -3742,6 +3753,17 @@ function modulatorLabel(modulatorType) {
     audio_to_control: "Audio-to-Control",
     gesture_recorder: "Gesture Recorder",
     macro_modulator: "Macro",
+    cosmo_observation: "Observatory Source",
+    cosmo_cosmic_field: "Cosmic Field",
+    cosmo_earth_field: "Earth Field",
+    cosmo_biosphere_field: "Biosphere Field",
+    cosmo_human_machine_field: "Human–Machine Field",
+    cosmo_relational_index: "Relational Index",
+    cosmo_event_pulsar: "Event Pulsar",
+    cosmo_mapping_loom: "Mapping Loom",
+    cosmo_semantic_field: "Semantic Field",
+    cosmo_uncertainty_field: "Uncertainty Field",
+    cosmo_observation_archive: "Observation Archive",
   }[modulatorType] || "Modulator";
 }
 
@@ -4262,6 +4284,39 @@ function normalizeModulatorNode(node) {
     macro_modulator: {
       amount: 50,
     },
+    cosmo_observation: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all",
+    },
+    cosmo_cosmic_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "cosmos",
+    },
+    cosmo_earth_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "earth",
+    },
+    cosmo_biosphere_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "biosphere",
+    },
+    cosmo_human_machine_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "human-machine",
+    },
+    cosmo_relational_index: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all",
+    },
+    cosmo_event_pulsar: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all",
+    },
+    cosmo_mapping_loom: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all", missingData: "hold-explicitly", previousValue: null,
+    },
+    cosmo_semantic_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all",
+    },
+    cosmo_uncertainty_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "all",
+    },
+    cosmo_observation_archive: {
+      mode: "archive", signalId: "", currentValue: null, available: false, status: "no archive", sphere: "all", archiveId: "",
+    },
   };
   const defaults = configDefaults[modulatorType] || configDefaults.macro_modulator;
   const routes = modulatorType === "mod_matrix"
@@ -4275,34 +4330,39 @@ function normalizeModulatorNode(node) {
   const gesturePoints = Array.isArray(node.config?.points) && node.config.points.length
     ? node.config.points
     : defaults.points || [];
+  const normalizedConfig = {
+    ...defaults,
+    ...(node.config || {}),
+    ...(modulatorType === "mod_matrix" ? {
+      matrixRoutes: matrixRoutes.map((route) => ({
+        id: route.id || canvasId("matrix"),
+        sourceType: route.sourceType || "lfo_modulator",
+        targetNodeId: route.targetNodeId || "",
+        targetPath: route.targetPath || "",
+        amount: Math.min(1, Math.max(0, Number(route.amount ?? 0.35))),
+        curve: route.curve || "linear",
+        enabled: route.enabled !== false,
+        config: { seed: 1, ...(route.config || {}) },
+      })),
+    } : {}),
+    ...(modulatorType === "gesture_recorder" ? {
+      points: gesturePoints
+        .map((point) => ({
+          t: Math.min(1, Math.max(0, Number(point.t ?? 0))),
+          value: Math.min(1, Math.max(0, Number(point.value ?? 0.5))),
+        }))
+        .sort((a, b) => a.t - b.t),
+    } : {}),
+  };
+  if (COSMOAUDITION_MODULATOR_TYPES.has(modulatorType)) {
+    normalizedConfig.available = normalizedConfig.available === true
+      && finiteNumberOrNull(normalizedConfig.currentValue) !== null;
+  }
   return {
     ...node,
     modulatorType,
     label: node.label || modulatorLabel(modulatorType),
-    config: {
-      ...defaults,
-      ...(node.config || {}),
-      ...(modulatorType === "mod_matrix" ? {
-        matrixRoutes: matrixRoutes.map((route) => ({
-          id: route.id || canvasId("matrix"),
-          sourceType: route.sourceType || "lfo_modulator",
-          targetNodeId: route.targetNodeId || "",
-          targetPath: route.targetPath || "",
-          amount: Math.min(1, Math.max(0, Number(route.amount ?? 0.35))),
-          curve: route.curve || "linear",
-          enabled: route.enabled !== false,
-          config: { seed: 1, ...(route.config || {}) },
-        })),
-      } : {}),
-      ...(modulatorType === "gesture_recorder" ? {
-        points: gesturePoints
-          .map((point) => ({
-            t: Math.min(1, Math.max(0, Number(point.t ?? 0))),
-            value: Math.min(1, Math.max(0, Number(point.value ?? 0.5))),
-          }))
-          .sort((a, b) => a.t - b.t),
-      } : {}),
-    },
+    config: normalizedConfig,
     routes: routes.map((route) => ({
       id: route.id || canvasId("route"),
       targetNodeId: route.targetNodeId || "",
@@ -4312,6 +4372,131 @@ function normalizeModulatorNode(node) {
       config: { ...(PROMPT_MODULATOR_TYPES.has(modulatorType) ? { outputMode: route.mode || "append" } : { distribution: "uniform", min: 0, max: 1, steppedValues: "", seed: 1 }), ...(route.config || {}) },
     })),
   };
+}
+
+function cosmoauditionNodeProvenance(node) {
+  if (!COSMOAUDITION_MODULATOR_TYPES.has(node?.modulatorType)) return null;
+  return {
+    contract: "cosmoaudition-germ/v0.1",
+    module: node.modulatorType,
+    mode: node.config?.mode || "fixture",
+    generated_at: node.config?.generatedAt || null,
+    signal_id: node.config?.signalId || null,
+    signal_label: node.config?.signalLabel || null,
+    source_id: node.config?.sourceId || null,
+    sphere: node.config?.sphere || null,
+    confidence: node.config?.confidence || null,
+    epistemic_status: node.config?.epistemicStatus || null,
+    temporal_character: node.config?.temporalCharacter || null,
+    mapping_decision: node.config?.mappingDecision || null,
+    value: node.config?.available === true ? finiteNumberOrNull(node.config?.currentValue) : null,
+    available: node.config?.available === true,
+  };
+}
+
+async function refreshCosmoauditionNode(nodeId, { archive = false } = {}) {
+  const index = canvasNodes.findIndex((item) => item.id === nodeId);
+  const node = normalizeModulatorNode(canvasNodes[index]);
+  if (!node || !COSMOAUDITION_MODULATOR_TYPES.has(node.modulatorType)) return;
+  beginWork(archive ? "Archiving Observation" : "Reading Observatory", node.label);
+  try {
+    let payload;
+    let archiveId = node.config?.archiveId || "";
+    if (node.modulatorType === "cosmo_observation_archive") {
+      const listing = await api("/cosmoaudition/archives");
+      const summary = (listing.archives || []).find((item) => item.id === archiveId) || listing.archives?.[0];
+      if (!summary) throw new Error("No observation archive is available yet.");
+      archiveId = summary.id;
+      const artifact = await api(`/cosmoaudition/archives/${encodeURIComponent(summary.id)}`);
+      payload = artifact.snapshot || {};
+    } else {
+      const query = new URLSearchParams({ mode: node.config?.mode === "live" ? "live" : "fixture" });
+      const latitude = finiteNumberOrNull(node.config?.latitude);
+      const longitude = finiteNumberOrNull(node.config?.longitude);
+      if (latitude !== null) query.set("lat", String(latitude));
+      if (longitude !== null) query.set("lon", String(longitude));
+      const response = await api(`/cosmoaudition/snapshot?${query.toString()}`);
+      if (!response.available || !response.payload) throw new Error(response.error || "Cosmoaudition System is unavailable.");
+      payload = response.payload;
+      if (archive) {
+        const saved = await api("/cosmoaudition/archives", {
+          method: "POST",
+          body: JSON.stringify({
+            label: `${node.label} ${payload.generatedAt || new Date().toISOString()}`,
+            module: node.modulatorType,
+            snapshot: payload,
+            notes: "Archived from the GERM Cosmoaudition module; mapping remains authored, not literal sonification.",
+          }),
+        });
+        archiveId = saved.id || archiveId;
+      }
+    }
+    const signals = Array.isArray(payload.signals) ? payload.signals : [];
+    const selected = cosmoauditionSelectedSignal(node, signals);
+    let currentValue = cosmoauditionUnitFor(node, signals, selected, (signal) =>
+      deterministicUnit(`${signal.label || ""}:${signal.notes || ""}:${signal.epistemicStatus || ""}`));
+    let mappingDecision = null;
+    const previousOutput = cosmoauditionPreviousOutput(node);
+    if (node.modulatorType === "cosmo_mapping_loom") {
+      const signalId = selected?.id || String(node.config?.signalId || "").trim() || "unavailable-signal";
+      mappingDecision = await api("/cosmoaudition/map", {
+        method: "POST",
+        body: JSON.stringify({
+          mapping: {
+            id: `${node.id}:mapping`,
+            signalId,
+            layer: selected?.layer || "earth",
+            target: "germ:control",
+            scale: "linear",
+            inputRange: [0, 1],
+            outputRange: [0, 1],
+            smoothingMs: 120,
+            missingData: node.config?.missingData || "hold-explicitly",
+            description: "Operator-authored Cosmoaudition to GERM control route.",
+            epistemicNote: "This control relation is authored; it is not the source's voice or an identity claim.",
+          },
+          signal: cosmoauditionMappingSignal(selected),
+          previousOutput,
+          amount: 1,
+        }),
+      });
+      currentValue = finiteNumberOrNull(mappingDecision.outputValue);
+    }
+    const available = finiteNumberOrNull(currentValue) !== null;
+    const boundedValue = available ? Math.min(1, Math.max(0, Number(currentValue))) : null;
+    node.config = {
+      ...(node.config || {}),
+      ...(node.modulatorType === "cosmo_mapping_loom" ? {
+        previousValue: available ? boundedValue : previousOutput,
+      } : {}),
+      currentValue: available ? boundedValue : finiteNumberOrNull(node.config?.currentValue),
+      available,
+      status: mappingDecision?.status || (available ? "observed" : "unavailable"),
+      generatedAt: payload.generatedAt || null,
+      signalId: selected?.id || node.config?.signalId || "",
+      signalLabel: selected?.label || "No matching signal",
+      signalUnit: selected?.unit || "",
+      sourceId: selected?.sourceId || null,
+      confidence: selected?.confidence || null,
+      epistemicStatus: selected?.epistemicStatus || null,
+      temporalCharacter: selected?.temporalCharacter || null,
+      sphere: selected?.sphere || node.config?.sphere || "all",
+      observationCount: signals.length,
+      archiveId,
+      mappingDecision,
+    };
+    canvasNodes[index] = node;
+    selectedCanvasNodeId = node.id;
+    canvasSaveState();
+    renderCanvas();
+    finishWork(archive ? "Observation Archived" : "Observation Ready", available ? "ok" : "muted", selected?.label || node.config.status);
+  } catch (error) {
+    node.config = { ...(node.config || {}), available: false, status: String(error?.message || error) };
+    canvasNodes[index] = node;
+    canvasSaveState();
+    renderCanvas();
+    finishWork("Observatory Unavailable", "bad", node.config.status);
+  }
 }
 
 function modulationIntensityCount(intensity = 25) {
@@ -4634,6 +4819,12 @@ function modulationGestureUnit(modulator, context = {}) {
 function modulationNumericUnit(modulator, route, target, baseValue, context = {}) {
   const type = modulator?.modulatorType || "macro_modulator";
   const seed = `${modulator?.id}:${route?.id}:${modulator?.config?.seed ?? route?.config?.seed ?? 1}:${target?.path}:${context.eventIndex ?? ""}:${context.tick ?? ""}:${baseValue ?? ""}`;
+  if (COSMOAUDITION_MODULATOR_TYPES.has(type)) {
+    const observed = finiteNumberOrNull(modulator.config?.currentValue);
+    return modulator.config?.available === true && observed !== null
+      ? Math.min(1, Math.max(0, observed))
+      : 0.5;
+  }
   if (type === "macro_modulator") return Math.min(1, Math.max(0, Number(modulator.config?.amount ?? 50) / 100));
   if (type === "probability_modulator") {
     const chance = Math.min(1, Math.max(0, Number(modulator.config?.chance ?? 75) / 100));
@@ -4846,6 +5037,7 @@ function canvasApplyGenerationModulators(base = {}, context = {}) {
   };
   canvasModulatorNodes().map(normalizeModulatorNode).forEach((modulator) => {
     if (modulator.modulatorType === "mod_matrix") return;
+    if (COSMOAUDITION_MODULATOR_TYPES.has(modulator.modulatorType) && modulator.config?.available !== true) return;
     (modulator.routes || []).forEach((route) => {
       if (!modulationRouteMatches(route, context)) return;
       const target = modulationTargetForRoute(route);
@@ -4859,6 +5051,9 @@ function canvasApplyGenerationModulators(base = {}, context = {}) {
         target_path: target.path,
         target_label: target.label,
         seed: modulator.config.seed ?? route.config?.seed ?? null,
+        ...(COSMOAUDITION_MODULATOR_TYPES.has(modulator.modulatorType)
+          ? { cosmoaudition: cosmoauditionNodeProvenance(modulator) }
+          : {}),
       };
       if (PROMPT_MODULATOR_TYPES.has(modulator.modulatorType) && ["prompt", "negative"].includes(target.type)) {
         const baseValue = target.type === "negative" ? result.negativePrompt : result.prompt;
@@ -5386,11 +5581,6 @@ function canvasRegionBounds(region) {
 function canvasRegionIsGenerativeMask(region) {
   const type = canvasRegionType(region);
   return WAVE_REGION_MASK_TYPES.has(type) || canvasRegionConfig(type).inpaint === true;
-}
-
-function canvasRegionIsProtected(region) {
-  const type = canvasRegionType(region);
-  return WAVE_REGION_PROTECT_TYPES.has(type) || canvasRegionConfig(type).locked === true;
 }
 
 function canvasRegionForPurpose(node, purpose) {
@@ -6189,9 +6379,12 @@ async function runCanvasConnectChoice(button) {
 
 function canvasSourcePosition(offset = {}) {
   const base = canvasPendingSourcePosition || canvasBoardDefaultPoint();
+  const board = $("canvasBoard");
+  const viewportMinX = board ? (board.scrollLeft / canvasZoom) + 12 : 8;
+  const viewportMinY = board ? (board.scrollTop / canvasZoom) + 12 : 8;
   return {
-    x: Math.max(8, base.x + (offset.x || 0)),
-    y: Math.max(8, base.y + (offset.y || 0)),
+    x: Math.max(8, viewportMinX, base.x + (offset.x || 0)),
+    y: Math.max(8, viewportMinY, base.y + (offset.y || 0)),
   };
 }
 
@@ -6254,16 +6447,6 @@ function applyCanvasViewport() {
   if (space) space.style.transform = `scale(${canvasZoom})`;
   if (board) board.style.setProperty("--canvas-zoom-label", `"${Math.round(canvasZoom * 100)}%"`);
   if ($("canvasZoomReadout")) $("canvasZoomReadout").textContent = `${Math.round(canvasZoom * 100)}%`;
-}
-
-function canvasIsLegacyStarterNode(node) {
-  return Boolean(
-    node?.type === "prompt"
-    && (node.prompt === canvasLegacyStarterPrompt || !node.prompt)
-    && (node.negativePrompt === canvasLegacyStarterNegative || !node.negativePrompt)
-    && !canvasAssets.length
-    && !canvasEdges.length,
-  );
 }
 
 function canvasCreatePromptNode({ text = "", negative = "", x = 80, y = 88, handoff = null, relisten = null } = {}) {
@@ -7340,6 +7523,7 @@ function canvasCreateTimeNode(timeType = "colony_sequencer", { x = null, y = nul
 }
 
 function canvasDefaultFxParams(type, targetNode = null) {
+  if (type === "matter_analysis") return { fftSize: 1024, maxFrames: 32 };
   if (MICRO_FX_TYPES.has(type)) return { ...MICRO_FX_DEFAULTS[type] };
   return {
     gain: { amount: 1 },
@@ -7365,6 +7549,7 @@ function canvasCreateFxNode(type = "gain", { x = null, y = null, targetNode = nu
   const target = targetNode || canvasSelectedSoundNode();
   const point = target ? canvasSnappedRightPoint(target) : canvasBoardDefaultPoint();
   const isMicroFx = MICRO_FX_TYPES.has(type);
+  const isMatterAnalysis = type === "matter_analysis";
   const node = {
     id: canvasId("node"),
     projectId: activeCulture.id,
@@ -7372,11 +7557,11 @@ function canvasCreateFxNode(type = "gain", { x = null, y = null, targetNode = nu
     fxType: type,
     x: x ?? point.x + (target ? 16 : 0),
     y: y ?? point.y,
-    width: type === "filter" ? 300 : type === "granular" || type === "loop_doctor" || isMicroFx ? 284 : 236,
-    height: type === "filter" ? 226 : type === "granular" || type === "loop_doctor" || isMicroFx ? 226 : 178,
+    width: type === "filter" ? 300 : type === "granular" || type === "loop_doctor" || isMicroFx || isMatterAnalysis ? 284 : 236,
+    height: type === "filter" ? 226 : type === "granular" || type === "loop_doctor" || isMicroFx || isMatterAnalysis ? 240 : 178,
     label: fx.label,
     params: canvasDefaultFxParams(type, target),
-    semantic: { enabled: true, amount: 1 },
+    semantic: { enabled: !isMatterAnalysis, amount: 1 },
     targetNodeId: target?.id || null,
   };
   canvasNodes.push(node);
@@ -7520,10 +7705,10 @@ function canvasApplySemanticFxLayers(result, context = {}) {
 
 function canvasModulatorNodeSize(modulatorType = "prompt_modulator") {
   const normalizedType = normalizeModulatorType(modulatorType);
-  const wide = ["mod_matrix", "prompt_modulator", "prompt_morph", "lfo_modulator", "envelope_modulator", "step_sequencer_modulator", "gesture_recorder"].includes(normalizedType);
+  const wide = ["mod_matrix", "prompt_modulator", "prompt_morph", "lfo_modulator", "envelope_modulator", "step_sequencer_modulator", "gesture_recorder"].includes(normalizedType) || COSMOAUDITION_MODULATOR_TYPES.has(normalizedType);
   return {
     width: wide ? 430 : 390,
-    height: normalizedType === "prompt_morph" ? 540 : normalizedType === "mod_matrix" ? 390 : normalizedType === "prompt_modulator" ? 420 : normalizedType === "gesture_recorder" ? 390 : wide ? 360 : 320,
+    height: normalizedType === "prompt_morph" ? 540 : normalizedType === "mod_matrix" ? 390 : normalizedType === "prompt_modulator" ? 420 : normalizedType === "gesture_recorder" ? 390 : COSMOAUDITION_MODULATOR_TYPES.has(normalizedType) ? 430 : wide ? 360 : 320,
   };
 }
 
@@ -8314,25 +8499,6 @@ function canvasResetGraph() {
   renderCanvas();
 }
 
-function canvasNodeOriginClass(origin) {
-  return {
-    prompt: "origin-prompt",
-    upload: "origin-upload",
-    library: "origin-library",
-    recording: "origin-recording",
-    audio_snapshot: "origin-recording",
-    continuation: "origin-continuation",
-    inpaint: "origin-inpaint",
-    audio_to_audio: "origin-mutate",
-    mixdown: "origin-mix",
-    extract: "origin-extract",
-    audio_tool: "origin-extract",
-    time_pitch: "origin-extract",
-    time_render: "origin-mix",
-    time_one_shot: "origin-prompt",
-  }[origin] || "origin-library";
-}
-
 function fxModeButton(node, mode, label) {
   const active = node.params?.mode === mode ? " active" : "";
   return `<button class="fx-mode${active}" type="button" data-action="canvas-fx-mode" data-node-id="${escapeHtml(node.id)}" data-mode="${escapeHtml(mode)}">${escapeHtml(label)}</button>`;
@@ -8441,6 +8607,29 @@ function canvasFxControlsMarkup(node) {
       <div class="fx-mini-slider"><span>Mix</span><input class="canvas-fx-param" data-node-id="${escapeHtml(node.id)}" data-param="mix" type="range" min="0" max="1" step="0.01" value="${escapeHtml(params.mix ?? 0.32)}" /></div>
     `;
   }
+  if (node.fxType === "matter_analysis") {
+    const analysis = node.analysis?.analysis || {};
+    const spectral = analysis.spectral || {};
+    const morphology = analysis.morphology || {};
+    const masaStatus = node.analysis
+      ? (node.analysis.masa?.status || (node.analysis.masa_sidecar_file ? "written" : "unavailable"))
+      : "not analyzed";
+    return `
+      <div class="time-control-row">
+        <label>FFT
+          <select class="canvas-fx-param" data-node-id="${escapeHtml(node.id)}" data-param="fftSize">
+            ${[512, 1024, 2048, 4096].map((value) => `<option value="${value}"${Number(node.params?.fftSize) === value ? " selected" : ""}>${value}</option>`).join("")}
+          </select>
+        </label>
+        <label>Frames <input class="canvas-fx-param" data-node-id="${escapeHtml(node.id)}" data-param="maxFrames" type="number" min="1" max="128" step="1" value="${escapeHtml(node.params?.maxFrames ?? 32)}" /></label>
+      </div>
+      <div class="cosmo-observation-readout ${node.analysis ? "is-ready" : ""}">
+        <span>${escapeHtml(node.analysis ? (morphology.brightness || morphology.reason || "Analysis ready") : "Measured and inferred states remain distinct")}</span>
+        <strong>${escapeHtml(Number.isFinite(Number(spectral.centroidHz)) ? `${Math.round(Number(spectral.centroidHz))} Hz` : "—")}</strong>
+        <small>${escapeHtml(node.analysis?.analysis_state || "not analyzed")} · MASA ${escapeHtml(masaStatus)}</small>
+      </div>
+    `;
+  }
   if (MICRO_FX_TYPES.has(node.fxType)) return canvasMicroFxControlsMarkup(node);
   if (node.fxType === "loop_doctor") {
     return `
@@ -8478,6 +8667,9 @@ function canvasFxNodeMarkup(node, selected, style) {
   const renderLoopDoctorButton = node.fxType === "loop_doctor"
     ? `<button class="time-action primary" type="button" data-action="canvas-fx-loop-doctor" data-node-id="${escapeHtml(node.id)}">Repair</button>`
     : "";
+  const analyzeMatterButton = node.fxType === "matter_analysis"
+    ? `<button class="time-action primary" type="button" data-action="canvas-fx-matter-analyze" data-node-id="${escapeHtml(node.id)}">Analyze</button>`
+    : "";
   return canvasInjectModuleTabs(`
     <article class="canvas-node fx-node${selected}" data-node-id="${escapeHtml(node.id)}" style="${style}" data-help="${escapeHtml(fx.description || fx.label)}">
       ${canvasIoPortsMarkup(node.id, { input: true, output: true })}
@@ -8486,10 +8678,11 @@ function canvasFxNodeMarkup(node, selected, style) {
         <div class="time-node-actions">
           ${renderLoopDoctorButton}
           ${renderPitchButton}
+          ${analyzeMatterButton}
           <button class="prompt-node-icon delete" type="button" data-action="canvas-delete-node" data-node-id="${escapeHtml(node.id)}" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
         </div>
       </div>
-      <div class="fx-node-body">${canvasFxControlsMarkup(node)}${canvasFxSemanticControlsMarkup(node)}</div>
+      <div class="fx-node-body">${canvasFxControlsMarkup(node)}${node.fxType === "matter_analysis" ? "" : canvasFxSemanticControlsMarkup(node)}</div>
     </article>
   `, node, { bodyClass: "fx-node-body" });
 }
@@ -9336,6 +9529,9 @@ function modulationPreview(node, route) {
   const targetNode = target ? canvasNodes.find((item) => item.id === target.nodeId) : null;
   if (!target || !targetNode) return { base: "", final: "Choose a target.", detail: "" };
   const base = modulationTargetValue(targetNode, target.path);
+  if (COSMOAUDITION_MODULATOR_TYPES.has(node.modulatorType) && node.config?.available !== true) {
+    return { base: String(base ?? ""), final: "Unavailable", detail: "No observed value is routed." };
+  }
   if (PROMPT_MODULATOR_TYPES.has(node.modulatorType)) {
     const fragment = modulationPromptFragment(node, route, String(base || ""));
     const final = modulationComposeText(String(base || ""), fragment, route.mode || "append");
@@ -9440,6 +9636,45 @@ function canvasModMatrixMarkup(node) {
 }
 
 function canvasModulatorConfigMarkup(node) {
+  if (COSMOAUDITION_MODULATOR_TYPES.has(node.modulatorType)) {
+    const isArchive = node.modulatorType === "cosmo_observation_archive";
+    const value = Number(node.config?.currentValue ?? 0.5);
+    return `
+      ${isArchive ? "" : `
+        <div class="time-control-row">
+          <label>Data mode
+            <select class="modulator-setting" data-node-id="${escapeHtml(node.id)}" data-field="mode">
+              <option value="fixture"${node.config?.mode === "fixture" ? " selected" : ""}>Fixture</option>
+              <option value="live"${node.config?.mode === "live" ? " selected" : ""}>Live</option>
+            </select>
+          </label>
+          <label>Signal id <input class="modulator-setting" data-node-id="${escapeHtml(node.id)}" data-field="signalId" type="text" value="${escapeHtml(node.config?.signalId || "")}" placeholder="auto" /></label>
+        </div>
+        <div class="time-control-row">
+          <label>Latitude <input class="modulator-setting" data-node-id="${escapeHtml(node.id)}" data-field="latitude" type="number" min="-90" max="90" step="0.0001" value="${escapeHtml(node.config?.latitude ?? 4.711)}" /></label>
+          <label>Longitude <input class="modulator-setting" data-node-id="${escapeHtml(node.id)}" data-field="longitude" type="number" min="-180" max="180" step="0.0001" value="${escapeHtml(node.config?.longitude ?? -74.0721)}" /></label>
+        </div>
+      `}
+      ${node.modulatorType === "cosmo_mapping_loom" ? `
+        <div class="time-control-row">
+          <label>Missing data
+            <select class="modulator-setting" data-node-id="${escapeHtml(node.id)}" data-field="missingData">
+              ${["skip", "hold-explicitly", "interpolate-explicitly", "map-uncertainty", "refuse"].map((policy) => `<option value="${policy}"${node.config?.missingData === policy ? " selected" : ""}>${policy}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+      ` : ""}
+      <div class="cosmo-observation-readout ${node.config?.available ? "is-ready" : ""}">
+        <span>${escapeHtml(node.config?.signalLabel || (isArchive ? "No archive loaded" : "Awaiting observation"))}</span>
+        <strong>${escapeHtml(node.config?.available && Number.isFinite(value) ? value.toFixed(3) : "—")}</strong>
+        <small>${escapeHtml(node.config?.confidence || "unassessed")} · ${escapeHtml(node.config?.epistemicStatus || "unresolved")} · ${escapeHtml(node.config?.status || "idle")}</small>
+      </div>
+      <div class="time-control-row">
+        <button class="time-action primary" type="button" data-action="canvas-cosmo-refresh" data-node-id="${escapeHtml(node.id)}">${isArchive ? "Load latest" : "Observe"}</button>
+        ${isArchive ? "" : `<button class="time-action" type="button" data-action="canvas-cosmo-archive" data-node-id="${escapeHtml(node.id)}">Archive</button>`}
+      </div>
+    `;
+  }
   if (node.modulatorType === "mod_matrix") return canvasModMatrixMarkup(node);
   if (node.modulatorType === "prompt_morph") {
     return `
@@ -9649,6 +9884,17 @@ function canvasModulatorNodeMarkup(node, selected, style) {
     audio_to_control: "Audio features become generation controls.",
     gesture_recorder: "Recorded movement for generation values.",
     macro_modulator: "Manual control source.",
+    cosmo_observation: "Project-neutral local observatory signal source.",
+    cosmo_cosmic_field: "Cosmic observations as bounded control material.",
+    cosmo_earth_field: "Atmospheric and geological observations as bounded control material.",
+    cosmo_biosphere_field: "Species and biosphere observations as bounded control material.",
+    cosmo_human_machine_field: "Human and machine activity as bounded control material.",
+    cosmo_relational_index: "Averages available relations without replacing missing values with zero.",
+    cosmo_event_pulsar: "Projects attributed event observations into explicit pulses.",
+    cosmo_mapping_loom: "Executes an authored mapping with a visible missing-data policy.",
+    cosmo_semantic_field: "Combines signal value with attributed descriptive context.",
+    cosmo_uncertainty_field: "Makes confidence and staleness available as modulation.",
+    cosmo_observation_archive: "Replays a bounded local observation archive.",
   }[node.modulatorType] || "Modulator.";
   return `
     <article class="canvas-node modulator-node${selected}" data-node-id="${escapeHtml(node.id)}" style="${style}" data-help="${escapeHtml(helpDescription)}">
@@ -11740,6 +11986,7 @@ function canvasRealtimeRoutesForTarget(node, path) {
     .flatMap((modulator) => (modulator.routes || []).map((route) => ({ modulator, route })))
     .filter(({ modulator, route }) => {
       if (route?.enabled === false || route.targetNodeId !== node.id || route.targetPath !== path) return false;
+      if (COSMOAUDITION_MODULATOR_TYPES.has(modulator.modulatorType) && modulator.config?.available !== true) return false;
       const target = modulationTargetForRoute(route);
       return target?.modulationRate === "realtime" && REALTIME_VALUE_MODULATOR_TYPES.has(modulator.modulatorType);
     });
@@ -11756,6 +12003,7 @@ function canvasHasRealtimeModulationRoutes() {
   return canvasModulatorNodes().some((node) => {
     const modulator = normalizeModulatorNode(node);
     if (!REALTIME_VALUE_MODULATOR_TYPES.has(modulator.modulatorType)) return false;
+    if (COSMOAUDITION_MODULATOR_TYPES.has(modulator.modulatorType) && modulator.config?.available !== true) return false;
     return (modulator.routes || []).some((route) => {
       const target = modulationTargetForRoute(route);
       return route.enabled !== false && target?.modulationRate === "realtime";
@@ -11883,6 +12131,10 @@ function canvasGranularWorkletParams(fxNode) {
 // (adding/removing FX modules), never while a slider moves.
 function canvasBuildFxUnit(context, fxNode) {
   const params = fxNode.params || {};
+  if (fxNode.fxType === "matter_analysis") {
+    const passthrough = context.createGain();
+    return { input: passthrough, output: passthrough, nodes: [passthrough], apply() {} };
+  }
   if (fxNode.fxType === "filter") {
     const filter = context.createBiquadFilter();
     filter.type = params.mode || "lowpass";
@@ -13271,6 +13523,12 @@ async function canvasStartRecording(nodeId) {
   } catch (_) { /* audio context unavailable — skip visualisation */ }
 }
 
+function canvasReleaseRecordingAudio(node) {
+  if (node._recSource) { try { node._recSource.disconnect(); } catch {} node._recSource = null; }
+  if (node._recAnalyser) { try { node._recAnalyser.disconnect(); } catch {} node._recAnalyser = null; }
+  if (node._recAudioCtx) { node._recAudioCtx.close().catch(() => {}); node._recAudioCtx = null; }
+}
+
 function canvasStopRecording(nodeId) {
   const node = canvasNodes.find((item) => item.id === nodeId);
   if (!node || node.type !== "record" || !node.recording) return;
@@ -13278,15 +13536,23 @@ function canvasStopRecording(nodeId) {
     const recorder = node.wavRecorder;
     node.wavRecorder = null;
     recorder.stop()
-      .then((captured) => canvasCommitRecording(node.id, captured))
-      .catch((error) => finishWork("Record Error", "bad", error.message));
+      .then((captured) => {
+        canvasReleaseRecordingAudio(node);
+        canvasCommitRecording(node.id, captured);
+      })
+      .catch((error) => {
+        canvasReleaseRecordingAudio(node);
+        node.stream?.getTracks().forEach((track) => track.stop());
+        node.stream = null;
+        node.recording = false;
+        renderCanvas();
+        finishWork("Record Error", "bad", error.message);
+      });
   } else if (node.recorder) {
     node.recorder.stop();
+    canvasReleaseRecordingAudio(node);
   }
   if (node._recFrame) { cancelAnimationFrame(node._recFrame); node._recFrame = null; }
-  if (node._recSource) { try { node._recSource.disconnect(); } catch {} node._recSource = null; }
-  if (node._recAnalyser) { try { node._recAnalyser.disconnect(); } catch {} node._recAnalyser = null; }
-  if (node._recAudioCtx) { node._recAudioCtx.close().catch(() => {}); node._recAudioCtx = null; }
 }
 
 function snapshotMimeType() {
@@ -14287,6 +14553,7 @@ function timeEventModulationRoutes(node) {
     .flatMap((modulator) => (modulator.routes || []).map((route) => ({ modulator, route })))
     .filter(({ modulator, route }) => {
       if (!route?.enabled || route.targetNodeId !== node.id) return false;
+      if (COSMOAUDITION_MODULATOR_TYPES.has(modulator.modulatorType) && modulator.config?.available !== true) return false;
       const target = modulationTargetForRoute(route);
       return target?.targetScope === "time_events" && CLOCKED_VALUE_MODULATOR_TYPES.has(modulator.modulatorType);
     });
@@ -15907,29 +16174,6 @@ async function processClockedLooperToBars(nodeId) {
   return created;
 }
 
-function canvasBranchNode(nodeId = selectedCanvasNodeId) {
-  const node = canvasNodes.find((item) => item.id === nodeId);
-  if (!node || node.type !== "sound") return;
-  const asset = canvasAssetById(node.assetId);
-  const point = canvasStackedBelowPoint(node);
-  const branch = canvasCreateSoundNode({
-    asset,
-    label: `${node.label || "sound"} branch`,
-    x: point.x,
-    y: Math.max(0, point.y),
-    width: node.width,
-    parentNodeId: node.id,
-    edgeType: "lineage",
-    region: node.regions?.[0] ? { ...node.regions[0], purpose: "extract" } : null,
-  });
-  if (branch) {
-    branch.snapParentNodeId = node.id;
-    branch.snapAxis = "below";
-    branch.snapOperation = "branch";
-  }
-  if (branch) setState("Branch Created", "ok", branch.label);
-}
-
 async function canvasPreviewCandidate(candidateId) {
   const candidate = canvasCandidates.find((item) => item.id === candidateId);
   const asset = candidate ? canvasAssetById(candidate.assetId) : null;
@@ -16671,6 +16915,34 @@ async function profileSelectedAsMicroMatter() {
   finishWork("Micro Profile Ready", "ok", result.profile_file || "");
 }
 
+async function analyzeMatterFxNode(nodeId) {
+  const node = canvasNodes.find((item) => item.id === nodeId);
+  if (node?.type !== "fx" || node.fxType !== "matter_analysis") return;
+  const targetNode = canvasNodes.find((item) => item.id === node.targetNodeId && item.type === "sound");
+  const asset = targetNode ? canvasAssetById(targetNode.assetId) : controlSelectedAsset();
+  const audioPath = asset?.audioPath || asset?.storageUri || asset?.output_audio_path || "";
+  if (!audioPath) throw new Error("Connect Matter Analysis to a saved sound first.");
+  beginWork("Matter Analysis", displayNameFromPath(audioPath));
+  const result = await api("/matter/analyze", {
+    method: "POST",
+    body: JSON.stringify({
+      input_audio_path: audioPath,
+      metadata_path: asset?.metadataPath || asset?.metadata_path || "",
+      source_id: lineageSoundIdFromAsset(asset),
+      fft_size: Number(node.params?.fftSize || 1024),
+      max_frames: Number(node.params?.maxFrames || 32),
+      output_name: safeOutputName(`matter_${displayNameFromPath(audioPath)}`),
+      lineage: { parents: [lineageSoundIdFromAsset(asset)].filter(Boolean) },
+    }),
+  });
+  node.analysis = result;
+  selectedCanvasNodeId = node.id;
+  canvasSaveState();
+  renderCanvas();
+  await refreshControlLayer({ render: false }).catch(() => null);
+  finishWork("Matter Analysis Ready", "ok", result.profile_file || "");
+}
+
 async function runLibraryRefresh(showState = true, { force = false } = {}) {
   if (showState) beginWork("Refreshing Library");
   const headers = {};
@@ -16786,10 +17058,6 @@ function renderLibrary() {
       `;
     })
     .join("");
-}
-
-async function libraryItemByMetadata(path) {
-  return libraryItemByReference(path, "");
 }
 
 async function libraryItemByReference(metadataPath = "", audioPath = "") {
@@ -17283,7 +17551,7 @@ function handleCanvasModulatorControl(event) {
     if (node?.type !== "modulator") return true;
     const normalized = normalizeModulatorNode(node);
     const field = setting.dataset.field;
-    const numericFields = new Set(["intensity", "conservation", "contamination", "seed", "min", "max", "rateHz", "phase", "smooth", "chance", "attack", "decay", "sustain", "release", "cycleSeconds", "durationSec", "gestureValue", "amount", "morph", "drift", "sensitivity"]);
+    const numericFields = new Set(["intensity", "conservation", "contamination", "seed", "min", "max", "rateHz", "phase", "smooth", "chance", "attack", "decay", "sustain", "release", "cycleSeconds", "durationSec", "gestureValue", "amount", "morph", "drift", "sensitivity", "latitude", "longitude"]);
     if (field === "sync" || field === "loop") normalized.config[field] = Boolean(setting.checked);
     else normalized.config[field] = numericFields.has(field) ? Number(setting.value) : setting.value;
     if (normalized.modulatorType === "gesture_recorder" && field === "gestureValue" && normalized.config.recording) {
@@ -17856,6 +18124,9 @@ document.addEventListener("click", async (event) => {
       if (action === "canvas-fx-loop-doctor") {
         await canvasRenderLoopDoctorFx(button.dataset.nodeId);
       }
+      if (action === "canvas-fx-matter-analyze") {
+        await analyzeMatterFxNode(button.dataset.nodeId);
+      }
       if (action === "canvas-mixer-toggle") {
         const target = canvasNodes.find((item) => item.id === button.dataset.targetNodeId);
         if (target?.type === "sound") {
@@ -18006,6 +18277,12 @@ document.addEventListener("click", async (event) => {
       }
       if (action === "canvas-modulator-apply") {
         canvasApplyPromptModulator(button.dataset.nodeId);
+      }
+      if (action === "canvas-cosmo-refresh") {
+        await refreshCosmoauditionNode(button.dataset.nodeId);
+      }
+      if (action === "canvas-cosmo-archive") {
+        await refreshCosmoauditionNode(button.dataset.nodeId, { archive: true });
       }
       if (action === "canvas-gesture-record-toggle") {
         const node = canvasNodes.find((item) => item.id === button.dataset.nodeId);

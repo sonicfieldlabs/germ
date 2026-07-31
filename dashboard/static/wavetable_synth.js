@@ -1,6 +1,13 @@
 // Options let the Chamber inject its shared playback context and master-bus
 // destination so wavetable voices obey the master volume, limiter, and
 // recording tap. Standalone use (no options) still works with an own context.
+function finiteOption(value, fallback) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string" && !value.trim()) return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 export function createGermSynthEngine({ getContext = null, getDestination = null } = {}) {
   let ownContext = null;
   let currentSource = null;
@@ -87,9 +94,9 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
     oscillator.frequency.value = noteToFrequency(note);
-    const level = Math.max(0, Math.min(1, Number(gain) || 0.45));
+    const level = Math.max(0, Math.min(1, finiteOption(gain, 0.45)));
     const now = ctx.currentTime;
-    const holdUntil = now + Math.max(0.05, Number(duration) || 0.7);
+    const holdUntil = now + Math.max(0.05, finiteOption(duration, 0.7));
     gainNode.gain.setValueAtTime(0, now);
     gainNode.gain.linearRampToValueAtTime(level, now + ATTACK);
     gainNode.gain.setValueAtTime(level, holdUntil);
@@ -117,7 +124,7 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
     oscillator.frequency.value = noteToFrequency(note);
-    const level = Math.max(0, Math.min(1, Number(gain) || 0.35));
+    const level = Math.max(0, Math.min(1, finiteOption(gain, 0.35)));
     const now = ctx.currentTime;
     gainNode.gain.setValueAtTime(0, now);
     gainNode.gain.linearRampToValueAtTime(level, now + ATTACK + 0.002);
