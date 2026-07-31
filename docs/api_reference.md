@@ -529,6 +529,102 @@ contains descriptors such as `grain_density`, `cell_count`, `transient_cells`,
 `quanta_rate`, `swarm_spread`, and `spectral_tissue`, plus module suggestions for
 the Micro palette.
 
+## POST /matter/analyze
+
+`POST /micro/matter-analysis` is an alias for the same contract.
+
+```json
+{
+  "input_audio_path": "output/audio/example.wav",
+  "metadata_path": "output/metadata/example.json",
+  "source_id": "sound_example",
+  "fft_size": 2048,
+  "max_frames": 64,
+  "output_name": "example_matter",
+  "lineage": { "parents": ["sound_example"] }
+}
+```
+
+Analyzes a mono or stereo 16-bit PCM WAV already inside GERM's output root.
+The bounded result separates amplitude, temporal, spectral, spatial,
+loopability, and morphology sections. Each section reports `measured`,
+`inferred`, `unavailable`, or `not_applicable` instead of inventing values for
+short or silent material. The persisted artifact lives under `output/micro/`;
+when MASA sidecars are enabled, the response also returns
+`masa_sidecar_file`. The `masa` object always reports the companion state
+explicitly (`written`, `disabled`, or `error`) so clients do not have to infer
+"pending" from an absent path.
+
+## GET /cosmoaudition/status
+
+Reports whether the separately running local Cosmoaudition System is available.
+The configured base URL must be explicit HTTP loopback.
+
+## GET /cosmoaudition/modules
+
+Returns the GERM Cosmoaudition module manifest and its authored-mapping
+principle.
+
+## GET /cosmoaudition/sources
+
+## GET /cosmoaudition/snapshot
+
+Proxies the corresponding allowlisted Cosmoaudition route through a bounded,
+no-redirect local bridge. Query parameters are `mode=fixture|live`, optional
+`lat`, `lon`, and a bounded comma-separated `sources` list. Bridge failures
+return `available: false` as explicit state rather than fabricated signals.
+
+## POST /cosmoaudition/map
+
+Executes one project-neutral mapping locally:
+
+```json
+{
+  "mapping": {
+    "id": "solar-wind-to-density",
+    "signalId": "solar_wind_speed",
+    "layer": "earth",
+    "target": "germ:fx-density",
+    "scale": "linear",
+    "inputRange": [300, 600],
+    "outputRange": [0, 1],
+    "smoothingMs": 120,
+    "missingData": "hold-explicitly",
+    "description": "Operator-authored control relation.",
+    "epistemicNote": "This is not a source identity claim."
+  },
+  "signal": {
+    "id": "solar_wind_speed",
+    "label": "Solar wind speed",
+    "layer": "earth",
+    "unit": "km/s",
+    "value": 450,
+    "normalized": 0.5,
+    "sourceId": "swpc_solar_wind",
+    "sphere": "cosmos",
+    "confidence": "high"
+  },
+  "amount": 1
+}
+```
+
+Mapping decisions use `applied`, `uncertainty`, `held`, `skipped`, or
+`refused`. Supported missing-data policies are `skip`, `hold-explicitly`,
+`interpolate-explicitly`, `map-uncertainty`, and `refuse`. The bridge never
+silently substitutes zero for a missing signal.
+
+## GET /cosmoaudition/archives
+
+## POST /cosmoaudition/archives
+
+## GET /cosmoaudition/archives/{archive_id}
+
+## DELETE /cosmoaudition/archives/{archive_id}
+
+Stores at most twelve local observation archives, each with a snapshot body
+capped at 1 MB. Archive files live under `output/cosmoaudition/archives/` and
+retain the bridge contract, module, label, notes, and creation time.
+
 ## GET /micro/matter-profiles
 
 Lists recent persisted Micro/Matter profile artifacts.

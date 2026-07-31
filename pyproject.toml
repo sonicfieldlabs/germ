@@ -1,6 +1,6 @@
 [project]
 name = "germ"
-version = "0.2.5"
+version = "0.3.0"
 description = "Local-first modular laboratory for generative microsound, Stable Audio workflows, and lineage-aware cultivation."
 readme = "README.md"
 license = "MPL-2.0"

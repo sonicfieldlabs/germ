@@ -10,7 +10,7 @@
     <title>germ — generative microsound system</title>
     <link rel="icon" href="/dashboard/assets/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/dashboard/assets/icons/apple-touch-icon.png" />
-    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260715-oida-family-p1" />
+    <link rel="stylesheet" href="/dashboard/assets/styles.css?v=20260730-cosmo-matter-p2" />
   </head>
   <body class="canvas-active no-left-sidebar">
     <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -363,6 +363,10 @@
                         <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="modulators" title="Modulators">
                           <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconModTab"></use></svg>
                           <span>Modulators</span>
+                        </button>
+                        <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="cosmoaudition" title="Cosmoaudition">
+                          <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg>
+                          <span>Cosmoaudition</span>
                         </button>
                         <button class="canvas-source-tab" type="button" role="tab" aria-selected="false" data-action="canvas-source-tab" data-tab="micro" title="Microsound">
                           <svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg>
@@ -725,6 +729,74 @@
                             <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMacro"></use></svg></span>
                             <strong class="source-tool-title">Macro</strong>
                             <span class="source-tool-desc">Manual knob routed to many targets.</span>
+                          </button>
+                        </section>
+                        <section class="canvas-source-panel cosmoaudition-source-panel" data-source-panel="cosmoaudition" aria-label="Cosmoaudition modules" hidden>
+                          <p class="canvas-source-panel-note">Observations become attributed, bounded control material through authored mappings—not claims that data is a source's literal voice.</p>
+                          <button class="source-tool-card" type="button" title="Observatory Source" aria-label="Add Observatory Source" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_observation">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg></span>
+                            <strong class="source-tool-title">Observatory Source</strong>
+                            <span class="source-tool-desc">Read a bounded local observation snapshot.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Cosmic Field" aria-label="Add Cosmic Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_cosmic_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconProbability"></use></svg></span>
+                            <strong class="source-tool-title">Cosmic Field</strong>
+                            <span class="source-tool-desc">Solar, lunar, orbital, and space-weather controls.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Earth Field" aria-label="Add Earth Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_earth_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEnvelope"></use></svg></span>
+                            <strong class="source-tool-title">Earth Field</strong>
+                            <span class="source-tool-desc">Atmospheric and geological signal relations.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Biosphere Field" aria-label="Add Biosphere Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_biosphere_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconEcology"></use></svg></span>
+                            <strong class="source-tool-title">Biosphere Field</strong>
+                            <span class="source-tool-desc">Species and ecological activity as control matter.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Human–Machine Field" aria-label="Add Human–Machine Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_human_machine_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconAudioControl"></use></svg></span>
+                            <strong class="source-tool-title">Human–Machine Field</strong>
+                            <span class="source-tool-desc">Human, cultural, financial, and machine activity.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Relational Index" aria-label="Add Relational Index" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_relational_index">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconMatrix"></use></svg></span>
+                            <strong class="source-tool-title">Relational Index</strong>
+                            <span class="source-tool-desc">Compose relations across available observations.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Event Pulsar" aria-label="Add Event Pulsar" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_event_pulsar">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconHold"></use></svg></span>
+                            <strong class="source-tool-title">Event Pulsar</strong>
+                            <span class="source-tool-desc">Turn attributed events into explicit trigger pulses.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Mapping Loom" aria-label="Add Mapping Loom" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_mapping_loom">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconModTab"></use></svg></span>
+                            <strong class="source-tool-title">Mapping Loom</strong>
+                            <span class="source-tool-desc">Author a mapping and its missing-data policy.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Semantic Field" aria-label="Add Semantic Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_semantic_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconPromptMod"></use></svg></span>
+                            <strong class="source-tool-title">Semantic Field</strong>
+                            <span class="source-tool-desc">Relate values to attributed descriptive context.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Uncertainty Field" aria-label="Add Uncertainty Field" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_uncertainty_field">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconProbability"></use></svg></span>
+                            <strong class="source-tool-title">Uncertainty Field</strong>
+                            <span class="source-tool-desc">Expose confidence, staleness, and error as controls.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Observation Archive" aria-label="Add Observation Archive" data-action="canvas-source-option" data-source="modulator" data-modulator="cosmo_observation_archive">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconSnapshot"></use></svg></span>
+                            <strong class="source-tool-title">Observation Archive</strong>
+                            <span class="source-tool-desc">Replay a local snapshot with its provenance.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Matter Modulator" aria-label="Add Matter Modulator" data-action="canvas-source-option" data-source="fx" data-fx="cosmo_matter_modulator">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconGranular"></use></svg></span>
+                            <strong class="source-tool-title">Matter Modulator</strong>
+                            <span class="source-tool-desc">Shape granular, spectral, and temporal matter.</span>
+                          </button>
+                          <button class="source-tool-card" type="button" title="Matter Analysis" aria-label="Add Matter Analysis" data-action="canvas-source-option" data-source="fx" data-fx="matter_analysis">
+                            <span class="source-tool-icon"><svg class="source-tool-svg" viewBox="0 0 24 24" aria-hidden="true"><use href="#sourceIconFilter"></use></svg></span>
+                            <strong class="source-tool-title">Matter Analysis</strong>
+                            <span class="source-tool-desc">Measure material qualities with explicit states.</span>
                           </button>
                         </section>
                         <section class="canvas-source-panel" data-source-panel="genetic" aria-label="Genetic modules" hidden>
@@ -1487,6 +1559,6 @@
       </div>
     </div>
 
-    <script type="module" src="/dashboard/assets/app.js?v=20260715-oida-family-p1"></script>
+    <script type="module" src="/dashboard/assets/app.js?v=20260731-audit-p1"></script>
   </body>
 </html>

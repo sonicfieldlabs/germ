@@ -62,6 +62,41 @@ ControlAnalysisFeature = Literal[
 ]
 ControlCVMode = Literal["cv", "gate", "clock", "pitch"]
 ControlCVRange = Literal["unipolar", "bipolar"]
+CosmoauditionMode = Literal["live", "fixture"]
+CosmoauditionConfidence = Literal["high", "medium", "low", "stale", "error"]
+CosmoauditionEpistemicStatus = Literal[
+    "measured",
+    "reported",
+    "derived",
+    "interpreted",
+    "speculative",
+]
+CosmoauditionTemporalCharacter = Literal[
+    "event",
+    "stream",
+    "forecast",
+    "aggregate",
+    "context",
+    "local",
+]
+CosmoauditionSignalKind = Literal["observation", "derived", "generator"]
+CosmoauditionSphere = Literal[
+    "cosmos",
+    "atmosphere",
+    "geosphere",
+    "biosphere",
+    "human",
+    "machine",
+]
+CosmoauditionLayer = Literal["earth", "cloud", "city", "address", "interface", "user"]
+CosmoauditionScale = Literal["linear", "log", "exp", "quantized", "categorical"]
+CosmoauditionMissingData = Literal[
+    "skip",
+    "hold-explicitly",
+    "interpolate-explicitly",
+    "map-uncertainty",
+    "refuse",
+]
 WavetableExtractionMode = Literal["simple", "cycle", "spectral", "harmonic", "texture"]
 WavetableExportFormat = Literal["gwt", "wav-stack", "single-cycle", "metadata"]
 WavetableGenerationMode = Literal[
@@ -281,6 +316,137 @@ class MicroMatterProfileResult(BaseModel):
     descriptors: dict[str, Any] = Field(default_factory=dict)
     module_suggestions: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None = None
+
+
+class MatterAnalysisRequest(JSONRequestModel):
+    input_audio_path: str = Field(min_length=1, max_length=4096)
+    metadata_path: str | None = Field(default=None, max_length=4096)
+    source_id: str | None = Field(default=None, max_length=256)
+    fft_size: Literal[512, 1024, 2048, 4096] = 2048
+    max_frames: int = Field(default=64, ge=1, le=128)
+    output_name: str | None = Field(default=None, max_length=120)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("lineage")
+    @classmethod
+    def validate_lineage_parents(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if "parents" not in value:
+            return value
+        parents = value["parents"]
+        if not isinstance(parents, list):
+            raise ValueError("lineage.parents must be a list")
+        if len(parents) > 128:
+            raise ValueError("lineage.parents cannot contain more than 128 values")
+        cleaned: list[str] = []
+        for parent in parents:
+            if isinstance(parent, bool) or not isinstance(parent, (str, int)):
+                raise ValueError("lineage.parents values must be strings or integers")
+            identifier = str(parent).strip()
+            if not identifier or len(identifier) > 4_096:
+                raise ValueError("lineage parent identifiers must contain 1 to 4096 characters")
+            if identifier not in cleaned:
+                cleaned.append(identifier)
+        return {**value, "parents": cleaned}
+
+
+class MatterAnalysisResult(BaseModel):
+    id: str
+    status: Literal["done", "error"]
+    input_audio_path: str
+    profile_file: str | None = None
+    metadata_file: str | None = None
+    masa_sidecar_file: str | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    duration: float | None = None
+    analysis_state: str | None = None
+    analysis: dict[str, Any] = Field(default_factory=dict)
+    masa: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class CosmoauditionSignal(JSONRequestModel):
+    id: str = Field(min_length=1, max_length=256)
+    label: str = Field(default="Observation", min_length=1, max_length=500)
+    layer: CosmoauditionLayer = "earth"
+    unit: str = Field(default="unitless", min_length=1, max_length=120)
+    value: float | None = None
+    normalized: float | None = Field(default=None, ge=0.0, le=1.0)
+    timestamp: str | None = Field(default=None, max_length=100)
+    sourceId: str | None = Field(default=None, max_length=256)
+    sourceUrl: str | None = Field(default=None, max_length=2_000)
+    sphere: CosmoauditionSphere | None = None
+    epistemicStatus: CosmoauditionEpistemicStatus | None = None
+    temporalCharacter: CosmoauditionTemporalCharacter | None = None
+    signalKind: CosmoauditionSignalKind | None = None
+    eventKey: str | None = Field(default=None, max_length=500)
+    confidence: CosmoauditionConfidence = "medium"
+    staleAfterSeconds: float | None = Field(default=None, ge=0.0, le=31_536_000.0)
+    error: str | None = Field(default=None, max_length=2_000)
+    notes: str | None = Field(default=None, max_length=10_000)
+
+
+class CosmoauditionCategory(JSONRequestModel):
+    value: float
+    output: float
+    label: str | None = Field(default=None, max_length=500)
+
+
+class CosmoauditionMapping(JSONRequestModel):
+    id: str = Field(min_length=1, max_length=256)
+    signalId: str = Field(min_length=1, max_length=256)
+    layer: CosmoauditionLayer = "earth"
+    target: str = Field(min_length=1, max_length=256)
+    scale: CosmoauditionScale = "linear"
+    inputRange: tuple[float, float] | None = None
+    categories: list[CosmoauditionCategory] = Field(default_factory=list, max_length=128)
+    outputRange: tuple[float, float] = (0.0, 1.0)
+    smoothingMs: float = Field(default=80.0, ge=0.0, le=60_000.0)
+    missingData: CosmoauditionMissingData = "skip"
+    description: str = Field(default="Authored observation mapping.", max_length=10_000)
+    epistemicNote: str = Field(
+        default=(
+            "This is an authored control relation, not the source's voice or an identity claim."
+        ),
+        min_length=1,
+        max_length=10_000,
+    )
+
+    @model_validator(mode="after")
+    def validate_mapping_ranges(self) -> "CosmoauditionMapping":
+        if self.outputRange[0] == self.outputRange[1]:
+            raise ValueError("outputRange must describe a non-zero range")
+        if self.scale == "categorical":
+            if not self.categories:
+                raise ValueError("categorical mappings require categories")
+            if len({entry.value for entry in self.categories}) != len(self.categories):
+                raise ValueError("categorical mapping values must be unique")
+        else:
+            if self.inputRange is None or self.inputRange[0] >= self.inputRange[1]:
+                raise ValueError("non-categorical mappings require an ascending inputRange")
+            if self.scale == "log" and self.inputRange[0] <= 0:
+                raise ValueError("log mappings require a positive inputRange")
+        if self.scale == "quantized" and any(
+            not float(value).is_integer() for value in self.outputRange
+        ):
+            raise ValueError("quantized mappings require integer output bounds")
+        return self
+
+
+class CosmoauditionMapRequest(JSONRequestModel):
+    mapping: CosmoauditionMapping
+    signal: CosmoauditionSignal | None = None
+    previousOutput: float | None = None
+    amount: float = Field(default=1.0, ge=0.0, le=1.0)
+    enabled: bool = True
+    missingData: CosmoauditionMissingData | None = None
+
+
+class CosmoauditionArchiveRequest(JSONRequestModel):
+    label: str = Field(default="Observation archive", min_length=1, max_length=120)
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    module: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=10_000)
 
 
 class MicroBiomeSaveRequest(JSONRequestModel):

@@ -196,6 +196,31 @@ class Settings:
             minimum=1.0,
             maximum=86400.0,
         )
+        # Cosmoaudition remains a separate local instrument. Germ only talks
+        # to its loopback API through the bounded bridge in
+        # ``server.cosmoaudition``; it never calls observatory providers
+        # directly.
+        self.cosmoaudition_url = (
+            _env("GERM_COSMOAUDITION_URL", "http://127.0.0.1:8797")
+            or "http://127.0.0.1:8797"
+        ).rstrip("/")
+        self.cosmoaudition_timeout_seconds = _float_from_env(
+            "GERM_COSMOAUDITION_TIMEOUT_SECONDS",
+            20.0,
+            minimum=0.25,
+            maximum=120.0,
+        )
+        self.cosmoaudition_max_response_bytes = _int_from_env(
+            "GERM_COSMOAUDITION_MAX_RESPONSE_BYTES",
+            2 * 1024 * 1024,
+            minimum=16 * 1024,
+            maximum=16 * 1024 * 1024,
+        )
+        self.cosmoaudition_archive_dir = self.output_root / "cosmoaudition" / "archives"
+        self.masa_dir = self.output_root / "masa"
+        self.masa_sidecars_enabled = (
+            _env("GERM_MASA_SIDECARS", "1") or "1"
+        ).lower() in {"1", "true", "yes", "on"}
         self.allowed_hosts = self._parse_allowed_hosts()
         self.max_upload_bytes = int(
             _float_from_env(

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — Cosmoaudition, Matter Analysis, and audio reliability
+
+- Added the loopback-only Cosmoaudition bridge, explicit observation mappings,
+  archives, module palette, Matter Analysis, and optional MASA 0.1 sidecars.
+- Kept unavailable, errored, stale, and zero-valued observations distinct;
+  missing Mapping Loom inputs now execute their declared policy without a
+  fabricated neutral value.
+- Streamed bounded spectral aggregation with cached FFT windows, validated
+  Matter lineage shapes, and exposed the final MASA companion state in API and
+  dashboard results.
+- Flushed queued AudioWorklet PCM before recorder shutdown, preserved explicit
+  zero-gain wavetable previews, removed confirmed dead dashboard helpers, and
+  expanded backend, audio, and browser regression coverage.
+
 ## 0.2.5 — Backend integrity and integration hardening
 
 - Hardened request, persisted JSON, path, upload, WAV, and provider artifact

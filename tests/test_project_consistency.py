@@ -44,8 +44,10 @@ def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.2.5"
-    assert 'version = "0.2.5"' in _read("pyproject.toml")
-    assert 'Current release: `0.2.5`.' in _read("README.md")
-    assert 'version: "0.2.5"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.2.5"' in _read("apps/macos/script/build_and_run.sh")
+    assert __version__ == "0.3.0"
+    assert 'version = "0.3.0"' in _read("pyproject.toml")
+    assert 'Current release: `0.3.0`.' in _read("README.md")
+    assert 'version: "0.3.0"' in _read("CITATION.cff")
+    assert 'date-released: "2026-07-31"' in _read("CITATION.cff")
+    assert 'MARKETING_VERSION="0.3.0"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="3"' in _read("apps/macos/script/build_and_run.sh")
