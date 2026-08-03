@@ -43,6 +43,12 @@ def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None
     assert 'path = "../earworm' not in project
 
 
+def test_stable_audio_uses_the_audited_torch_override() -> None:
+    project = _read("pyproject.toml")
+    assert '"torch==2.10.0"' in project
+    assert '"torchaudio==2.10.0"' in project
+
+
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
     assert __version__ == "0.3.0"
     assert 'version = "0.3.0"' in _read("pyproject.toml")

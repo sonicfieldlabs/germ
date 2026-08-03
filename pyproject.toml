@@ -16,6 +16,12 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
 ]
 
+[tool.uv]
+override-dependencies = [
+    "torch==2.10.0",
+    "torchaudio==2.10.0",
+]
+
 [tool.uv.sources]
 akousma = { git = "https://github.com/sonicfieldlabs/earworm.git", tag = "v0.4.0", subdirectory = "packages/py-akousma" }
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Overrode Stable Audio 3's upstream Torch 2.7.1 constraint with the locally
+  validated Torch and Torchaudio 2.10 pair, removing every fixable advisory
+  from the optional Python-provider dependency graph.
+- Added an all-extras dependency audit and a dated security exception for the
+  two remaining upstream PyTorch findings in APIs GERM does not call directly.
+- Updated Setuptools to 83.0.0 to close its Unicode-normalization sdist issue.
+
 ## 0.3.0 — Cosmoaudition, Matter Analysis, and audio reliability
 
 - Added the loopback-only Cosmoaudition bridge, explicit observation mappings,
