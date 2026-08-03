@@ -19,6 +19,12 @@ only through configured model roots. Treat every model artifact as executable
 input: use the official Safetensors releases, verify provenance, and do not load
 untrusted pickle-based checkpoints.
 
+The default server binds to `127.0.0.1`, validates Host headers, and rejects
+foreign browser origins for state-changing requests. Audio and metadata routes
+normalize paths and require resolved files to remain inside their configured
+input, output, metadata, model, upload, or scratch roots before filesystem
+access. Upload writes are confined to managed upload or scratch directories.
+
 ## Temporary Upstream PyTorch Exceptions
 
 Stable Audio 3 still pins PyTorch 2.7.1 upstream. GERM overrides that constraint
