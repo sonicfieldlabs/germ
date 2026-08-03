@@ -6,7 +6,7 @@ APP_NAME="germ"
 EXECUTABLE_NAME="germ-macos"
 BUNDLE_ID="org.sonicfield.germ"
 MIN_SYSTEM_VERSION="13.0"
-MARKETING_VERSION="0.3.2"
+MARKETING_VERSION="0.3.3"
 BUNDLE_VERSION="5"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

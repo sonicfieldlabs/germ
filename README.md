@@ -8,7 +8,7 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.3.2`.
+Current release: `0.3.3`.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
@@ -147,11 +147,11 @@ listening, re-listening, sonic memory, and cultivation.
 
 | Component | Version / contract | GERM integration |
 | --- | --- | --- |
-| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.9.1 / `oida/gateway/v0.5` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
-| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.6.0 / akousma spec v1.5 | Export generation context and preserve provenance, lineage, location/capture, and covenants. |
-| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.6.0 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata. |
-| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.0 / `akouo/v0.9` | Keeps listening claims, evidence permissions, apparatus, temporal passes, and covenants consistent across the stack. |
-| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.1 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
+| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.9.2 / `oida/gateway/v0.5` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
+| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.6.1 / akousma spec v1.5 | Export generation context and preserve provenance, lineage, attributable disagreement resolution, and additive revisions. |
+| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.6.1 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata. |
+| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.1 / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
+| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.2 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
 | [ORAM](https://github.com/sonicfieldlabs/oram) | 0.4.1 | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
 
 The core handoff is:

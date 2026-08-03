@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 test-results/
 .env
+.env.*
+!.env.example
 *.log
 *.bak
 *.backup

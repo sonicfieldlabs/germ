@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 — Additive cultivation lineage
+
+- Raised the Earworm/Akousma floor to 0.6.1 so remembered generations cannot
+  silently replace an earlier listening account.
+- Clarified that a generated child is a new cultivated object with causal
+  lineage, not evidence that a claim about its parent was true.
+- Aligned public stack versions and expanded environment-file ignore coverage.
+
 ## 0.3.2 — Cosmoaudition status privacy
 
 - Keep Cosmoaudition health-check failures in local logs while returning only
