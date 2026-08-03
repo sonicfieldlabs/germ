@@ -50,10 +50,10 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.3.1"
-    assert 'version = "0.3.1"' in _read("pyproject.toml")
-    assert 'Current release: `0.3.1`.' in _read("README.md")
-    assert 'version: "0.3.1"' in _read("CITATION.cff")
+    assert __version__ == "0.3.2"
+    assert 'version = "0.3.2"' in _read("pyproject.toml")
+    assert 'Current release: `0.3.2`.' in _read("README.md")
+    assert 'version: "0.3.2"' in _read("CITATION.cff")
     assert 'date-released: "2026-08-03"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.3.1"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="4"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'MARKETING_VERSION="0.3.2"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="5"' in _read("apps/macos/script/build_and_run.sh")
