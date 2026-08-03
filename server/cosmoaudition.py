@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from ipaddress import ip_address
 from typing import Any
@@ -19,6 +20,7 @@ from server.storage import utc_now_iso
 
 COSMOAUDITION_GERM_CONTRACT = "cosmoaudition-germ/v0.1"
 COSMOAUDITION_REMOTE_PATHS = frozenset({"/health", "/api/sources", "/api/snapshot"})
+LOGGER = logging.getLogger(__name__)
 
 
 class CosmoauditionBridgeError(RuntimeError):
@@ -129,11 +131,12 @@ class CosmoauditionBridge:
         try:
             remote = self.get_json("/health")
         except (CosmoauditionBridgeError, ValueError) as exc:
+            LOGGER.warning("Cosmoaudition health check unavailable: %s", exc)
             return {
                 "available": False,
                 "contract": COSMOAUDITION_GERM_CONTRACT,
                 "baseUrl": self.base_url,
-                "error": str(exc)[:2_000],
+                "error": "Cosmoaudition bridge unavailable",
             }
         return {
             "available": remote.get("ok", True) is True,

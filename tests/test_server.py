@@ -986,6 +986,29 @@ def test_cosmoaudition_status_requires_boolean_remote_health(
     assert bridge.status()["available"] is False
 
 
+def test_cosmoaudition_status_logs_but_does_not_return_backend_details(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bridge = CosmoauditionBridge(
+        base_url="http://127.0.0.1:8797",
+        timeout_seconds=0.1,
+        max_response_bytes=1_024,
+    )
+
+    def fail(_path: str) -> dict:
+        raise CosmoauditionBridgeError("private backend path: /Users/listener/secret")
+
+    monkeypatch.setattr(bridge, "get_json", fail)
+    with caplog.at_level("WARNING"):
+        status = bridge.status()
+
+    assert status["available"] is False
+    assert status["error"] == "Cosmoaudition bridge unavailable"
+    assert "secret" not in str(status)
+    assert "private backend path" in caplog.text
+
+
 def test_matter_analysis_persists_explicit_states_and_masa_sidecar() -> None:
     source_path = settings.audio_dir / "pytest_matter_analysis_source.wav"
     write_sine_wav(source_path, duration=0.25)

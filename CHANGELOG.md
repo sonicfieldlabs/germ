@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 — Cosmoaudition status privacy
+
+- Keep Cosmoaudition health-check failures in local logs while returning only
+  a stable public error at the loopback API boundary.
+- Add a regression test proving low-level backend details cannot enter the
+  status payload.
+
 ## 0.3.1 — Security and stack alignment
 
 - Overrode Stable Audio 3's upstream Torch 2.7.1 constraint with the locally
