@@ -349,7 +349,7 @@ def test_prompt_derivation_prioritizes_dynamic_generative_namespace(client, stor
     assert body["handoff"]["evidence"][0]["namespace"] == "akouo.generative-listening"
 
 
-def test_generation_writes_v13_record_with_sa_lineage_bridge(client, seeded, store_path):
+def test_generation_writes_v15_record_with_sa_lineage_bridge(client, seeded, store_path):
     audio_file = _allowed_audio("organism with spaces.wav")
     organism_metadata = {
         "sound_id": "organism_007",
@@ -399,7 +399,7 @@ def test_generation_writes_v13_record_with_sa_lineage_bridge(client, seeded, sto
     )
     assert response.status_code == 200, response.text
     record = response.json()["record"]
-    assert record["schema_version"] == "1.3.0"
+    assert record["schema_version"] == "1.5.0"
     assert "%20" in record["audio"]["uri"]
 
     # skimmable summary + earworm session link
@@ -426,7 +426,7 @@ def test_generation_writes_v13_record_with_sa_lineage_bridge(client, seeded, sto
 
     # Current AKOÚŌ output is pinned; existing and foreign producer blocks are
     # preserved instead of being rewritten by germ.
-    assert record["listening"]["akouo.memory-lineage"]["contract"] == "akouo/v0.7"
+    assert record["listening"]["akouo.memory-lineage"]["contract"] == "akouo/v0.9"
     assert record["listening"]["akouo.describe"]["producer_metadata"] == {"future": True}
     assert record["listening"]["akouo.describe"]["payload"] == {
         "main_reading": "pre-enveloped reading"
@@ -435,7 +435,7 @@ def test_generation_writes_v13_record_with_sa_lineage_bridge(client, seeded, sto
 
     covenant = record["covenant"]
     assert covenant["id"] == "river-covenant/2"
-    assert covenant["contract"] == "akouo/v0.7"
+    assert covenant["contract"] == "akouo/v0.9"
     assert covenant["withheld"][0]["subject"] == "transcript"
     assert covenant["future_policy"] == {"retention": "ephemeral"}
 
