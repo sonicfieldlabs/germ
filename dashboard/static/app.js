@@ -20797,7 +20797,7 @@ if ($("loopToggle")) {
 }
 
 if ($("downloadBtn")) {
-  $("downloadBtn").addEventListener("click", () => {
+  $("downloadBtn").addEventListener("click", async () => {
     const path = $("audioPath")?.value;
     if (!path) return;
     const href = downloadableOutputUrl(path);
@@ -20805,12 +20805,20 @@ if ($("downloadBtn")) {
       setState("Download Blocked", "warn", "The selected sound does not have a trusted download URL.");
       return;
     }
-    const a = document.createElement("a");
-    a.href = href;
-    a.download = path.split("/").pop() || "download.wav";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      const response = await fetch(href, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = safeOutputName(path.split("/").pop() || "download.wav");
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error) {
+      setState("Download Failed", "bad", error.message);
+    }
   });
 }
 
