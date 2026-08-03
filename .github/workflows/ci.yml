@@ -22,6 +22,19 @@ jobs:
         run: uv run pytest -q
       - name: Ruff
         run: uv run ruff check server tests
+      # Stable Audio 3 still pins Torch 2.7.1 upstream. GERM overrides it with
+      # the validated 2.10 pair. The two remaining local-only API findings are
+      # tracked with a review deadline in SECURITY.md.
+      - name: Audit all dependency extras
+        run: |
+          uv export --all-extras --no-emit-project --no-emit-local \
+            --no-emit-package akousma --no-emit-package stable-audio-3 |
+            uvx --from pip-audit==2.10.1 pip-audit \
+              --requirement /dev/stdin \
+              --disable-pip \
+              --progress-spinner=off \
+              --ignore-vuln PYSEC-2026-139 \
+              --ignore-vuln CVE-2025-3000
       - name: Dashboard syntax
         run: |
           node --check dashboard/static/app.js
