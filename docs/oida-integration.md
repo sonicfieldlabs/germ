@@ -27,8 +27,9 @@ Generation remains local to germ by default. When `remember_to_akousmata=true`, 
 **new** akousma after a successful render whose `lineage.parent_akousma_ids` point at the source
 akousma(s), with operation, effective prompt, model, parameters, covenant, and the compact
 `extensions["germ.lineage"]` bridge. This opt-in avoids silently retaining audio or listening
-context. A failed memory write is recorded in generation metadata without hiding a successful
-audio render.
+context. The generated child is a new speculative/cultivated object, not evidence that a claim
+about its parent was true. A failed memory write is recorded in generation metadata without
+hiding a successful audio render.
 
 ```python
 import akousma

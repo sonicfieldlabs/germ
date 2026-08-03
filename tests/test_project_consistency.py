@@ -37,8 +37,8 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.6.0"' in project
-    assert 'tag = "v0.6.0"' in project
+    assert '"akousma>=0.6.1"' in project
+    assert 'tag = "v0.6.1"' in project
     assert 'subdirectory = "packages/py-akousma"' in project
     assert 'path = "../earworm' not in project
 
@@ -50,10 +50,10 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.3.2"
-    assert 'version = "0.3.2"' in _read("pyproject.toml")
-    assert 'Current release: `0.3.2`.' in _read("README.md")
-    assert 'version: "0.3.2"' in _read("CITATION.cff")
+    assert __version__ == "0.3.3"
+    assert 'version = "0.3.3"' in _read("pyproject.toml")
+    assert 'Current release: `0.3.3`.' in _read("README.md")
+    assert 'version: "0.3.3"' in _read("CITATION.cff")
     assert 'date-released: "2026-08-03"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.3.2"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'MARKETING_VERSION="0.3.3"' in _read("apps/macos/script/build_and_run.sh")
     assert 'BUNDLE_VERSION="5"' in _read("apps/macos/script/build_and_run.sh")
