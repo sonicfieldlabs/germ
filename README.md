@@ -151,7 +151,7 @@ listening, re-listening, sonic memory, and cultivation.
 | [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.6.1 / akousma spec v1.5 | Export generation context and preserve provenance, lineage, attributable disagreement resolution, and additive revisions. |
 | [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.6.1 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata. |
 | [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.1 / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
-| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.1 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
+| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.2 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
 | [ORAM](https://github.com/sonicfieldlabs/oram) | 0.4.1 | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
 
 The core handoff is:
