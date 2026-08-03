@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -26,6 +27,7 @@ from server.storage import safe_stem, utc_now_iso
 router = APIRouter(prefix="/cosmoaudition", tags=["cosmoaudition"])
 MAX_ARCHIVES = 12
 MAX_ARCHIVE_BYTES = 1_000_000
+LOGGER = logging.getLogger(__name__)
 
 
 def _bridge() -> CosmoauditionBridge:
@@ -37,11 +39,12 @@ def _bridge() -> CosmoauditionBridge:
 
 
 def _bridge_status_from_error(exc: Exception) -> dict[str, Any]:
+    LOGGER.warning("Cosmoaudition bridge unavailable: %s", exc)
     return {
         "available": False,
         "contract": COSMOAUDITION_GERM_CONTRACT,
         "baseUrl": settings.cosmoaudition_url,
-        "error": str(exc)[:2_000],
+        "error": "Cosmoaudition bridge unavailable",
     }
 
 

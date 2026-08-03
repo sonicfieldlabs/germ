@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from server.registry import registry, strain_registry
@@ -7,6 +9,7 @@ from server.schemas import StrainCard, StrainLoadRequest, StrainRegistryResponse
 
 
 router = APIRouter(prefix="/strains", tags=["strains"])
+LOGGER = logging.getLogger(__name__)
 
 
 @router.get("", response_model=StrainRegistryResponse)
@@ -50,8 +53,9 @@ def load_strains(request: StrainLoadRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"strain not found: {exc.args[0]}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        return {"status": "error", "provider": request.provider, "error": str(exc)}
+    except Exception:
+        LOGGER.exception("strain load failed for provider %s", request.provider)
+        return {"status": "error", "provider": request.provider, "error": "strain load failed"}
     return {
         **result,
         "provider": request.provider,

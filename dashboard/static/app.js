@@ -2275,6 +2275,20 @@ function outputUrl(path) {
   return `${baseUrl()}/files/${safePath}`;
 }
 
+function downloadableOutputUrl(path) {
+  const candidate = outputUrl(path);
+  if (candidate.startsWith("blob:")) return candidate;
+  try {
+    const url = new URL(candidate, window.location.href);
+    const backendOrigin = new URL(baseUrl(), window.location.href).origin;
+    if (!new Set([window.location.origin, backendOrigin]).has(url.origin)) return "";
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 function wavetableExportUrl(id, format = "gwt") {
   if (!id) return "#";
   return `${baseUrl()}/wavetables/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
@@ -2336,8 +2350,8 @@ function metadataSummary(metadata) {
   return pieces.filter(Boolean).join(" | ");
 }
 
-function trackChips(metadata) {
-  if (!metadata) return "<span>provider -</span><span>model -</span><span>seed -</span>";
+function trackChipValues(metadata) {
+  if (!metadata) return ["provider -", "model -", "seed -"];
   const mode = metadata.germinator_mode || modeAliases[metadata.mode] || metadata.mode;
   return [
     `provider ${metadata.provider || "-"}`,
@@ -2347,9 +2361,16 @@ function trackChips(metadata) {
     `seed ${metadata.seed ?? "-"}`,
     `cfg ${metadata.cfg_scale ?? "-"}`,
     `steps ${metadata.steps ?? "-"}`,
-  ]
-    .map((item) => `<span>${escapeHtml(item)}</span>`)
-    .join("");
+  ];
+}
+
+function renderTrackChips(target, metadata) {
+  const chips = trackChipValues(metadata).map((value) => {
+    const chip = document.createElement("span");
+    chip.textContent = String(value);
+    return chip;
+  });
+  target.replaceChildren(...chips);
 }
 
 async function setCurrentTrack(audioPath, metadataPath, metadata = null) {
@@ -2372,7 +2393,7 @@ async function setCurrentTrack(audioPath, metadataPath, metadata = null) {
   $("trackTitle").textContent = displayNameFromPath(audioPath);
   $("audioPath").value = audioPath;
   $("metadataPath").value = metadataPath || loadedMetadata?.metadata_path || "";
-  $("trackMeta").innerHTML = trackChips(loadedMetadata);
+  renderTrackChips($("trackMeta"), loadedMetadata);
   $("audioPlayer").src = outputUrl(audioPath);
   $("playPauseBtn").disabled = false;
   $("playhead").disabled = false;
@@ -20779,8 +20800,13 @@ if ($("downloadBtn")) {
   $("downloadBtn").addEventListener("click", () => {
     const path = $("audioPath")?.value;
     if (!path) return;
+    const href = downloadableOutputUrl(path);
+    if (!href) {
+      setState("Download Blocked", "warn", "The selected sound does not have a trusted download URL.");
+      return;
+    }
     const a = document.createElement("a");
-    a.href = outputUrl(path);
+    a.href = href;
     a.download = path.split("/").pop() || "download.wav";
     document.body.appendChild(a);
     a.click();

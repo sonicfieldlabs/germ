@@ -28,7 +28,10 @@ MAX_WAVETABLE_METADATA_BYTES = 2_000_000
 
 
 def note_to_frequency(note: str) -> float:
-    match = re.fullmatch(r"\s*([A-Ga-g])([#b]?)(-?\d+)\s*", note or "")
+    normalized = str(note or "").strip()
+    if len(normalized) > 5:
+        raise ValueError(f"invalid note name: {note}")
+    match = re.fullmatch(r"([A-Ga-g])([#b]?)(-?[0-9]{1,2})", normalized)
     if not match:
         raise ValueError(f"invalid note name: {note}")
     note_name, accidental, octave_text = match.groups()

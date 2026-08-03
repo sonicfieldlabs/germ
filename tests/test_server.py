@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -49,6 +50,7 @@ from server.storage import (
     MAX_TRACKED_JOBS,
     MAX_TRACKED_JOBS_HARD,
 )
+from server.wavetable import note_to_frequency
 
 
 client = TestClient(app)
@@ -908,6 +910,20 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
     assert deleted.status_code == 200
 
 
+def test_cosmoaudition_bridge_errors_do_not_expose_backend_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingBridge:
+        def status(self) -> dict:
+            raise ValueError("private backend path: /Users/listener/secret")
+
+    monkeypatch.setattr(cosmoaudition_routes, "_bridge", lambda: FailingBridge())
+    response = client.get("/cosmoaudition/status")
+    assert response.status_code == 200
+    assert response.json()["error"] == "Cosmoaudition bridge unavailable"
+    assert "secret" not in response.text
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -1086,6 +1102,31 @@ def test_huggingface_status_reports_cli_auth_without_model_check() -> None:
     assert body["service"] == "huggingface"
     assert "auth" in body
     assert body["models_checked"] is False
+
+
+def test_note_parser_rejects_oversized_or_ambiguous_input() -> None:
+    assert note_to_frequency(" C#4 ") == pytest.approx(277.1826309768721)
+    for value in ("C" + "0" * 10_000, "C4 trailing"):
+        with pytest.raises(ValueError, match="invalid note name"):
+            note_to_frequency(value)
+    with pytest.raises(ValueError, match="outside the supported MIDI range"):
+        note_to_frequency("C99")
+
+
+def test_upload_stream_rejects_directory_outside_managed_roots(tmp_path: Path) -> None:
+    class Upload:
+        async def read(self, _size: int) -> bytes:
+            return b"payload"
+
+    with pytest.raises(ValueError, match="managed upload root"):
+        asyncio.run(
+            storage.save_upload_stream(
+                filename="outside.wav",
+                upload=Upload(),
+                max_bytes=1024,
+                directory=tmp_path,
+            )
+        )
 
 
 def test_mock_generate_creates_wav_and_metadata() -> None:
