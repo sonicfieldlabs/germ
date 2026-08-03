@@ -93,7 +93,7 @@ _PREFERRED_NAMESPACES = (
 )
 
 GERM_CONTRACT = "germ/v0.1"
-AKOUO_CONTRACT = "akouo/v0.7"
+AKOUO_CONTRACT = "akouo/v0.9"
 PROMPT_HANDOFF_CONTRACT = "oida-germ.prompt/v0.1"
 
 
@@ -423,7 +423,7 @@ def record_generation(
     store=None,
 ) -> dict[str, Any]:
     """Write a germ generation into the shared store as a new akousma
-    (spec v1.3).
+    (spec v1.5).
 
     The audio stays where germ wrote it (referenced by ``file://`` uri +
     content hash); ``lineage.parent_akousma_ids`` points at the source

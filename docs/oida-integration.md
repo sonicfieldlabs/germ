@@ -58,23 +58,23 @@ The shared-store bridge, `/import` handler, structured editable prompt handoff, 
 record/lineage endpoints, prompt and sound handoffs, re-listening action, optional derived-memory
 write, and the self-contained lineage explorer are **implemented and tested**.
 
-## Current contract: spec v1.3 (Earworm v0.4, 2026-07-14)
+## Current contract: spec v1.5 (Earworm v0.6)
 
-The bridge consumes and writes the current Akousma spec v1.3 while retaining the
+The bridge consumes and writes the current Akousma spec v1.5 while retaining the
 v1.0/v1.1 read compatibility required by existing memories:
 
 - **Skimmable summaries** — generation records carry `summary: "germ <operation>: <prompt>"`;
   prompt derivation prefers the record's own summary, then reads both raw
   (v1.0) and enveloped (v1.1 `{contract, created_at, summary, payload}`)
   listening entries. germ's own entries are pinned to `germ/v0.1`; raw AKOÚŌ
-  output is pinned to the current `akouo/v0.7` contract. Existing envelopes and
+  output is pinned to the current `akouo/v0.9` contract. Existing envelopes and
   foreign producer blocks are preserved rather than reshaped.
 - **Kinship** — `POST /akousma/generation` accepts typed `relations`
   (`variant_of`, `series_with`, …), and re-registering the same audio content
   auto-links `same_source_as` to the previous holder. The lineage endpoint and
   explorer expose relations in both directions without confusing them with
   causal parents.
-- **Sovereign listening** — generation registration accepts the optional v1.3
+- **Sovereign listening** — generation registration accepts the optional v1.5
   `covenant` identity/honest-absence block and validates it through py-akousma.
   Sound imports carry that covenant context into germ source metadata, never
   reconstruct withheld content, and deliberately do not duplicate the

@@ -75,18 +75,18 @@ def auth_status() -> dict[str, Any]:
         "detail": None,
     }
     if not result["available"]:
-        status["detail"] = result["stderr"]
+        status["detail"] = "Hugging Face CLI is unavailable."
         return status
 
     if result["returncode"] != 0:
-        detail = (result["stderr"] or result["stdout"]).strip()
-        status["detail"] = detail or "hf auth whoami failed."
+        status["detail"] = "Hugging Face CLI authentication is unavailable."
         return status
 
     try:
         account = json.loads(result["stdout"] or "{}")
     except (json.JSONDecodeError, RecursionError):
-        account = {"raw": result["stdout"].strip()}
+        status["detail"] = "Hugging Face CLI returned an unreadable account response."
+        return status
 
     status["logged_in"] = True
     status["account"] = account
@@ -99,11 +99,10 @@ def model_access_status(repo_id: str) -> dict[str, Any]:
     base = {
         "repo": repo_id,
         "file": "model_config.json",
-        "command": result["command"],
         "returncode": result["returncode"],
     }
     if not result["available"]:
-        return {**base, "status": "hf_missing", "detail": result["stderr"]}
+        return {**base, "status": "hf_missing", "detail": "Hugging Face CLI is unavailable."}
 
     output = f"{result['stdout']}\n{result['stderr']}".strip()
     lowered = output.lower()
@@ -113,11 +112,11 @@ def model_access_status(repo_id: str) -> dict[str, Any]:
         return {
             **base,
             "status": "requires_approval_or_login",
-            "detail": output,
+            "detail": "Model access requires accepted terms and an authenticated read token.",
         }
     if "not logged in" in lowered or "401" in lowered or "unauthorized" in lowered:
-        return {**base, "status": "not_logged_in", "detail": output}
-    return {**base, "status": "error", "detail": output}
+        return {**base, "status": "not_logged_in", "detail": "Hugging Face authentication is required."}
+    return {**base, "status": "error", "detail": "Hugging Face model access check failed."}
 
 
 def stable_audio_hf_status(*, check_models: bool = False) -> dict[str, Any]:

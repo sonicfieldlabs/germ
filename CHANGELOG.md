@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — Security and stack alignment
 
 - Overrode Stable Audio 3's upstream Torch 2.7.1 constraint with the locally
   validated Torch and Torchaudio 2.10 pair, removing every fixable advisory
@@ -8,6 +8,11 @@
 - Added an all-extras dependency audit and a dated security exception for the
   two remaining upstream PyTorch findings in APIs GERM does not call directly.
 - Updated Setuptools to 83.0.0 to close its Unicode-normalization sdist issue.
+- Removed unsafe DOM-to-HTML and DOM-to-download flows, bounded note parsing,
+  kept backend exception details out of API payloads, and confined upload
+  writes to managed roots.
+- Updated the embedded Earworm/Akousma package from 0.4.0 to 0.6.0 and aligned
+  the documented Listening Stack versions with the canonical public releases.
 
 ## 0.3.0 — Cosmoaudition, Matter Analysis, and audio reliability
 

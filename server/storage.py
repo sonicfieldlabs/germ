@@ -1043,7 +1043,10 @@ class StorageManager:
     ) -> tuple[Path, int]:
         stem = safe_stem(Path(filename).stem, fallback="upload")
         suffix = safe_suffix(Path(filename).suffix)
-        target_dir = Path(directory) if directory is not None else self.upload_dir
+        target_dir = (Path(directory) if directory is not None else self.upload_dir).resolve()
+        allowed_upload_roots = (self.upload_dir.resolve(), self.scratch_dir.resolve())
+        if not any(self.is_within(target_dir, root) for root in allowed_upload_roots):
+            raise ValueError("upload directory must be inside a managed upload root")
         target_dir.mkdir(parents=True, exist_ok=True)
         path = target_dir / f"{stem}_{uuid4().hex[:8]}{suffix}"
         total = 0
