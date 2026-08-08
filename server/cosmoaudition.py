@@ -19,7 +19,26 @@ from server.storage import utc_now_iso
 
 
 COSMOAUDITION_GERM_CONTRACT = "cosmoaudition-germ/v0.1"
-COSMOAUDITION_REMOTE_PATHS = frozenset({"/health", "/api/sources", "/api/snapshot"})
+# The contract Cosmoaudition itself publishes over HTTP, SSE, OSC, and MASA.
+# GERM consumes it; it does not define it. Naming it here lets a frame be
+# checked against the contract it claims rather than trusted for its shape.
+COSMOAUDITION_MODULATION_CONTRACT = "cosmo/modulation/v0.1"
+COSMOAUDITION_REMOTE_PATHS = frozenset(
+    {
+        "/health",
+        "/api/sources",
+        "/api/snapshot",
+        "/api/snapshot/masa",
+        # The modulation framework: normalized signals with their epistemic
+        # status, emitted absences, and travelling attribution.
+        "/api/modulation",
+        "/api/frame",
+    }
+)
+# `/api/stream` is deliberately absent. It is Server-Sent Events, and this
+# bridge is a bounded request/response client: it reads a complete body under a
+# byte ceiling and closes. Polling `/api/frame` is the honest way for a
+# generation lab to consume modulation without holding an open subscription.
 LOGGER = logging.getLogger(__name__)
 
 
@@ -127,6 +146,24 @@ class CosmoauditionBridge:
             raise CosmoauditionBridgeError(str(exc)[:2_000]) from exc
         return _decode_json_object(b"".join(chunks))
 
+    def frame(self, *, mode: str = "fixture") -> dict[str, Any]:
+        """Read one modulation frame and confirm it is what it claims to be.
+
+        A frame that does not declare the modulation contract is not treated as
+        one. The alternative — reading `values` from any JSON object that
+        happens to have the key — would discard exactly the evidence the
+        contract exists to carry.
+        """
+
+        payload = self.get_json("/api/frame", params={"mode": mode})
+        contract = payload.get("contract")
+        if contract != COSMOAUDITION_MODULATION_CONTRACT:
+            raise CosmoauditionBridgeError(
+                "Cosmoaudition frame does not declare "
+                f"{COSMOAUDITION_MODULATION_CONTRACT}"
+            )
+        return payload
+
     def status(self) -> dict[str, Any]:
         try:
             remote = self.get_json("/health")
@@ -146,11 +183,75 @@ class CosmoauditionBridge:
         }
 
 
+#: Control statuses that carry a value GERM may actually route to a parameter.
+#: `skipped` and `refused` carry none; `held` and `uncertainty` carry one that
+#: must keep its status when it travels.
+EXECUTABLE_FRAME_STATUSES = frozenset({"applied", "held", "uncertainty"})
+
+
+def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
+    """Turn one modulation frame into GERM routes, keeping every status.
+
+    This reads the frame's ``controls``, never its ``values``. The bare
+    target/value map exists for transports that can carry only numbers, and
+    Cosmoaudition documents that using it without the matching status discards
+    the frame's evidence. GERM has no such limitation, so it does not take that
+    shortcut: a value arrives with the decision that produced it, or it does not
+    arrive. Absences are reported rather than dropped, because a source that
+    went missing is a fact about the frame.
+    """
+
+    controls = frame.get("controls")
+    if not isinstance(controls, list):
+        raise CosmoauditionBridgeError("Cosmoaudition frame is missing its controls")
+
+    routes: list[dict[str, Any]] = []
+    withheld: list[dict[str, Any]] = []
+    for control in controls:
+        if not isinstance(control, dict):
+            continue
+        status = control.get("status")
+        entry = {
+            "target": control.get("target"),
+            "mappingId": control.get("mappingId"),
+            "signalId": control.get("signalId"),
+            "status": status,
+            "reason": control.get("reason"),
+            "value": control.get("value"),
+            "unit": control.get("unit"),
+            "attribution": control.get("attribution"),
+        }
+        if status in EXECUTABLE_FRAME_STATUSES and isinstance(
+            control.get("value"), (int, float)
+        ) and not isinstance(control.get("value"), bool):
+            routes.append(entry)
+        else:
+            withheld.append({**entry, "value": None})
+
+    absences = frame.get("absences")
+    return {
+        "contract": COSMOAUDITION_MODULATION_CONTRACT,
+        "frameId": frame.get("frameId"),
+        "generatedAt": frame.get("generatedAt"),
+        "acquisitionMode": frame.get("acquisitionMode"),
+        "originMode": frame.get("originMode"),
+        "routes": routes,
+        "withheld": withheld,
+        "absences": absences if isinstance(absences, list) else [],
+        "attribution": frame.get("attribution") if isinstance(frame.get("attribution"), list) else [],
+        "masaRecordHref": frame.get("masaRecordHref"),
+        "note": (
+            "Values carry the decision that produced them. A held or uncertain "
+            "value is not a fresh measurement, and a withheld route emits nothing."
+        ),
+    }
+
+
 def cosmoaudition_modules_manifest() -> list[dict[str, Any]]:
     return [
         {
             "id": "cosmo_observation",
-            "label": "Observatory Source",
+            "label": "Observation Source",
             "kind": "observation",
             "sphere": None,
         },
@@ -265,8 +366,20 @@ def _missing_decision(
             status="refused",
             reason="invalid-previous-output",
         )
-    # Skip and map-uncertainty do not invent a zero. Mapping uncertainty
-    # requires an explicitly supplied uncertainty signal in a later route.
+    if policy == "map-uncertainty" and mapping.uncertaintyOutput is not None:
+        # Sounding uncertainty means emitting the declared value that stands for
+        # "not known", under an `uncertainty` status so it is never read as a
+        # measurement. A mapping declaring this policy without such a value is
+        # rejected at the schema boundary, not silently downgraded here.
+        return {
+            **_base_decision(mapping, signal, previous),
+            "status": "uncertainty",
+            "reason": reason,
+            "normalizedInput": None,
+            "outputValue": mapping.uncertaintyOutput,
+        }
+
+    # Skip does not invent a zero.
     return _without_output(mapping, signal, previous, status="skipped", reason=reason)
 
 
@@ -275,6 +388,15 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
     signal = request.signal
     previous = request.previousOutput
     if not request.enabled:
+        return _without_output(
+            mapping, signal, previous, status="skipped", reason="route-disabled"
+        )
+
+    # A zero amount is the operator turning this route off, and it must be read
+    # as that rather than scaled through. Scaling emits outputRange[0], which on
+    # a reversed range such as (760, 180) is the strongest value the mapping can
+    # produce: silence requested, maximum delivered, reported as `applied`.
+    if request.amount == 0:
         return _without_output(
             mapping, signal, previous, status="skipped", reason="route-disabled"
         )

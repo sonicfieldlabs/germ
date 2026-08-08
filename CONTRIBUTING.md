@@ -23,6 +23,11 @@ provider accountability, safety, accessibility, or reproducibility.
 Do not commit model weights, generated audio, uploads, credentials, `.env`
 files, local paths, private prompts, personal sessions, or provider responses.
 
+Commit messages describe the change and its reason in plain prose. Never add
+`Co-Authored-By` lines or any AI attribution trailer: no assistant, tool, or
+model is listed as an author, co-author, or contributor. Commits carry the
+human author's identity only.
+
 ## Contracts to Preserve
 
 - Cloud egress remains explicit, opt-in, and documented.

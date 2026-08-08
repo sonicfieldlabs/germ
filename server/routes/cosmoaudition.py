@@ -10,10 +10,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from server.cosmoaudition import (
     COSMOAUDITION_GERM_CONTRACT,
+    COSMOAUDITION_MODULATION_CONTRACT,
     CosmoauditionBridge,
     CosmoauditionBridgeError,
     cosmoaudition_modules_manifest,
     execute_cosmoaudition_mapping,
+    modulation_routes_from_frame,
 )
 from server.registry import settings, storage
 from server.schemas import (
@@ -109,6 +111,7 @@ def bridge_status() -> dict[str, Any]:
 def list_modules() -> dict[str, Any]:
     return {
         "contract": COSMOAUDITION_GERM_CONTRACT,
+        "modulationContract": COSMOAUDITION_MODULATION_CONTRACT,
         "modules": cosmoaudition_modules_manifest(),
         "principle": "observations become authored controls; they are not claimed as source voices",
     }
@@ -144,6 +147,47 @@ def get_snapshot(
         longitude=lon,
         sources=sources,
     )
+
+
+@router.get("/modulation")
+def get_modulation(
+    mode: Literal["live", "fixture"] = "fixture",
+    lat: float | None = Query(default=None, ge=-90.0, le=90.0),
+    lon: float | None = Query(default=None, ge=-180.0, le=180.0),
+    sources: str | None = Query(default=None, max_length=2_048),
+) -> dict[str, Any]:
+    """Proxy Cosmoaudition's normalized modulation view."""
+
+    return _proxy(
+        "/api/modulation",
+        mode=mode,
+        latitude=lat,
+        longitude=lon,
+        sources=sources,
+    )
+
+
+@router.get("/frame")
+def get_frame(mode: Literal["live", "fixture"] = "fixture") -> dict[str, Any]:
+    """Read one modulation frame and resolve it into GERM routes.
+
+    The response keeps executable routes and withheld routes apart, and carries
+    the frame's absences and attribution rather than reducing it to numbers.
+    """
+
+    try:
+        frame = _bridge().frame(mode=mode)
+    except (CosmoauditionBridgeError, ValueError) as exc:
+        return _bridge_status_from_error(exc)
+    try:
+        resolved = modulation_routes_from_frame(frame)
+    except CosmoauditionBridgeError as exc:
+        return _bridge_status_from_error(exc)
+    return {
+        "available": True,
+        "contract": COSMOAUDITION_GERM_CONTRACT,
+        "modulation": resolved,
+    }
 
 
 @router.post("/map")

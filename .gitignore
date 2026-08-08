@@ -24,6 +24,11 @@ apps/macos/dist/
 apps/germ.app/
 .codex/
 
+# Local tool caches and state
+.uv-cache/
+.uv-tools/
+.playwright-cli/
+
 /*.png
 /*.jpg
 /*.jpeg

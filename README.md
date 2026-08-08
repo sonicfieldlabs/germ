@@ -8,7 +8,12 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.3.3`.
+Current release: `0.4.0`.
+
+GERM is part of two Sonic Field Labs constellations: it cultivates within
+[The Listening Stack](https://sonicfield.org/stack) and describes its material
+through the [Sonic Matter Stack](#sonic-matter-stack-integration), whose
+protocol boundary is MASA 0.1.0.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
@@ -122,21 +127,55 @@ promising one universal hardware minimum.
 All three scales use the same module graph, semantic FX bridge, sessions,
 library, and lineage model.
 
-## Sonic Matter Observatory integration
+## Sonic Matter Stack integration
 
-GERM keeps the Observatory components distinct while making their contracts
-usable inside the cultivation graph:
+GERM belongs to two constellations. The Listening Stack is how a sound is
+heard, remembered, and re-listened; the **Sonic Matter Stack** is how sound is
+described *as matter* — its provenance, its measurements, its granular and
+spectral operations, and the observations that modulate it. GERM keeps those
+components distinct while making their contracts usable inside the cultivation
+graph:
 
-| Component | Boundary in GERM |
-| --- | --- |
-| MASA 0.1 | Optional descriptive JSON sidecars under `output/masa/`; never replaces Sonic Lineage or changes a successful render into a failure. |
-| MATERIA | Matter Analysis provides a bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening. |
-| Cosmoaudition System | A loopback-only, response-bounded HTTP bridge reads snapshots and source status. GERM never contacts observatory providers directly. |
+| Component | Version / contract | Boundary in GERM |
+| --- | --- | --- |
+| [MASA](https://github.com/sonicfieldlabs/MASA) | 0.1.0 (MIT) | Optional descriptive JSON sidecars under `output/masa/`, citing the published canonical schema at `masa.sonicfield.org`. They never replace Sonic Lineage or turn a successful render into a failure. |
+| MASA Processing | `masa-processing-request` 0.1.0 | Every Micro module declares a granular or spectral operation in MASA's engine-neutral terms. GERM states the intention and binds no DSP library. |
+| MATERIA | — | Matter Analysis provides a bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening. |
+| [Cosmoaudition](https://github.com/sonicfieldlabs/cosmoaudition) | `cosmo/modulation/v0.1` | A loopback-only, response-bounded HTTP bridge reads source status, snapshots, and modulation frames. GERM never contacts observation providers directly. |
+
+### Micro modules as MASA processing operations
+
+MASA 0.1.0 carries Roads's granular vocabulary as a protocol layer, so a Micro
+module can say what it wants done to matter without naming an engine:
+
+| Micro module | Operation | Character |
+| --- | --- | --- |
+| Grain Culture | `matter.granulate` | Quasi-synchronous emission at the perceptible grain. |
+| Particle Engine | `matter.granulate` | Dense asynchronous emission, expodec envelopes. |
+| Quanta | `matter.granulate` | The millisecond threshold where a grain stops being a small note and becomes a particle. |
+| Cell Splitter / Colony | `matter.fragment` | Transient-led and grain-led division. |
+| Spectral Tissue / Membrane | `matter.extract` | Spectral strata and bands. |
+| Microscope | `matter.reduce` | Spectral peaks retained for inspection. |
+| Metabolism | `matter.timestretch` | Duration change with declared transient handling. |
+| Swarm | `matter.pitchshift` | Transposition with declared formant handling. |
+
+`GET /micro/processing-operations` reports the mapping; `POST
+/micro/processing-request` builds a portable request. A request is an
+intention, not a receipt: it asserts nothing about what was rendered or heard.
+
+### Modulation
 
 Cosmoaudition mappings are operator-authored control relations. They do not
 claim that a dataset is the literal voice or identity of a source. Missing or
 unfetched observations do not silently become zero or a neutral modulation;
 the route remains inactive until its state is explicit.
+
+`GET /cosmoaudition/frame` reads one modulation frame and resolves it into
+GERM routes. It reads the frame's `controls`, never its bare `values` map:
+a value arrives with the decision that produced it, or it does not arrive.
+Withheld routes and emitted absences are reported rather than dropped. Server-
+Sent Events are deliberately not bridged, because this bridge is a bounded
+request/response client; poll `/cosmoaudition/frame` instead.
 
 ## Listening Stack integration
 

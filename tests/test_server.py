@@ -896,7 +896,7 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
     archived = client.post(
         "/cosmoaudition/archives",
         json={
-            "label": "pytest observatory fixture",
+            "label": "pytest observation fixture",
             "module": "cosmo_cosmic_field",
             "snapshot": snapshot.json()["payload"],
         },
@@ -4370,3 +4370,353 @@ def test_files_bulk_delete_rejects_more_than_500_items() -> None:
     )
     assert response.status_code == 400
     assert "max 500" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# MASA 0.1.0 protocol boundary and the Micro processing layer
+# ---------------------------------------------------------------------------
+
+
+def test_masa_records_cite_the_published_canonical_schema() -> None:
+    """A record citing any other root is rejected by MASA's own validator,
+    because `$schema` is a protocol constant rather than a hint."""
+
+    from server.masa_bridge import MASA_SCHEMA, build_generation_record
+
+    assert MASA_SCHEMA == (
+        "https://masa.sonicfield.org/schemas/0.1.0/matter-record.schema.json"
+    )
+    record = build_generation_record(
+        {
+            "sound_id": "snd_schema",
+            "output_audio_path": "out/snd_schema.wav",
+            "created_at": "2026-08-07T12:00:00.000Z",
+            "provider": "test",
+            "model": "test-model",
+        }
+    )
+    assert record["$schema"] == MASA_SCHEMA
+    assert record["masaVersion"] == "0.1.0"
+    assert "smo.sonicfield.org" not in json.dumps(record)
+
+
+def test_every_micro_module_declares_a_valid_processing_operation() -> None:
+    from server.masa_bridge import (
+        MICRO_MODULE_OPERATIONS,
+        PROCESSING_OPERATIONS,
+        build_processing_request,
+    )
+
+    for module, operation in MICRO_MODULE_OPERATIONS.items():
+        assert operation in PROCESSING_OPERATIONS
+        request = build_processing_request(
+            module_id=module,
+            source_id="snd_source",
+            created_at="2026-08-07T12:00:00.000Z",
+        )
+        assert request["requestType"] == "masa-processing-request"
+        assert request["requestVersion"] == "0.1.0"
+        assert request["masaVersion"] == "0.1.0"
+        assert request["operationType"] == operation
+        assert request["inputs"]
+        # `processing-request.schema.json` sets additionalProperties: false and
+        # does not declare `$schema`, so carrying one would invalidate it.
+        assert "$schema" not in request
+
+
+def test_granulation_requests_carry_the_full_required_parameter_set() -> None:
+    """The processing profile requires all four granulation members; a module
+    that supplied only some of them would produce an invalid request."""
+
+    from server.masa_bridge import build_processing_request
+
+    request = build_processing_request(
+        module_id="grain_culture",
+        source_id="snd_source",
+        created_at="2026-08-07T12:00:00.000Z",
+    )
+    parameters = request["parameters"]
+    assert set(parameters) >= {"grain", "emission", "selection", "output"}
+    assert set(parameters["grain"]) >= {"durationMs", "envelope"}
+    assert set(parameters["grain"]["durationMs"]) == {"min", "max"}
+    assert set(parameters["emission"]) >= {"mode", "grainsPerSecond"}
+
+
+def test_partial_parameter_override_keeps_required_siblings() -> None:
+    """Overriding one nested member must not drop the sibling the schema still
+    requires: authoring a grain duration cannot delete the envelope."""
+
+    from server.masa_bridge import build_processing_request
+
+    request = build_processing_request(
+        module_id="grain_culture",
+        source_id="snd_source",
+        created_at="2026-08-07T12:00:00.000Z",
+        parameters={"grain": {"durationMs": {"min": 2.0, "max": 12.0}}},
+    )
+    grain = request["parameters"]["grain"]
+    assert grain["durationMs"] == {"min": 2.0, "max": 12.0}
+    assert grain["envelope"], "envelope must survive a durationMs-only override"
+
+
+def test_quanta_and_grain_culture_do_not_share_one_generic_default() -> None:
+    """Below roughly ten milliseconds a grain becomes a particle. The modules
+    mean different things and their requests should say so."""
+
+    from server.masa_bridge import build_processing_request
+
+    def grain_of(module: str) -> dict:
+        return build_processing_request(
+            module_id=module,
+            source_id="snd_source",
+            created_at="2026-08-07T12:00:00.000Z",
+        )["parameters"]["grain"]
+
+    assert grain_of("quanta")["durationMs"]["max"] <= 10.0
+    assert grain_of("grain_culture")["durationMs"]["max"] > 10.0
+
+
+def test_processing_determinism_follows_whether_a_seed_exists() -> None:
+    from server.masa_bridge import build_processing_request
+
+    common = {"source_id": "snd_source", "created_at": "2026-08-07T12:00:00.000Z"}
+    seeded = build_processing_request(module_id="quanta", seed=7, **common)
+    unseeded = build_processing_request(module_id="quanta", **common)
+    assert seeded["determinism"] == "require-seeded"
+    assert unseeded["determinism"] == "accept-nondeterministic"
+
+
+def test_processing_request_route_builds_and_rejects_unknown_modules() -> None:
+    response = client.post(
+        "/micro/processing-request",
+        json={"module_id": "spectral_tissue", "source_id": "snd_source"},
+    )
+    assert response.status_code == 200
+    payload = response.json()["request"]
+    assert payload["operationType"] == "matter.extract"
+    assert payload["parameters"]["domain"] == "spectral-strata"
+
+    unknown = client.post(
+        "/micro/processing-request",
+        json={"module_id": "not_a_module", "source_id": "snd_source"},
+    )
+    assert unknown.status_code == 422
+
+    listed = client.get("/micro/processing-operations")
+    assert listed.status_code == 200
+    assert listed.json()["requestType"] == "masa-processing-request"
+
+
+# ---------------------------------------------------------------------------
+# Cosmoaudition modulation framework (cosmo/modulation/v0.1)
+# ---------------------------------------------------------------------------
+
+
+def _mapping(**overrides: object) -> dict:
+    mapping = {
+        "id": "m1",
+        "signalId": "s1",
+        "target": "filter.cutoff",
+        "inputRange": [0.0, 100.0],
+        "outputRange": [760.0, 180.0],
+    }
+    mapping.update(overrides)
+    return mapping
+
+
+def test_zero_amount_disables_a_route_instead_of_emitting_its_maximum() -> None:
+    """On a reversed output range, scaling a zero amount emits outputRange[0] —
+    the strongest value the mapping can produce. Silence requested, maximum
+    delivered, and reported as `applied`."""
+
+    response = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(),
+            "signal": {"id": "s1", "value": 50.0, "confidence": "high"},
+            "amount": 0.0,
+        },
+    )
+    assert response.status_code == 200
+    decision = response.json()
+    assert decision["status"] == "skipped"
+    assert decision["reason"] == "route-disabled"
+    assert decision["outputValue"] is None
+
+
+def test_zero_amount_is_disabled_on_an_ascending_range_too() -> None:
+    response = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(outputRange=[180.0, 760.0]),
+            "signal": {"id": "s1", "value": 50.0, "confidence": "high"},
+            "amount": 0.0,
+        },
+    )
+    decision = response.json()
+    assert decision["status"] == "skipped"
+    assert decision["outputValue"] is None
+
+
+def test_map_uncertainty_emits_its_declared_value_under_an_uncertain_status() -> None:
+    response = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(
+                outputRange=[180.0, 760.0],
+                missingData="map-uncertainty",
+                uncertaintyOutput=400.0,
+            ),
+            "signal": None,
+        },
+    )
+    decision = response.json()
+    assert decision["status"] == "uncertainty"
+    assert decision["outputValue"] == 400.0
+    assert decision["normalizedInput"] is None
+
+
+def test_map_uncertainty_without_a_declared_value_is_refused_at_the_boundary() -> None:
+    """Declaring that absence should sound, without saying what it sounds like,
+    would otherwise degrade silently to `skip`."""
+
+    response = client.post(
+        "/cosmoaudition/map",
+        json={"mapping": _mapping(missingData="map-uncertainty"), "signal": None},
+    )
+    assert response.status_code == 422
+
+    outside = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(
+                outputRange=[180.0, 760.0],
+                missingData="map-uncertainty",
+                uncertaintyOutput=5_000.0,
+            ),
+            "signal": None,
+        },
+    )
+    assert outside.status_code == 422
+
+
+def test_modulation_endpoints_are_allowlisted_and_stream_is_not() -> None:
+    from server.cosmoaudition import COSMOAUDITION_REMOTE_PATHS
+
+    assert {"/api/modulation", "/api/frame", "/api/snapshot/masa"} <= set(
+        COSMOAUDITION_REMOTE_PATHS
+    )
+    # Server-Sent Events cannot be read by a bounded request/response client.
+    assert "/api/stream" not in COSMOAUDITION_REMOTE_PATHS
+
+
+def _frame(**overrides: object) -> dict:
+    frame = {
+        "contract": "cosmo/modulation/v0.1",
+        "frameId": "frame_1",
+        "generatedAt": "2026-08-07T12:00:00.000Z",
+        "acquisitionMode": "fixture",
+        "controls": [
+            {
+                "mappingId": "m1",
+                "signalId": "s1",
+                "target": "filter.cutoff",
+                "status": "applied",
+                "reason": "mapped",
+                "value": 440.0,
+                "unit": "Hz",
+            },
+            {
+                "mappingId": "m2",
+                "signalId": "s2",
+                "target": "delay.time",
+                "status": "skipped",
+                "reason": "missing-value",
+                "value": None,
+            },
+            {
+                "mappingId": "m3",
+                "signalId": "s3",
+                "target": "grain.density",
+                "status": "uncertainty",
+                "reason": "stale-input",
+                "value": 12.0,
+            },
+        ],
+        "absences": [{"signalId": "s2", "reason": "provider unavailable"}],
+        "attribution": [{"sourceId": "swpc", "text": "NOAA SWPC"}],
+        "values": {"filter.cutoff": 440.0, "delay.time": 0.0},
+    }
+    frame.update(overrides)
+    return frame
+
+
+def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
+    from server.cosmoaudition import modulation_routes_from_frame
+
+    resolved = modulation_routes_from_frame(_frame())
+    assert resolved["contract"] == "cosmo/modulation/v0.1"
+    targets = {route["target"]: route for route in resolved["routes"]}
+    assert set(targets) == {"filter.cutoff", "grain.density"}
+    assert targets["grain.density"]["status"] == "uncertainty"
+    # A skipped control is reported, not silently dropped and not zeroed.
+    withheld = {item["target"]: item for item in resolved["withheld"]}
+    assert withheld["delay.time"]["status"] == "skipped"
+    assert withheld["delay.time"]["value"] is None
+    assert resolved["absences"] == [{"signalId": "s2", "reason": "provider unavailable"}]
+
+
+def test_frame_resolution_ignores_the_bare_values_map() -> None:
+    """`values` exists for transports that carry only numbers. Reading it would
+    turn a skipped route into a real zero."""
+
+    from server.cosmoaudition import modulation_routes_from_frame
+
+    frame = _frame(values={"delay.time": 0.0, "filter.cutoff": 999.0})
+    resolved = modulation_routes_from_frame(frame)
+    emitted = {route["target"]: route["value"] for route in resolved["routes"]}
+    assert "delay.time" not in emitted
+    assert emitted["filter.cutoff"] == 440.0, "the control, not the bare value"
+
+
+def test_a_frame_that_does_not_declare_the_contract_is_refused() -> None:
+    from server.cosmoaudition import CosmoauditionBridge, CosmoauditionBridgeError
+
+    bridge = CosmoauditionBridge(
+        base_url="http://127.0.0.1:8797", timeout_seconds=1.0, max_response_bytes=1_000
+    )
+    bridge.get_json = lambda path, params=None: {"frameId": "x", "controls": []}  # type: ignore[assignment]
+    with pytest.raises(CosmoauditionBridgeError, match="cosmo/modulation/v0.1"):
+        bridge.frame()
+
+
+def test_frame_route_reports_bridge_failure_without_backend_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingBridge:
+        def frame(self, *, mode: str = "fixture") -> dict:
+            raise CosmoauditionBridgeError("connect to 127.0.0.1:8797 refused")
+
+    monkeypatch.setattr(cosmoaudition_routes, "_bridge", lambda: FailingBridge())
+    response = client.get("/cosmoaudition/frame")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["error"] == "Cosmoaudition bridge unavailable"
+    # The configured baseUrl is GERM's own setting and is disclosed on purpose;
+    # the provider's failure text is not.
+    assert "refused" not in json.dumps(payload)
+
+
+def test_frame_route_resolves_a_live_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Bridge:
+        def frame(self, *, mode: str = "fixture") -> dict:
+            return _frame()
+
+    monkeypatch.setattr(cosmoaudition_routes, "_bridge", lambda: Bridge())
+    response = client.get("/cosmoaudition/frame")
+    assert response.status_code == 200
+    modulation = response.json()["modulation"]
+    assert modulation["frameId"] == "frame_1"
+    assert len(modulation["routes"]) == 2
+    assert modulation["attribution"] == [{"sourceId": "swpc", "text": "NOAA SWPC"}]

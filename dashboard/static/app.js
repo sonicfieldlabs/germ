@@ -776,7 +776,7 @@ const FX_MODULES = {
   microscope: { label: "Microscope", description: "Inspect transients, partials, density, and grain behavior" },
   matter_analysis: { label: "Matter Analysis", description: "Measure spectral, temporal, spatial, and inferred material qualities without altering audio" },
   incubator: { label: "Incubator", description: "Slowly evolve a sound population over time" },
-  cosmo_matter_modulator: { label: "Matter Modulator", description: "Route observatory control into granular, spectral, and temporal sound-matter processing" },
+  cosmo_matter_modulator: { label: "Matter Modulator", description: "Route observation control into granular, spectral, and temporal sound-matter processing" },
   loop_doctor: { label: "Loop Doctor", description: "Loop detection, seam repair, and cyclic export" },
   space: { label: "Space", description: "Simple reverb modes" },
   echo: { label: "Echo", description: "Delay modes and feedback" },
@@ -1005,7 +1005,7 @@ const FX_SEMANTIC_PROFILES = {
   },
   cosmo_matter_modulator: {
     family: "cosmoaudition",
-    prompt: ({ params }) => `observatory-shaped sound matter, ${Number(params.density ?? 0.5) > 0.6 ? "dense" : "open"} material pulses, bounded planetary modulation`,
+    prompt: ({ params }) => `observation-shaped sound matter, ${Number(params.density ?? 0.5) > 0.6 ? "dense" : "open"} material pulses, bounded planetary modulation`,
     negative: () => "literal one-to-one data sonification, source identity claim",
     generation: ({ params, amount }) => ({
       inpaintDensity: Number(params.density ?? 0.5) * 0.18 * amount,
@@ -3774,7 +3774,7 @@ function modulatorLabel(modulatorType) {
     audio_to_control: "Audio-to-Control",
     gesture_recorder: "Gesture Recorder",
     macro_modulator: "Macro",
-    cosmo_observation: "Observatory Source",
+    cosmo_observation: "Observation Source",
     cosmo_cosmic_field: "Cosmic Field",
     cosmo_earth_field: "Earth Field",
     cosmo_biosphere_field: "Biosphere Field",
@@ -4419,7 +4419,7 @@ async function refreshCosmoauditionNode(nodeId, { archive = false } = {}) {
   const index = canvasNodes.findIndex((item) => item.id === nodeId);
   const node = normalizeModulatorNode(canvasNodes[index]);
   if (!node || !COSMOAUDITION_MODULATOR_TYPES.has(node.modulatorType)) return;
-  beginWork(archive ? "Archiving Observation" : "Reading Observatory", node.label);
+  beginWork(archive ? "Archiving Observation" : "Reading Observation", node.label);
   try {
     let payload;
     let archiveId = node.config?.archiveId || "";
@@ -4516,7 +4516,7 @@ async function refreshCosmoauditionNode(nodeId, { archive = false } = {}) {
     canvasNodes[index] = node;
     canvasSaveState();
     renderCanvas();
-    finishWork("Observatory Unavailable", "bad", node.config.status);
+    finishWork("Observation Unavailable", "bad", node.config.status);
   }
 }
 
@@ -9905,7 +9905,7 @@ function canvasModulatorNodeMarkup(node, selected, style) {
     audio_to_control: "Audio features become generation controls.",
     gesture_recorder: "Recorded movement for generation values.",
     macro_modulator: "Manual control source.",
-    cosmo_observation: "Project-neutral local observatory signal source.",
+    cosmo_observation: "Project-neutral local observation signal source.",
     cosmo_cosmic_field: "Cosmic observations as bounded control material.",
     cosmo_earth_field: "Atmospheric and geological observations as bounded control material.",
     cosmo_biosphere_field: "Species and biosphere observations as bounded control material.",

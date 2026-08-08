@@ -4,14 +4,26 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_NAME, SOUND_MATTER_CONCEPT, SOUND_MATTER_SCALES
-from server.masa_bridge import MASA_VERSION, build_analysis_record, sidecar_path_for
+from server.masa_bridge import (
+    MASA_VERSION,
+    MICRO_MODULE_OPERATIONS,
+    PROCESSING_OPERATIONS,
+    build_analysis_record,
+    build_processing_request,
+    sidecar_path_for,
+)
 from server.matter_analysis import analyze_sound_matter
 from server.registry import settings, storage
 from server.routes.control import _read_pcm16_wav, _resolve_output_wav
-from server.schemas import MatterAnalysisRequest, MatterAnalysisResult, validate_json_compatible
+from server.schemas import (
+    MatterAnalysisRequest,
+    MatterAnalysisResult,
+    MicroProcessingRequest,
+    validate_json_compatible,
+)
 from server.storage import safe_stem, utc_now_iso
 
 
@@ -52,6 +64,46 @@ def _masa_analysis_state(
             },
             None,
         )
+
+
+@router.get("/micro/processing-operations")
+def list_processing_operations() -> dict[str, Any]:
+    """Report which MASA processing operation each Micro module speaks."""
+
+    return {
+        "masaVersion": MASA_VERSION,
+        "requestType": "masa-processing-request",
+        "modules": [
+            {"moduleId": module, "operationType": operation}
+            for module, operation in sorted(MICRO_MODULE_OPERATIONS.items())
+        ],
+        "operations": sorted(PROCESSING_OPERATIONS),
+        "note": (
+            "A processing request states an intention in MASA's engine-neutral "
+            "terms. It binds no DSP library and asserts no audition."
+        ),
+    }
+
+
+@router.post("/micro/processing-request")
+def create_processing_request(request: MicroProcessingRequest) -> dict[str, Any]:
+    """Build a portable MASA processing request for one Micro module."""
+
+    try:
+        payload = build_processing_request(
+            module_id=request.module_id,
+            source_id=request.source_id,
+            created_at=utc_now_iso(),
+            parameters=request.parameters,
+            operation_type=request.operation_type,
+            seed=request.seed,
+            max_outputs=request.max_outputs,
+            record_ref=request.record_ref,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)[:2_000]) from exc
+    validate_json_compatible(payload, label="MASA processing request")
+    return {"status": "built", "masaVersion": MASA_VERSION, "request": payload}
 
 
 @router.post("/matter/analyze", response_model=MatterAnalysisResult)

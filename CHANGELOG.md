@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.0 — Sonic Matter Stack alignment
+
+- **Fixed a MASA protocol break.** Every sidecar cited
+  `smo.sonicfield.org`, a pre-release identifier root. `$schema` is a protocol
+  constant rather than a hint, so the published MASA 0.1.0 validator rejected
+  every record GERM had ever written. Records now cite
+  `masa.sonicfield.org` and validate against the released reference
+  implementation.
+- **Fixed a silent modulation bug.** A zero mapping amount was scaled through
+  instead of read as the operator turning a route off. On a reversed output
+  range such as `(760, 180)` that emits `outputRange[0]` — the strongest value
+  the mapping can produce — reported as `applied`. Silence requested, maximum
+  delivered. A zero amount is now `skipped` / `route-disabled`, matching
+  Cosmoaudition's own engine.
+- Added the MASA processing layer to the Micro modules. Each declares a
+  granular or spectral operation in MASA's engine-neutral terms and can emit a
+  portable `masa-processing-request` via `POST /micro/processing-request`;
+  `GET /micro/processing-operations` reports the mapping. GERM states the
+  intention and binds no DSP library.
+- Added the Cosmoaudition modulation framework. The bridge allowlist now covers
+  `/api/modulation`, `/api/frame`, and `/api/snapshot/masa`, and
+  `GET /cosmoaudition/frame` resolves one verified `cosmo/modulation/v0.1`
+  frame into GERM routes. It reads the frame's `controls`, never the bare
+  `values` map, so a value never travels without the decision that produced it;
+  withheld routes and emitted absences are reported rather than dropped.
+  `/api/stream` stays unbridged because Server-Sent Events cannot be read by a
+  bounded request/response client.
+- Added `uncertaintyOutput` to Cosmoaudition mappings, so a `map-uncertainty`
+  policy emits its declared value under an `uncertainty` status instead of
+  degrading silently to `skip`. Declaring the policy without the value is now
+  refused at the schema boundary.
+- Named GERM's place in the **Sonic Matter Stack** alongside the Listening
+  Stack, and retired the earlier "Observatory" naming across the server,
+  dashboard, documentation, and module labels.
+
 ## 0.3.3 — Additive cultivation lineage
 
 - Raised the Earworm/Akousma floor to 0.6.1 so remembered generations cannot

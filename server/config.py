@@ -198,7 +198,7 @@ class Settings:
         )
         # Cosmoaudition remains a separate local instrument. Germ only talks
         # to its loopback API through the bounded bridge in
-        # ``server.cosmoaudition``; it never calls observatory providers
+        # ``server.cosmoaudition``; it never calls observation providers
         # directly.
         self.cosmoaudition_url = (
             _env("GERM_COSMOAUDITION_URL", "http://127.0.0.1:8797")
