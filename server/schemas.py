@@ -403,6 +403,10 @@ class CosmoauditionMapping(JSONRequestModel):
     outputRange: tuple[float, float] = (0.0, 1.0)
     smoothingMs: float = Field(default=80.0, ge=0.0, le=60_000.0)
     missingData: CosmoauditionMissingData = "skip"
+    # The value that stands for "not known" when the policy is map-uncertainty.
+    # It is emitted under an `uncertainty` status so it is never read back as a
+    # measurement, and it must lie inside the mapping's own output range.
+    uncertaintyOutput: float | None = None
     description: str = Field(default="Authored observation mapping.", max_length=10_000)
     epistemicNote: str = Field(
         default=(
@@ -416,6 +420,16 @@ class CosmoauditionMapping(JSONRequestModel):
     def validate_mapping_ranges(self) -> "CosmoauditionMapping":
         if self.outputRange[0] == self.outputRange[1]:
             raise ValueError("outputRange must describe a non-zero range")
+        if self.missingData == "map-uncertainty":
+            # Declaring that absence should sound, without saying what it sounds
+            # like, would otherwise degrade silently to `skip` at runtime.
+            lower, upper = sorted(self.outputRange)
+            if self.uncertaintyOutput is None or not (
+                lower <= self.uncertaintyOutput <= upper
+            ):
+                raise ValueError(
+                    "map-uncertainty requires an uncertaintyOutput inside outputRange"
+                )
         if self.scale == "categorical":
             if not self.categories:
                 raise ValueError("categorical mappings require categories")
@@ -447,6 +461,23 @@ class CosmoauditionArchiveRequest(JSONRequestModel):
     snapshot: dict[str, Any] = Field(default_factory=dict)
     module: str | None = Field(default=None, max_length=120)
     notes: str | None = Field(default=None, max_length=10_000)
+
+
+class MicroProcessingRequest(JSONRequestModel):
+    """Ask for a MASA processing request describing one Micro module's intent.
+
+    GERM states the granular or spectral operation and its parameters; it does
+    not run them here and names no DSP engine. The result is a portable request
+    another system can read and realize.
+    """
+
+    module_id: str = Field(min_length=1, max_length=128)
+    source_id: str = Field(min_length=1, max_length=256)
+    operation_type: str | None = Field(default=None, max_length=64)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    seed: int | None = Field(default=None, ge=-2_147_483_648, le=2_147_483_647)
+    max_outputs: int = Field(default=16, ge=1, le=64)
+    record_ref: str | None = Field(default=None, max_length=256)
 
 
 class MicroBiomeSaveRequest(JSONRequestModel):

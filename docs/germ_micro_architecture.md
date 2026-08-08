@@ -70,7 +70,7 @@ categories:
 
 | Module | Role |
 | --- | --- |
-| Observatory Source | Reads one bounded local snapshot. |
+| Observation Source | Reads one bounded local snapshot. |
 | Cosmic Field | Selects `cosmos` observations. |
 | Earth Field | Selects atmospheric and geological observations. |
 | Biosphere Field | Selects biosphere observations. |
@@ -81,11 +81,22 @@ categories:
 | Semantic Field | Relates a normalized value to attributed descriptive context. |
 | Uncertainty Field | Makes confidence, staleness, and source error available as control. |
 | Observation Archive | Replays a bounded local observation with provenance. |
-| Matter Modulator | Applies observatory-routed control to granular and spectral matter parameters. |
+| Matter Modulator | Applies observation-routed control to granular and spectral matter parameters. |
 
 GERM connects only to the separate Cosmoaudition System on an explicit HTTP
 loopback URL. It accepts no redirects, proxies only allowlisted routes, ignores
-environment proxies, and caps the response body. Provider credentials and
+environment proxies, and caps the response body. The allowlist covers
+`/health`, `/api/sources`, `/api/snapshot`, `/api/snapshot/masa`,
+`/api/modulation`, and `/api/frame`. `/api/stream` is deliberately excluded:
+it is Server-Sent Events, and this bridge is a bounded request/response client
+that reads a complete body and closes.
+
+A modulation frame is verified against the contract it claims —
+`cosmo/modulation/v0.1` — before it is read. `GET /cosmoaudition/frame`
+resolves one frame into GERM routes using its `controls`, never the bare
+`values` map that exists for transports carrying only numbers. Using that map
+would turn a skipped route into a real zero. Withheld routes and emitted
+absences travel in the response instead of disappearing from it. Provider credentials and
 astronomical, geological, weather, biosphere, human, or machine APIs remain on
 the Cosmoaudition side of the boundary.
 
@@ -94,6 +105,38 @@ available. Unavailable observations are skipped in generation, realtime, and
 clocked routes. Mapping receipts retain signal, source, confidence,
 epistemic status, temporal character, mapping status, and the statement that
 the relation is authored rather than a source-identity claim.
+
+## MASA processing layer
+
+MASA 0.1.0 carries the granular and spectral vocabulary as a protocol layer, so
+a Micro module can state what it wants done to matter without naming a DSP
+engine. Each module declares one operation:
+
+| Module | MASA operation |
+| --- | --- |
+| Grain Culture, Particle Engine, Quanta | `matter.granulate` |
+| Cell Splitter, Colony | `matter.fragment` |
+| Spectral Tissue, Membrane | `matter.extract` |
+| Microscope | `matter.reduce` |
+| Metabolism | `matter.timestretch` |
+| Swarm | `matter.pitchshift` |
+
+The parameters are the module's own character rather than one shared default.
+Quanta works between one and ten milliseconds, where a grain stops being a
+small note and becomes a particle and the envelope dominates what is heard;
+Grain Culture cultivates at the perceptible grain with quasi-synchronous
+emission; Particle Engine is dense asynchronous emission. Spectral Tissue reads
+strata rather than a single band.
+
+`GET /micro/processing-operations` reports the mapping. `POST
+/micro/processing-request` builds a portable `masa-processing-request`, merging
+operation floor, module character, and authored parameters in that order so a
+partial override cannot drop a sibling the contract still requires.
+
+A processing request is an intention, not a receipt. It carries no `$schema`
+member, because the request schema declares none and forbids what it does not
+declare. It asserts nothing about what was rendered, and nothing about what was
+heard — audition remains outside this boundary.
 
 ## Persisted Control Contracts
 

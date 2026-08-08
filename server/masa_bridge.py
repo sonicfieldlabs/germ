@@ -8,7 +8,103 @@ from server.identity import PRODUCT_NAME, __version__
 
 
 MASA_VERSION = "0.1.0"
-MASA_SCHEMA = "https://smo.sonicfield.org/masa/schemas/0.1.0/matter-record.schema.json"
+# The canonical identifier root of the published MASA 0.1.0 release
+# (sonicfieldlabs/MASA, tag v0.1.0). Records that cite any other root are
+# rejected by the reference validator, because `$schema` is a protocol constant
+# rather than a hint, so this string is the single place it is written.
+MASA_CANONICAL_ROOT = "https://masa.sonicfield.org/"
+MASA_SCHEMA = f"{MASA_CANONICAL_ROOT}schemas/0.1.0/matter-record.schema.json"
+MASA_PROCESSING_REQUEST_VERSION = "0.1.0"
+
+# GERM's Micro modules are granular and spectral instruments in Roads's sense.
+# MASA 0.1.0 gives that vocabulary an engine-neutral request contract, so a
+# module can state what it wants done to matter without naming a DSP library.
+MICRO_MODULE_OPERATIONS: dict[str, str] = {
+    "grain_culture": "matter.granulate",
+    "particle_engine": "matter.granulate",
+    "quanta": "matter.granulate",
+    "cell_splitter": "matter.fragment",
+    "colony": "matter.fragment",
+    "spectral_tissue": "matter.extract",
+    "membrane": "matter.extract",
+    "microscope": "matter.reduce",
+    "metabolism": "matter.timestretch",
+    "swarm": "matter.pitchshift",
+}
+
+PROCESSING_OPERATIONS = frozenset(
+    {
+        "matter.granulate",
+        "matter.extract",
+        "matter.reduce",
+        "matter.fragment",
+        "matter.timestretch",
+        "matter.pitchshift",
+    }
+)
+
+# The minimum each operation must carry to satisfy the processing profile.
+_OPERATION_DEFAULTS: dict[str, dict[str, Any]] = {
+    "matter.granulate": {
+        "grain": {"durationMs": {"min": 5.0, "max": 80.0}, "envelope": "gaussian"},
+        "emission": {"mode": "asynchronous", "grainsPerSecond": 200.0},
+        "selection": {"order": "statistical"},
+        "output": {"kind": "texture"},
+    },
+    "matter.extract": {"domain": "spectral-band"},
+    "matter.reduce": {"kind": "spectral-peaks"},
+    "matter.fragment": {"strategy": "equal-duration", "count": 8},
+    "matter.timestretch": {"factor": 2.0, "transientMode": "preserve"},
+    "matter.pitchshift": {"cents": 0.0, "formantPreserved": True},
+}
+
+# Each Micro module means something specific in the granular literature, so its
+# request should say so rather than repeat one generic default. Quanta works at
+# the millisecond threshold where pitch dissolves into particle; Grain Culture
+# cultivates at the perceptible grain; Particle Engine is dense asynchronous
+# emission; Spectral Tissue reads strata rather than a single band.
+_MODULE_PARAMETERS: dict[str, dict[str, Any]] = {
+    "grain_culture": {
+        "grain": {"durationMs": {"min": 20.0, "max": 100.0}, "envelope": "gaussian"},
+        "emission": {"mode": "quasi-synchronous", "grainsPerSecond": 60.0},
+        "selection": {"order": "authored"},
+    },
+    "particle_engine": {
+        "grain": {"durationMs": {"min": 5.0, "max": 40.0}, "envelope": "expodec"},
+        "emission": {"mode": "asynchronous", "grainsPerSecond": 400.0},
+        "selection": {"order": "statistical"},
+    },
+    "quanta": {
+        # Below roughly ten milliseconds a grain stops being a small note and
+        # becomes a particle; the envelope dominates what is heard.
+        "grain": {"durationMs": {"min": 1.0, "max": 10.0}, "envelope": "rexpodec"},
+        "emission": {"mode": "synchronous", "grainsPerSecond": 1000.0},
+        "selection": {"order": "linear"},
+        "output": {"kind": "fragment-set"},
+    },
+    "cell_splitter": {"strategy": "transients"},
+    "colony": {"strategy": "grains"},
+    "spectral_tissue": {"domain": "spectral-strata", "strata": {"count": 8}},
+    "membrane": {"domain": "spectral-band", "bandHz": {"lowHz": 200.0, "highHz": 2000.0}},
+    "microscope": {"kind": "spectral-peaks", "keepPartials": 24},
+    "metabolism": {"factor": 2.0},
+    "swarm": {"cents": -700.0},
+}
+
+
+def _merge_parameters(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Overlay authored parameters without dropping the sibling keys a nested
+    required-object still needs (``grain.envelope`` must survive an override
+    that only names ``grain.durationMs``)."""
+
+    merged = dict(base)
+    for key, value in overlay.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_parameters(current, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _id(kind: str, value: str) -> str:
@@ -701,6 +797,92 @@ def build_analysis_record(artifact: dict[str, Any]) -> dict[str, Any]:
                 "analysisId": analysis_id,
                 "state": analysis.get("analysisState"),
                 "inferenceIsNotListening": True,
+            }
+        },
+    }
+
+
+def build_processing_request(
+    *,
+    module_id: str,
+    source_id: str,
+    created_at: str,
+    parameters: dict[str, Any] | None = None,
+    operation_type: str | None = None,
+    seed: Any = None,
+    max_outputs: int = 16,
+    record_ref: str | None = None,
+) -> dict[str, Any]:
+    """State a granular or spectral intention in MASA's engine-neutral terms.
+
+    This is a *request*, not a receipt: it says what should happen to a
+    representation and under which determinism, and it deliberately names no
+    DSP library. A consuming engine reads the operation and parameters and
+    remains free to realize them however it can. GERM emits this so a Micro
+    module's intention can travel to another system without travelling as
+    GERM's own private module payload.
+
+    A processing request is not a MatterRecord. It carries no ``$schema``
+    member, because ``processing-request.schema.json`` forbids properties it
+    does not declare.
+    """
+
+    module = str(module_id or "").strip()
+    if not module:
+        raise ValueError("A processing request needs its originating module id")
+    source = str(source_id or "").strip()
+    if not source:
+        raise ValueError("A processing request needs an input representation")
+    created = str(created_at or "").strip()
+    if not created:
+        raise ValueError("A processing request needs createdAt")
+
+    resolved_operation = operation_type or MICRO_MODULE_OPERATIONS.get(module)
+    if resolved_operation is None:
+        raise ValueError(f"No MASA processing operation is declared for module: {module}")
+    if resolved_operation not in PROCESSING_OPERATIONS:
+        raise ValueError(f"Unsupported MASA processing operation: {resolved_operation}")
+
+    # Operation floor, then this module's granular character, then whatever the
+    # operator authored. Merging in that order keeps a partial override valid.
+    resolved_parameters = _merge_parameters(
+        _OPERATION_DEFAULTS.get(resolved_operation, {}),
+        _MODULE_PARAMETERS.get(module, {})
+        if operation_type is None or operation_type == MICRO_MODULE_OPERATIONS.get(module)
+        else {},
+    )
+    resolved_parameters = _merge_parameters(resolved_parameters, dict(parameters or {}))
+
+    # Determinism is a claim about reproducibility, so it follows the evidence:
+    # a seeded request can promise a seeded rerun, an unseeded one cannot.
+    determinism = "require-seeded" if seed is not None else "accept-nondeterministic"
+
+    return {
+        "requestType": "masa-processing-request",
+        "requestVersion": MASA_PROCESSING_REQUEST_VERSION,
+        "masaVersion": MASA_VERSION,
+        "id": _id("processing-request", f"{module}:{source}:{created}"),
+        "createdAt": created,
+        "requestedBy": _id("actor", "germ"),
+        **({"recordRef": record_ref} if record_ref else {}),
+        "operationType": resolved_operation,
+        "inputs": [_id("representation", source)],
+        "parameters": resolved_parameters,
+        "determinism": determinism,
+        "engine": _unknown(
+            "GERM states the processing intention and does not bind a DSP engine.",
+            "engine_neutral",
+        ),
+        "policyRefs": [_id("policy", source)],
+        "outputContract": {
+            "roles": ["derivative"],
+            "maxOutputs": max(1, min(int(max_outputs), 64)),
+        },
+        "extensions": {
+            "germ:micro": {
+                "moduleId": module,
+                "sourceSoundId": source,
+                **({"seed": seed} if seed is not None else {}),
             }
         },
     }

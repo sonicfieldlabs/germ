@@ -361,7 +361,7 @@ function checkCosmoauditionAndMatterContracts() {
   assert.match(
     app,
     /COSMOAUDITION_MODULATOR_TYPES\.has\(modulator\.modulatorType\)[\s\S]*available !== true\) return/,
-    "Unavailable observatory values should not enter modulation routes",
+    "Unavailable observation values should not enter modulation routes",
   );
 }
 
