@@ -8,11 +8,11 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.4.0`.
+Current release: `0.4.1`.
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
-through the [Sonic Matter Stack](#sonic-matter-stack-integration), whose
+through the [Sonic Matter Framework](#sonic-matter-framework-integration), whose
 protocol boundary is MASA 0.1.0.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
@@ -127,20 +127,21 @@ promising one universal hardware minimum.
 All three scales use the same module graph, semantic FX bridge, sessions,
 library, and lineage model.
 
-## Sonic Matter Stack integration
+## Sonic Matter Framework integration
 
 GERM belongs to two constellations. The Listening Stack is how a sound is
-heard, remembered, and re-listened; the **Sonic Matter Stack** is how sound is
-described *as matter* — its provenance, its measurements, its granular and
-spectral operations, and the observations that modulate it. GERM keeps those
-components distinct while making their contracts usable inside the cultivation
-graph:
+heard, remembered, and re-listened; the **Sonic Matter Framework** joins three
+distinct projects around sound described *as matter*: MASA supplies the
+descriptive protocol, Cosmoaudition supplies attributed observations and
+modulation decisions, and GERM cultivates sound while retaining provenance and
+lineage. GERM keeps those roles distinct while making their contracts usable
+inside its cultivation graph:
 
 | Component | Version / contract | Boundary in GERM |
 | --- | --- | --- |
 | [MASA](https://github.com/sonicfieldlabs/MASA) | 0.1.0 (MIT) | Optional descriptive JSON sidecars under `output/masa/`, citing the published canonical schema at `masa.sonicfield.org`. They never replace Sonic Lineage or turn a successful render into a failure. |
 | MASA Processing | `masa-processing-request` 0.1.0 | Every Micro module declares a granular or spectral operation in MASA's engine-neutral terms. GERM states the intention and binds no DSP library. |
-| MATERIA | — | Matter Analysis provides a bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening. |
+| GERM Matter Analysis | — | A bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening or a fourth framework project. |
 | [Cosmoaudition](https://github.com/sonicfieldlabs/cosmoaudition) | `cosmo/modulation/v0.1` | A loopback-only, response-bounded HTTP bridge reads source status, snapshots, and modulation frames. GERM never contacts observation providers directly. |
 
 ### Micro modules as MASA processing operations
@@ -173,9 +174,13 @@ the route remains inactive until its state is explicit.
 `GET /cosmoaudition/frame` reads one modulation frame and resolves it into
 GERM routes. It reads the frame's `controls`, never its bare `values` map:
 a value arrives with the decision that produced it, or it does not arrive.
-Withheld routes and emitted absences are reported rather than dropped. Server-
-Sent Events are deliberately not bridged, because this bridge is a bounded
-request/response client; poll `/cosmoaudition/frame` instead.
+Out-of-range or structurally invalid controls are withheld with an explicit
+bridge reason. Frame-level `signals` and `sources` travel beside the routes so
+their source, unit, sphere, epistemic status, and temporal character remain
+traceable through `signalId`. Withheld routes and emitted absences are reported
+rather than dropped. Server-Sent Events are deliberately not bridged, because
+this bridge is a bounded request/response client; poll `/cosmoaudition/frame`
+instead.
 
 ## Listening Stack integration
 

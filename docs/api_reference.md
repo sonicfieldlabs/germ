@@ -864,8 +864,15 @@ The server only reveals files inside the configured output directory.
 }
 ```
 
-Renames the audio file (and metadata file, when given) to a sanitized stem and rewrites
-the path/id fields inside the metadata JSON, rolling back on failure.
+Renames the audio file (and its actual metadata companion, when one exists) to a sanitized stem and
+rewrites storage paths inside the metadata JSON. Canonical `sound_id`, lineage,
+and Earworm identifiers remain stable. Same-name metadata is discovered even
+when the caller omits it, and only a metadata object that actually identifies
+the audio can be used. Matching deferred-latent locators are rewritten. A
+verified written MASA sidecar is refreshed transactionally in place; a failed
+companion write rolls the rename back. Sounds remembered in Akousmata, or with
+an unresolved requested memory write, are refused because moving their audio
+could break the shared record's immutable file locator.
 
 ## POST /files/delete
 
@@ -880,4 +887,10 @@ the path/id fields inside the metadata JSON, rolling back on failure.
 }
 ```
 
-Best-effort bulk delete of output files (max 500 items per request).
+Best-effort bulk delete of audio output files and their explicitly supplied,
+verified metadata companions (max 500 items per request). The primary path must
+use a supported audio extension. If companion metadata exists, its exact path
+is required; a verified written MASA sidecar is then deleted with that local
+record. Remembered or unresolved requested Akousmata are refused because their
+shared `file://` locator must remain valid. Unrelated JSON and unresolved
+sidecar evidence are preserved.

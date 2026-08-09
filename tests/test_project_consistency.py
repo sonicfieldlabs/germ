@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from server.identity import __version__
@@ -50,10 +51,29 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.4.0"
-    assert 'version = "0.4.0"' in _read("pyproject.toml")
-    assert 'Current release: `0.4.0`.' in _read("README.md")
-    assert 'version: "0.4.0"' in _read("CITATION.cff")
-    assert 'date-released: "2026-08-07"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.4.0"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="6"' in _read("apps/macos/script/build_and_run.sh")
+    assert __version__ == "0.4.1"
+    assert 'version = "0.4.1"' in _read("pyproject.toml")
+    assert 'Current release: `0.4.1`.' in _read("README.md")
+    assert 'version: "0.4.1"' in _read("CITATION.cff")
+    assert 'date-released: "2026-08-09"' in _read("CITATION.cff")
+    assert 'MARKETING_VERSION="0.4.1"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="7"' in _read("apps/macos/script/build_and_run.sh")
+
+
+def test_openapi_operation_ids_are_present_and_unique() -> None:
+    from server.main import app
+
+    methods = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
+    operation_ids = [
+        operation.get("operationId")
+        for path_item in app.openapi()["paths"].values()
+        for method, operation in path_item.items()
+        if method.lower() in methods
+    ]
+    assert all(operation_ids)
+    duplicates = {
+        operation_id: count
+        for operation_id, count in Counter(operation_ids).items()
+        if count > 1
+    }
+    assert duplicates == {}

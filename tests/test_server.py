@@ -4234,7 +4234,16 @@ def test_files_rename_endpoint() -> None:
             "id": "sound_pytest_rename_test",
             "audio_path": "output/audio/pytest_rename_test.wav",
             "metadata_path": "output/audio/pytest_rename_test.json"
-        }
+        },
+        "earworm": {
+            "session_id": "sess_sound_pytest_rename_test",
+            "asset_id": "asset_sound_pytest_rename_test",
+            "provenance_id": "prov_sound_pytest_rename_test",
+        },
+        "latents": {
+            "status": "deferred",
+            "source_audio_path": storage.relative_path(audio_path),
+        },
     }
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
@@ -4257,12 +4266,401 @@ def test_files_rename_endpoint() -> None:
     
     # Verify metadata updates
     updated_meta = json.loads(new_metadata_path.read_text(encoding="utf-8"))
-    assert updated_meta["sound_id"] == "sound_pytest_renamed_ok"
+    assert updated_meta["sound_id"] == "sound_pytest_rename_test"
     assert updated_meta["output_audio_path"] == storage.relative_path(new_audio_path)
     assert updated_meta["metadata_path"] == storage.relative_path(new_metadata_path)
-    assert updated_meta["lineage"]["id"] == "sound_pytest_renamed_ok"
+    assert updated_meta["lineage"]["id"] == "sound_pytest_rename_test"
     assert updated_meta["lineage"]["audio_path"] == storage.relative_path(new_audio_path)
     assert updated_meta["lineage"]["metadata_path"] == storage.relative_path(new_metadata_path)
+    assert updated_meta["earworm"]["session_id"] == "sess_sound_pytest_rename_test"
+    assert updated_meta["latents"]["source_audio_path"] == storage.relative_path(new_audio_path)
+
+
+def test_files_rename_refuses_to_break_a_remembered_akousma_locator() -> None:
+    audio_path = settings.output_root / "audio" / "pytest_remembered_rename.wav"
+    metadata_path = settings.output_root / "audio" / "pytest_remembered_rename.json"
+    target_path = settings.output_root / "audio" / "pytest_remembered_renamed.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, metadata_path, target_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "sound_id": "sound_pytest_remembered_rename",
+                "akousmata": {
+                    "status": "remembered",
+                    "requested": True,
+                    "akousma_id": "akm_pytest_remembered_rename",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_remembered_renamed",
+        },
+    )
+    assert response.status_code == 409
+    assert "Akousmata" in response.json()["detail"]
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert not target_path.exists()
+
+
+def test_files_rename_discovers_unresolved_akousmata_when_the_caller_omits_metadata() -> None:
+    audio_path = settings.output_root / "audio" / "pytest_remembered_omitted.wav"
+    metadata_path = settings.metadata_dir / "pytest_remembered_omitted.json"
+    target_path = settings.output_root / "audio" / "pytest_remembered_omitted_target.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, metadata_path, target_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "sound_id": "sound_pytest_remembered_omitted",
+                "output_audio_path": storage.relative_path(audio_path),
+                "akousmata": {
+                    # The first local commit records `pending`. If the shared
+                    # write succeeds but its annotation cannot be rewritten,
+                    # this is the conservative on-disk state that remains.
+                    "status": "pending",
+                    "requested": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": None,
+            "new_stem": "pytest_remembered_omitted_target",
+        },
+    )
+    assert response.status_code == 409
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert not target_path.exists()
+
+
+def test_files_rename_rejects_a_decoy_metadata_pair() -> None:
+    audio_path = settings.output_root / "audio" / "pytest_remembered_decoy.wav"
+    metadata_path = settings.metadata_dir / "pytest_remembered_decoy.json"
+    decoy_path = settings.metadata_dir / "pytest_remembered_decoy_other.json"
+    target_path = settings.output_root / "audio" / "pytest_remembered_decoy_target.wav"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, metadata_path, decoy_path, target_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "sound_id": "sound_pytest_remembered_decoy",
+                "output_audio_path": storage.relative_path(audio_path),
+                "akousmata": {
+                    "status": "remembered",
+                    "akousma_id": "akm_pytest_remembered_decoy",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    decoy_path.write_text(
+        json.dumps(
+            {
+                "sound_id": "sound_decoy",
+                "output_audio_path": storage.relative_path(audio_path),
+                "akousmata": {"status": "not_requested"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(decoy_path),
+            "new_stem": "pytest_remembered_decoy_target",
+        },
+    )
+    assert response.status_code == 409
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert decoy_path.exists()
+    assert not target_path.exists()
+
+
+def _masa_rename_fixture(stem: str) -> tuple[Path, Path, Path, dict, dict]:
+    from server.masa_bridge import MASA_VERSION, build_generation_record
+
+    audio_path = settings.output_root / "audio" / f"{stem}.wav"
+    metadata_path = settings.metadata_dir / f"{stem}.json"
+    sidecar_path = settings.masa_dir / f"{stem}.masa.json"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, metadata_path, sidecar_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata = {
+        "sound_id": f"sound_{stem}",
+        "created_at": "2026-08-09T12:00:00.000Z",
+        "status": "done",
+        "provider": "mock",
+        "model": "mock-sine",
+        "prompt": "transactional matter identity",
+        "output_audio_path": storage.relative_path(audio_path),
+        "absolute_output_audio_path": storage.absolute_path(audio_path),
+        "metadata_path": storage.relative_path(metadata_path),
+        "absolute_metadata_path": storage.absolute_path(metadata_path),
+        "lineage": {
+            "id": f"sound_{stem}",
+            "parents": [],
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+        },
+    }
+    record = build_generation_record(metadata)
+    storage.write_json_atomic(sidecar_path, record, touch_library=False)
+    metadata["masa"] = {
+        "status": "written",
+        "requested": True,
+        "version": MASA_VERSION,
+        "record_id": record["id"],
+        "representation_id": record["representations"][-1]["id"],
+        "sidecar_path": storage.relative_path(sidecar_path),
+        "canonical_identity": "sound_id",
+    }
+    storage.write_json_atomic(metadata_path, metadata, touch_library=False)
+    return audio_path, metadata_path, sidecar_path, metadata, record
+
+
+def test_files_rename_refreshes_a_written_masa_sidecar_without_changing_identity() -> None:
+    from server.masa_bridge import MASA_VERSION, build_generation_record
+
+    audio_path = settings.output_root / "audio" / "pytest_masa_rename.wav"
+    metadata_path = settings.output_root / "metadata" / "pytest_masa_rename.json"
+    target_audio = settings.output_root / "audio" / "pytest_masa_renamed.wav"
+    target_metadata = settings.output_root / "metadata" / "pytest_masa_renamed.json"
+    sidecar_path = settings.masa_dir / "pytest_masa_rename.masa.json"
+    for path in (audio_path, metadata_path, target_audio, target_metadata, sidecar_path):
+        path.unlink(missing_ok=True)
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+
+    metadata = {
+        "sound_id": "sound_pytest_masa_rename",
+        "created_at": "2026-08-09T12:00:00.000Z",
+        "status": "done",
+        "provider": "mock",
+        "model": "mock-sine",
+        "prompt": "stable matter identity",
+        "output_audio_path": storage.relative_path(audio_path),
+        "absolute_output_audio_path": storage.absolute_path(audio_path),
+        "metadata_path": storage.relative_path(metadata_path),
+        "absolute_metadata_path": storage.absolute_path(metadata_path),
+        "lineage": {
+            "id": "sound_pytest_masa_rename",
+            "parents": [],
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+        },
+    }
+    initial_record = build_generation_record(metadata)
+    storage.write_json_atomic(sidecar_path, initial_record, touch_library=False)
+    metadata["masa"] = {
+        "status": "written",
+        "requested": True,
+        "version": MASA_VERSION,
+        "record_id": initial_record["id"],
+        "representation_id": initial_record["representations"][-1]["id"],
+        "sidecar_path": storage.relative_path(sidecar_path),
+        "canonical_identity": "sound_id",
+    }
+    storage.write_json_atomic(metadata_path, metadata, touch_library=False)
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_masa_renamed",
+        },
+    )
+    assert response.status_code == 200
+
+    renamed_metadata = json.loads(target_metadata.read_text(encoding="utf-8"))
+    refreshed_record = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    output_representation = next(
+        item for item in refreshed_record["representations"] if item["role"] == "model-output"
+    )
+    assert renamed_metadata["sound_id"] == "sound_pytest_masa_rename"
+    assert renamed_metadata["masa"]["status"] == "written"
+    assert renamed_metadata["masa"]["sidecar_path"] == storage.relative_path(sidecar_path)
+    assert output_representation["locator"]["value"] == storage.relative_path(target_audio)
+    assert output_representation["extensions"]["germ:lineage"]["soundId"] == (
+        "sound_pytest_masa_rename"
+    )
+    assert output_representation["extensions"]["germ:lineage"]["metadataPath"] == (
+        storage.relative_path(target_metadata)
+    )
+
+
+def test_files_rename_keeps_sidecar_unchanged_when_metadata_commit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stem = "pytest_masa_metadata_rollback"
+    audio_path, metadata_path, sidecar_path, original_metadata, _ = _masa_rename_fixture(stem)
+    target_audio = settings.audio_dir / "pytest_masa_metadata_rollback_target.wav"
+    target_metadata = settings.metadata_dir / "pytest_masa_metadata_rollback_target.json"
+    target_audio.unlink(missing_ok=True)
+    target_metadata.unlink(missing_ok=True)
+    original_sidecar = sidecar_path.read_bytes()
+    real_write = storage.write_json_atomic
+
+    def fail_target_metadata(path, data, *, touch_library=False):
+        if Path(path).resolve() == target_metadata.resolve():
+            raise OSError("metadata commit unavailable")
+        return real_write(path, data, touch_library=touch_library)
+
+    monkeypatch.setattr(storage, "write_json_atomic", fail_target_metadata)
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_masa_metadata_rollback_target",
+        },
+    )
+    assert response.status_code == 500
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == original_metadata
+    assert sidecar_path.read_bytes() == original_sidecar
+    assert not target_audio.exists()
+    assert not target_metadata.exists()
+
+
+def test_files_rename_rolls_back_metadata_when_sidecar_commit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stem = "pytest_masa_sidecar_rollback"
+    audio_path, metadata_path, sidecar_path, original_metadata, _ = _masa_rename_fixture(stem)
+    target_audio = settings.audio_dir / "pytest_masa_sidecar_rollback_target.wav"
+    target_metadata = settings.metadata_dir / "pytest_masa_sidecar_rollback_target.json"
+    target_audio.unlink(missing_ok=True)
+    target_metadata.unlink(missing_ok=True)
+    original_sidecar = sidecar_path.read_bytes()
+    real_write = storage.write_json_atomic
+    failed_once = False
+
+    def fail_sidecar_once(path, data, *, touch_library=False):
+        nonlocal failed_once
+        if Path(path).resolve() == sidecar_path.resolve() and not failed_once:
+            failed_once = True
+            raise OSError("sidecar commit unavailable")
+        return real_write(path, data, touch_library=touch_library)
+
+    monkeypatch.setattr(storage, "write_json_atomic", fail_sidecar_once)
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_masa_sidecar_rollback_target",
+        },
+    )
+    assert response.status_code == 500
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == original_metadata
+    assert sidecar_path.read_bytes() == original_sidecar
+    assert not target_audio.exists()
+    assert not target_metadata.exists()
+
+
+def test_files_rename_restores_sidecar_when_final_metadata_commit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stem = "pytest_masa_final_metadata_rollback"
+    audio_path, metadata_path, sidecar_path, original_metadata, _ = _masa_rename_fixture(stem)
+    target_audio = settings.audio_dir / "pytest_masa_final_metadata_rollback_target.wav"
+    target_metadata = settings.metadata_dir / "pytest_masa_final_metadata_rollback_target.json"
+    target_audio.unlink(missing_ok=True)
+    target_metadata.unlink(missing_ok=True)
+    original_sidecar = sidecar_path.read_bytes()
+    real_write = storage.write_json_atomic
+    metadata_writes = 0
+
+    def fail_final_metadata(path, data, *, touch_library=False):
+        nonlocal metadata_writes
+        if Path(path).resolve() == target_metadata.resolve():
+            metadata_writes += 1
+            if metadata_writes == 2:
+                raise OSError("final metadata commit unavailable")
+        return real_write(path, data, touch_library=touch_library)
+
+    monkeypatch.setattr(storage, "write_json_atomic", fail_final_metadata)
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_masa_final_metadata_rollback_target",
+        },
+    )
+    assert response.status_code == 500
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == original_metadata
+    assert sidecar_path.read_bytes() == original_sidecar
+    assert not target_audio.exists()
+    assert not target_metadata.exists()
+
+
+def test_files_rename_refuses_a_sidecar_owned_by_another_sound() -> None:
+    audio_path, metadata_path, _, metadata, _ = _masa_rename_fixture(
+        "pytest_masa_sidecar_owner"
+    )
+    _, _, foreign_sidecar, _, _ = _masa_rename_fixture(
+        "pytest_masa_sidecar_foreign"
+    )
+    target_audio = settings.audio_dir / "pytest_masa_sidecar_owner_target.wav"
+    target_metadata = settings.metadata_dir / "pytest_masa_sidecar_owner_target.json"
+    target_audio.unlink(missing_ok=True)
+    target_metadata.unlink(missing_ok=True)
+    foreign_before = foreign_sidecar.read_bytes()
+    metadata["masa"]["sidecar_path"] = storage.relative_path(foreign_sidecar)
+    storage.write_json_atomic(metadata_path, metadata, touch_library=False)
+
+    response = client.post(
+        "/files/rename",
+        json={
+            "audio_path": storage.relative_path(audio_path),
+            "metadata_path": storage.relative_path(metadata_path),
+            "new_stem": "pytest_masa_sidecar_owner_target",
+        },
+    )
+    assert response.status_code == 409
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert foreign_sidecar.read_bytes() == foreign_before
+    assert not target_audio.exists()
+    assert not target_metadata.exists()
 
 
 def test_files_rename_conflict_preserves_source() -> None:
@@ -4353,6 +4751,136 @@ def test_files_bulk_delete_endpoint() -> None:
     assert not audio_path1.exists()
     assert not metadata_path1.exists()
     assert not audio_path2.exists()
+
+
+def test_files_bulk_delete_requires_the_actual_companion_explicitly() -> None:
+    audio_path = settings.audio_dir / "pytest_delete_explicit_companion.wav"
+    metadata_path = settings.metadata_dir / "pytest_delete_explicit_companion.json"
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (audio_path, metadata_path):
+        path.unlink(missing_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata_path.write_text(
+        json.dumps({"output_audio_path": storage.relative_path(audio_path)}),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/delete",
+        json={"items": [{"audio_path": storage.relative_path(audio_path)}]},
+    )
+    assert response.status_code == 409
+    assert audio_path.exists()
+    assert metadata_path.exists()
+
+
+def test_files_bulk_delete_rejects_unrelated_metadata() -> None:
+    audio_path = settings.audio_dir / "pytest_delete_pair.wav"
+    metadata_path = settings.metadata_dir / "pytest_delete_pair.json"
+    unrelated_audio = settings.audio_dir / "pytest_delete_pair_other.wav"
+    unrelated_metadata = settings.metadata_dir / "pytest_delete_pair_other.json"
+    for path in (audio_path, metadata_path, unrelated_audio, unrelated_metadata):
+        path.unlink(missing_ok=True)
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    write_sine_wav(unrelated_audio, duration=0.1)
+    metadata_path.write_text(
+        json.dumps({"output_audio_path": storage.relative_path(audio_path)}),
+        encoding="utf-8",
+    )
+    unrelated_metadata.write_text(
+        json.dumps({"output_audio_path": storage.relative_path(unrelated_audio)}),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/delete",
+        json={
+            "items": [
+                {
+                    "audio_path": storage.relative_path(audio_path),
+                    "metadata_path": storage.relative_path(unrelated_metadata),
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422
+    assert audio_path.exists()
+    assert metadata_path.exists()
+    assert unrelated_audio.exists()
+    assert unrelated_metadata.exists()
+
+
+def test_files_bulk_delete_refuses_remembered_akousma() -> None:
+    audio_path = settings.audio_dir / "pytest_delete_remembered.wav"
+    metadata_path = settings.metadata_dir / "pytest_delete_remembered.json"
+    for path in (audio_path, metadata_path):
+        path.unlink(missing_ok=True)
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    write_sine_wav(audio_path, duration=0.1)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "output_audio_path": storage.relative_path(audio_path),
+                "akousma_id": "akm_pytest_delete_remembered",
+                "akousmata": {"status": "remembered"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/files/delete",
+        json={
+            "items": [
+                {
+                    "audio_path": storage.relative_path(audio_path),
+                    "metadata_path": storage.relative_path(metadata_path),
+                }
+            ]
+        },
+    )
+    assert response.status_code == 409
+    assert audio_path.exists()
+    assert metadata_path.exists()
+
+
+def test_files_bulk_delete_removes_a_verified_written_masa_companion() -> None:
+    audio_path, metadata_path, sidecar_path, _, _ = _masa_rename_fixture(
+        "pytest_delete_masa_companion"
+    )
+
+    response = client.post(
+        "/files/delete",
+        json={
+            "items": [
+                {
+                    "audio_path": storage.relative_path(audio_path),
+                    "metadata_path": storage.relative_path(metadata_path),
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert not audio_path.exists()
+    assert not metadata_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_files_bulk_delete_rejects_a_non_audio_primary_path() -> None:
+    json_path = settings.output_root / "audio" / "pytest_delete_guard.json"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text("{}", encoding="utf-8")
+
+    response = client.post(
+        "/files/delete",
+        json={"items": [{"audio_path": storage.relative_path(json_path)}]},
+    )
+    assert response.status_code == 422
+    assert json_path.exists()
 
 
 def test_files_bulk_delete_rejects_more_than_500_items() -> None:
@@ -4599,6 +5127,40 @@ def test_map_uncertainty_without_a_declared_value_is_refused_at_the_boundary() -
     )
     assert outside.status_code == 422
 
+    override_without_value = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(missingData="skip"),
+            "signal": None,
+            "missingData": "map-uncertainty",
+        },
+    )
+    assert override_without_value.status_code == 422
+
+
+def test_mapping_schema_rejects_outputs_outside_its_declared_range() -> None:
+    uncertainty = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(missingData="skip", uncertaintyOutput=5_000.0),
+            "signal": None,
+        },
+    )
+    assert uncertainty.status_code == 422
+
+    category = client.post(
+        "/cosmoaudition/map",
+        json={
+            "mapping": _mapping(
+                scale="categorical",
+                inputRange=None,
+                categories=[{"value": 1.0, "output": 5_000.0}],
+            ),
+            "signal": {"id": "s1", "value": 1.0},
+        },
+    )
+    assert category.status_code == 422
+
 
 def test_modulation_endpoints_are_allowlisted_and_stream_is_not() -> None:
     from server.cosmoaudition import COSMOAUDITION_REMOTE_PATHS
@@ -4616,31 +5178,99 @@ def _frame(**overrides: object) -> dict:
         "frameId": "frame_1",
         "generatedAt": "2026-08-07T12:00:00.000Z",
         "acquisitionMode": "fixture",
+        "sources": [
+            {
+                "id": "source-earth",
+                "label": "Fixture Earth source",
+                "status": "available",
+            }
+        ],
+        "signals": [
+            {
+                "id": "s1",
+                "sourceId": "source-earth",
+                "unit": "km/s",
+                "sphere": "geosphere",
+                "epistemicStatus": "measured",
+                "temporalCharacter": "stream",
+                "timestamp": "2026-08-07T11:59:00.000Z",
+            },
+            {
+                "id": "s2",
+                "sourceId": "source-earth",
+                "unit": "normalized",
+                "sphere": "geosphere",
+                "epistemicStatus": "reported",
+                "temporalCharacter": "context",
+                "timestamp": None,
+            },
+            {
+                "id": "s3",
+                "sourceId": "source-earth",
+                "unit": "normalized",
+                "sphere": "geosphere",
+                "epistemicStatus": "interpreted",
+                "temporalCharacter": "aggregate",
+                "timestamp": "2026-08-07T11:50:00.000Z",
+            },
+        ],
         "controls": [
             {
                 "mappingId": "m1",
                 "signalId": "s1",
                 "target": "filter.cutoff",
+                "layer": "earth",
                 "status": "applied",
                 "reason": "mapped",
-                "value": 440.0,
-                "unit": "Hz",
+                "inputValue": 50.0,
+                "normalizedInput": 0.5,
+                "rawNormalizedInput": 0.5,
+                "mappingAmount": 1.0,
+                "outputValue": 440.0,
+                "outputRange": [180.0, 700.0],
+                "curve": "linear",
+                "smoothingMs": 500,
+                "missingData": "skip",
+                "confidence": "high",
+                "epistemicNote": "Mapped from an observed value.",
             },
             {
                 "mappingId": "m2",
                 "signalId": "s2",
                 "target": "delay.time",
+                "layer": "cloud",
                 "status": "skipped",
                 "reason": "missing-value",
-                "value": None,
+                "inputValue": None,
+                "normalizedInput": None,
+                "rawNormalizedInput": None,
+                "mappingAmount": 1.0,
+                "outputValue": None,
+                "outputRange": [0.0, 2.0],
+                "curve": "linear",
+                "smoothingMs": 1000,
+                "missingData": "skip",
+                "confidence": None,
+                "epistemicNote": "No provider value was available.",
             },
             {
                 "mappingId": "m3",
                 "signalId": "s3",
                 "target": "grain.density",
+                "layer": "cloud",
                 "status": "uncertainty",
                 "reason": "stale-input",
-                "value": 12.0,
+                "inputValue": None,
+                "normalizedInput": None,
+                "rawNormalizedInput": None,
+                "mappingAmount": 1.0,
+                "outputValue": 12.0,
+                "outputRange": [1.0, 32.0],
+                "curve": "exp",
+                "smoothingMs": 2000,
+                "missingData": "map-uncertainty",
+                "confidence": "stale",
+                "epistemicNote": "An authored uncertainty value, not a measurement.",
             },
         ],
         "absences": [{"signalId": "s2", "reason": "provider unavailable"}],
@@ -4658,6 +5288,17 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     assert resolved["contract"] == "cosmo/modulation/v0.1"
     targets = {route["target"]: route for route in resolved["routes"]}
     assert set(targets) == {"filter.cutoff", "grain.density"}
+    assert targets["filter.cutoff"]["value"] == 440.0
+    assert targets["filter.cutoff"]["outputValue"] == 440.0
+    assert targets["filter.cutoff"]["inputValue"] == 50.0
+    assert targets["filter.cutoff"]["outputRange"] == [180.0, 700.0]
+    assert targets["filter.cutoff"]["confidence"] == "high"
+    assert "unit" not in targets["filter.cutoff"]
+    assert "attribution" not in targets["filter.cutoff"]
+    assert resolved["signals"][0]["sourceId"] == "source-earth"
+    assert resolved["signals"][0]["epistemicStatus"] == "measured"
+    assert resolved["signals"][0]["temporalCharacter"] == "stream"
+    assert resolved["sources"][0]["id"] == "source-earth"
     assert targets["grain.density"]["status"] == "uncertainty"
     # A skipped control is reported, not silently dropped and not zeroed.
     withheld = {item["target"]: item for item in resolved["withheld"]}
@@ -4679,6 +5320,39 @@ def test_frame_resolution_ignores_the_bare_values_map() -> None:
     assert emitted["filter.cutoff"] == 440.0, "the control, not the bare value"
 
 
+def test_frame_resolution_withholds_an_unrepresentable_output_value() -> None:
+    from server.cosmoaudition import modulation_routes_from_frame
+
+    frame = _frame()
+    frame["controls"][0]["outputValue"] = 10**10_000
+    resolved = modulation_routes_from_frame(frame)
+    withheld = {item["target"]: item for item in resolved["withheld"]}
+    assert withheld["filter.cutoff"]["value"] is None
+    assert withheld["filter.cutoff"]["outputValue"] is None
+    assert withheld["filter.cutoff"]["bridgeReason"] == "invalid-output-value"
+
+
+def test_frame_resolution_withholds_out_of_range_or_unaddressable_controls() -> None:
+    from server.cosmoaudition import modulation_routes_from_frame
+
+    frame = _frame()
+    frame["controls"][0]["outputValue"] = 900.0
+    frame["controls"][2]["target"] = ""
+    resolved = modulation_routes_from_frame(frame)
+    withheld = {item["mappingId"]: item for item in resolved["withheld"]}
+    assert withheld["m1"]["bridgeReason"] == "output-outside-range"
+    assert withheld["m1"]["reason"] == "mapped"
+    assert withheld["m3"]["bridgeReason"] == "invalid-route-identity"
+    assert resolved["routes"] == []
+
+
+def test_frame_resolution_rejects_malformed_source_context() -> None:
+    from server.cosmoaudition import CosmoauditionBridgeError, modulation_routes_from_frame
+
+    with pytest.raises(CosmoauditionBridgeError, match="invalid signals"):
+        modulation_routes_from_frame(_frame(signals=["not-an-object"]))
+
+
 def test_a_frame_that_does_not_declare_the_contract_is_refused() -> None:
     from server.cosmoaudition import CosmoauditionBridge, CosmoauditionBridgeError
 
@@ -4688,6 +5362,13 @@ def test_a_frame_that_does_not_declare_the_contract_is_refused() -> None:
     bridge.get_json = lambda path, params=None: {"frameId": "x", "controls": []}  # type: ignore[assignment]
     with pytest.raises(CosmoauditionBridgeError, match="cosmo/modulation/v0.1"):
         bridge.frame()
+
+
+def test_frame_resolution_itself_refuses_an_unclaimed_contract() -> None:
+    from server.cosmoaudition import CosmoauditionBridgeError, modulation_routes_from_frame
+
+    with pytest.raises(CosmoauditionBridgeError, match="cosmo/modulation/v0.1"):
+        modulation_routes_from_frame(_frame(contract="unrelated/v1"))
 
 
 def test_frame_route_reports_bridge_failure_without_backend_details(
