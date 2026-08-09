@@ -3487,7 +3487,7 @@ async function renameFile(audioPath, metadataPath, newStem) {
 async function deleteSelectedFiles() {
   const items = [...rackSelectedKeys].map(rackItemByKey).filter(Boolean);
   if (!items.length) return;
-  if (!confirm(`Permanently delete ${items.length} selected sound file(s) from disk? This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete ${items.length} selected sound(s) and their linked local metadata/MASA companions from disk? Akousmata-linked sounds are preserved. This cannot be undone.`)) return;
   
   beginWork("Deleting Files", `${items.length} items`);
   try {
@@ -3514,7 +3514,7 @@ async function deleteSelectedFiles() {
 
 async function deleteSingleFile(audioPath, metadataPath) {
   const filename = audioPath.split("/").pop();
-  if (!confirm(`Permanently delete "${filename}" from disk? This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete "${filename}" and its linked local metadata/MASA companions from disk? Akousmata-linked sounds are preserved. This cannot be undone.`)) return;
   
   beginWork("Deleting File", filename);
   try {

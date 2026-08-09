@@ -3,6 +3,7 @@ from __future__ import annotations
 import array
 import math
 from functools import lru_cache
+from itertools import pairwise
 from statistics import median
 from typing import Any
 
@@ -28,12 +29,14 @@ def _frame_value(samples: array.array, channels: int, frame: int) -> float:
     return ((samples[index] + samples[index + 1]) * 0.5) / 32768.0
 
 
-def _percentile(values: list[float], fraction: float) -> float:
+def _percentiles(values: list[float], *fractions: float) -> tuple[float, ...]:
     if not values:
-        return 0.0
+        return tuple(0.0 for _ in fractions)
     ordered = sorted(values)
-    position = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))
-    return ordered[position]
+    return tuple(
+        ordered[max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))]
+        for fraction in fractions
+    )
 
 
 def _fft(values: list[float]) -> list[complex]:
@@ -172,7 +175,7 @@ def _spectral_analysis(
         if previous_magnitudes is not None:
             flux_total += sum(
                 max(0.0, right - left)
-                for left, right in zip(previous_magnitudes, magnitudes)
+                for left, right in zip(previous_magnitudes, magnitudes, strict=True)
             )
             flux_count += 1
         previous_magnitudes = magnitudes
@@ -204,12 +207,11 @@ def _temporal_analysis(values: list[float], duration: float, sample_stride: int,
         return {"state": "unavailable", "reason": "No samples were available."}
     envelope_bins = min(256, max(8, len(values) // 32))
     bin_size = max(1, math.ceil(len(values) / envelope_bins))
-    envelope = [
-        math.sqrt(sum(value * value for value in values[start : start + bin_size]) / len(values[start : start + bin_size]))
-        for start in range(0, len(values), bin_size)
-        if values[start : start + bin_size]
-    ]
-    positive_flux = [max(0.0, right - left) for left, right in zip(envelope, envelope[1:])]
+    envelope = []
+    for start in range(0, len(values), bin_size):
+        chunk = values[start : start + bin_size]
+        envelope.append(math.sqrt(sum(value * value for value in chunk) / len(chunk)))
+    positive_flux = [max(0.0, right - left) for left, right in pairwise(envelope)]
     threshold = median(positive_flux) * 2.5 if positive_flux else 0.0
     onsets = [
         index
@@ -225,7 +227,7 @@ def _temporal_analysis(values: list[float], duration: float, sample_stride: int,
             attack_seconds = ((ninety - ten) / max(1, len(envelope) - 1)) * duration
     effective_rate = sample_rate / sample_stride
     zero_crossings = sum(
-        1 for left, right in zip(values, values[1:]) if (left <= 0 < right) or (left >= 0 > right)
+        1 for left, right in pairwise(values) if (left <= 0 < right) or (left >= 0 > right)
     )
     return {
         "state": "measured",
@@ -284,8 +286,7 @@ def analyze_sound_matter(
     square_mean = sum(value * value for value in values) / max(1, len(values))
     rms = math.sqrt(square_mean)
     peak = max(absolute, default=0.0)
-    p10 = _percentile(absolute, 0.10)
-    p95 = _percentile(absolute, 0.95)
+    p10, p95 = _percentiles(absolute, 0.10, 0.95)
     dynamic_range_db = 20.0 * math.log10(max(p95, 1e-9) / max(p10, 1e-9))
     amplitude = {
         "state": "measured",

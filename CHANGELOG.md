@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1 — Sonic Matter Framework contract corrections
+
+- Fixed the Cosmoaudition frame bridge to consume the published
+  `outputValue` field, expose an explicit GERM `value`, and retain the control's
+  status, mapping parameters, confidence, and epistemic note. Real applied,
+  held, and uncertainty routes are no longer silently withheld.
+- Kept canonical `sound_id`, Sonic Lineage, and Earworm identifiers stable
+  when filenames change; refreshed written MASA sidecars after path changes and
+  refused renames that would break an immutable Akousmata file locator. Rename
+  companion writes are transactional, and matching deferred-latent locators
+  follow their audio without changing identity.
+- Restricted bulk file deletion's primary path to supported audio formats,
+  required the actual metadata companion, preserved Akousmata locators, and
+  removed only verified written MASA sidecars under explicit companion-delete
+  semantics.
+- Preserved Cosmoaudition frame-level signals and sources beside resolved
+  routes, and withheld malformed or out-of-range executable controls with an
+  explicit bridge reason.
+- Accepted finite JavaScript wire numbers whose integer spelling exceeds a
+  signed 64-bit persistence value, so high-magnitude observations such as the
+  Bitcoin hashrate cannot invalidate an otherwise valid modulation frame.
+- Aligned active project language to **Sonic Matter Framework**: MASA
+  describes, Cosmoaudition observes and modulates, and GERM cultivates. The
+  projects remain distinct.
+
 ## 0.4.0 — Sonic Matter Stack alignment
 
 - **Fixed a MASA protocol break.** Every sidecar cited

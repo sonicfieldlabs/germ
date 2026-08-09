@@ -420,13 +420,15 @@ class CosmoauditionMapping(JSONRequestModel):
     def validate_mapping_ranges(self) -> "CosmoauditionMapping":
         if self.outputRange[0] == self.outputRange[1]:
             raise ValueError("outputRange must describe a non-zero range")
+        output_lower, output_upper = sorted(self.outputRange)
+        if self.uncertaintyOutput is not None and not (
+            output_lower <= self.uncertaintyOutput <= output_upper
+        ):
+            raise ValueError("uncertaintyOutput must be inside outputRange")
         if self.missingData == "map-uncertainty":
             # Declaring that absence should sound, without saying what it sounds
             # like, would otherwise degrade silently to `skip` at runtime.
-            lower, upper = sorted(self.outputRange)
-            if self.uncertaintyOutput is None or not (
-                lower <= self.uncertaintyOutput <= upper
-            ):
+            if self.uncertaintyOutput is None:
                 raise ValueError(
                     "map-uncertainty requires an uncertaintyOutput inside outputRange"
                 )
@@ -435,6 +437,11 @@ class CosmoauditionMapping(JSONRequestModel):
                 raise ValueError("categorical mappings require categories")
             if len({entry.value for entry in self.categories}) != len(self.categories):
                 raise ValueError("categorical mapping values must be unique")
+            if any(
+                not output_lower <= entry.output <= output_upper
+                for entry in self.categories
+            ):
+                raise ValueError("categorical mapping outputs must be inside outputRange")
         else:
             if self.inputRange is None or self.inputRange[0] >= self.inputRange[1]:
                 raise ValueError("non-categorical mappings require an ascending inputRange")
@@ -454,6 +461,14 @@ class CosmoauditionMapRequest(JSONRequestModel):
     amount: float = Field(default=1.0, ge=0.0, le=1.0)
     enabled: bool = True
     missingData: CosmoauditionMissingData | None = None
+
+    @model_validator(mode="after")
+    def validate_missing_data_override(self) -> "CosmoauditionMapRequest":
+        if self.missingData == "map-uncertainty" and self.mapping.uncertaintyOutput is None:
+            raise ValueError(
+                "map-uncertainty requires an uncertaintyOutput inside outputRange"
+            )
+        return self
 
 
 class CosmoauditionArchiveRequest(JSONRequestModel):

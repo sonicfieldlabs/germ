@@ -50,9 +50,33 @@ def _reject_nonfinite_json(value: str) -> None:
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
+def _decode_json_integer(value: str) -> int | float:
+    """Keep ordinary integers exact and accept finite JavaScript wire numbers.
+
+    Cosmoaudition serializes IEEE-754 numbers with ``JSON.stringify``. A value
+    such as the Bitcoin hashrate can therefore arrive with an integer spelling
+    outside GERM's signed-64-bit persistence boundary even though the producer
+    already represents it as a finite float. Preserve normal JSON integers as
+    integers, but materialize those wider wire values as finite floats so one
+    observation cannot invalidate the complete modulation frame.
+    """
+
+    decoded = int(value)
+    if -(2**63) <= decoded < 2**63:
+        return decoded
+    widened = float(value)
+    if not math.isfinite(widened):
+        raise ValueError("JSON integer exceeds the finite-number boundary")
+    return widened
+
+
 def _decode_json_object(raw: bytes) -> dict[str, Any]:
     try:
-        value = json.loads(raw, parse_constant=_reject_nonfinite_json)
+        value = json.loads(
+            raw,
+            parse_constant=_reject_nonfinite_json,
+            parse_int=_decode_json_integer,
+        )
     except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise CosmoauditionBridgeError("Cosmoaudition returned invalid JSON") from exc
     if not isinstance(value, dict):
@@ -187,6 +211,60 @@ class CosmoauditionBridge:
 #: `skipped` and `refused` carry none; `held` and `uncertainty` carry one that
 #: must keep its status when it travels.
 EXECUTABLE_FRAME_STATUSES = frozenset({"applied", "held", "uncertainty"})
+WITHHELD_FRAME_STATUSES = frozenset({"skipped", "refused"})
+
+
+def _finite_frame_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # JSON integers are unbounded in Python but not in Cosmoaudition's
+        # JavaScript runtime. They cannot become executable control values.
+        return False
+
+
+def _frame_object_list(
+    frame: dict[str, Any],
+    key: str,
+    *,
+    required: bool = False,
+) -> list[dict[str, Any]]:
+    value = frame.get(key)
+    if value is None:
+        if required:
+            raise CosmoauditionBridgeError(f"Cosmoaudition frame is missing its {key}")
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise CosmoauditionBridgeError(f"Cosmoaudition frame has invalid {key}")
+    return list(value)
+
+
+def _control_bridge_reason(control: dict[str, Any], status: Any) -> str | None:
+    if status not in EXECUTABLE_FRAME_STATUSES:
+        return None if status in WITHHELD_FRAME_STATUSES else "invalid-status"
+    if any(
+        not isinstance(control.get(key), str) or not control[key].strip()
+        for key in ("mappingId", "signalId", "target")
+    ):
+        return "invalid-route-identity"
+
+    output_value = control.get("outputValue")
+    if not _finite_frame_number(output_value):
+        return "invalid-output-value"
+    output_range = control.get("outputRange")
+    if (
+        not isinstance(output_range, (list, tuple))
+        or len(output_range) != 2
+        or not all(_finite_frame_number(value) for value in output_range)
+        or output_range[0] == output_range[1]
+    ):
+        return "invalid-output-range"
+    lower, upper = sorted(output_range)
+    if not lower <= output_value <= upper:
+        return "output-outside-range"
+    return None
 
 
 def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
@@ -201,32 +279,51 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
     went missing is a fact about the frame.
     """
 
-    controls = frame.get("controls")
-    if not isinstance(controls, list):
-        raise CosmoauditionBridgeError("Cosmoaudition frame is missing its controls")
+    if frame.get("contract") != COSMOAUDITION_MODULATION_CONTRACT:
+        raise CosmoauditionBridgeError(
+            "Cosmoaudition frame does not declare "
+            f"{COSMOAUDITION_MODULATION_CONTRACT}"
+        )
+
+    controls = _frame_object_list(frame, "controls", required=True)
+    signals = _frame_object_list(frame, "signals")
+    sources = _frame_object_list(frame, "sources")
 
     routes: list[dict[str, Any]] = []
     withheld: list[dict[str, Any]] = []
     for control in controls:
-        if not isinstance(control, dict):
-            continue
         status = control.get("status")
+        output_value = control.get("outputValue")
+        bridge_reason = _control_bridge_reason(control, status)
+        executable = status in EXECUTABLE_FRAME_STATUSES and bridge_reason is None
         entry = {
             "target": control.get("target"),
             "mappingId": control.get("mappingId"),
             "signalId": control.get("signalId"),
+            "layer": control.get("layer"),
             "status": status,
             "reason": control.get("reason"),
-            "value": control.get("value"),
-            "unit": control.get("unit"),
-            "attribution": control.get("attribution"),
+            "bridgeReason": bridge_reason,
+            # ``value`` is GERM's consumer-facing route value. Cosmoaudition's
+            # modulation contract names the same field ``outputValue``; keep
+            # both names so the crosswalk is explicit and lossless.
+            "value": output_value if executable else None,
+            "outputValue": output_value if executable else None,
+            "inputValue": control.get("inputValue"),
+            "normalizedInput": control.get("normalizedInput"),
+            "rawNormalizedInput": control.get("rawNormalizedInput"),
+            "mappingAmount": control.get("mappingAmount"),
+            "outputRange": control.get("outputRange"),
+            "curve": control.get("curve"),
+            "smoothingMs": control.get("smoothingMs"),
+            "missingData": control.get("missingData"),
+            "confidence": control.get("confidence"),
+            "epistemicNote": control.get("epistemicNote"),
         }
-        if status in EXECUTABLE_FRAME_STATUSES and isinstance(
-            control.get("value"), (int, float)
-        ) and not isinstance(control.get("value"), bool):
+        if executable:
             routes.append(entry)
         else:
-            withheld.append({**entry, "value": None})
+            withheld.append(entry)
 
     absences = frame.get("absences")
     return {
@@ -237,6 +334,11 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
         "originMode": frame.get("originMode"),
         "routes": routes,
         "withheld": withheld,
+        # Preserve frame-level source evidence. `signalId` is the join key; the
+        # input observation's unit/status must not be mistaken for the routed
+        # output parameter's unit/status by flattening the two objects together.
+        "signals": signals,
+        "sources": sources,
         "absences": absences if isinstance(absences, list) else [],
         "attribution": frame.get("attribution") if isinstance(frame.get("attribution"), list) else [],
         "masaRecordHref": frame.get("masaRecordHref"),
