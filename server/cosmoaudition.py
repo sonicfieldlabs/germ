@@ -50,9 +50,33 @@ def _reject_nonfinite_json(value: str) -> None:
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
+def _decode_json_integer(value: str) -> int | float:
+    """Keep ordinary integers exact and accept finite JavaScript wire numbers.
+
+    Cosmoaudition serializes IEEE-754 numbers with ``JSON.stringify``. A value
+    such as the Bitcoin hashrate can therefore arrive with an integer spelling
+    outside GERM's signed-64-bit persistence boundary even though the producer
+    already represents it as a finite float. Preserve normal JSON integers as
+    integers, but materialize those wider wire values as finite floats so one
+    observation cannot invalidate the complete modulation frame.
+    """
+
+    decoded = int(value)
+    if -(2**63) <= decoded < 2**63:
+        return decoded
+    widened = float(value)
+    if not math.isfinite(widened):
+        raise ValueError("JSON integer exceeds the finite-number boundary")
+    return widened
+
+
 def _decode_json_object(raw: bytes) -> dict[str, Any]:
     try:
-        value = json.loads(raw, parse_constant=_reject_nonfinite_json)
+        value = json.loads(
+            raw,
+            parse_constant=_reject_nonfinite_json,
+            parse_int=_decode_json_integer,
+        )
     except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise CosmoauditionBridgeError("Cosmoaudition returned invalid JSON") from exc
     if not isinstance(value, dict):

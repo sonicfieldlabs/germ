@@ -973,6 +973,20 @@ def test_cosmoaudition_bridge_rejects_excessively_nested_json() -> None:
         _decode_json_object(payload)
 
 
+def test_cosmoaudition_bridge_accepts_finite_javascript_number_beyond_int64() -> None:
+    payload = _decode_json_object(b'{"hashrate":976061469948095400000}')
+
+    assert payload["hashrate"] == float("976061469948095400000")
+    assert isinstance(payload["hashrate"], float)
+
+
+def test_cosmoaudition_bridge_rejects_integer_beyond_finite_float_range() -> None:
+    payload = b'{"value":' + b"1" + (b"0" * 400) + b"}"
+
+    with pytest.raises(CosmoauditionBridgeError, match="invalid JSON"):
+        _decode_json_object(payload)
+
+
 def test_cosmoaudition_status_requires_boolean_remote_health(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

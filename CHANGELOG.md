@@ -18,6 +18,9 @@
 - Preserved Cosmoaudition frame-level signals and sources beside resolved
   routes, and withheld malformed or out-of-range executable controls with an
   explicit bridge reason.
+- Accepted finite JavaScript wire numbers whose integer spelling exceeds a
+  signed 64-bit persistence value, so high-magnitude observations such as the
+  Bitcoin hashrate cannot invalidate an otherwise valid modulation frame.
 - Aligned active project language to **Sonic Matter Framework**: MASA
   describes, Cosmoaudition observes and modulates, and GERM cultivates. The
   projects remain distinct.
