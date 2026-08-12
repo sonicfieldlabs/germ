@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 — Normalized observation and accountable-memory alignment
+
+- Upgraded the Sonic Matter Framework boundary to MASA 0.2.0 and
+  `masa-processing-request` 0.2.0 while retaining GERM's canonical `sound_id`
+  and optional, non-fatal sidecar behavior.
+- Added preferred `cosmo/modulation/v0.2` support with explicit v0.1 frame
+  compatibility. V0.2 frames must carry a local `cosmo/signal-catalog/v0.2`
+  reference and complete signal metadata, finite normalization ranges, a
+  `[0, 1]` output, clamp behavior, and a stated basis before GERM routes them.
+- Added the bounded `/api/signals` bridge and public
+  `GET /cosmoaudition/signals` endpoint, preserving source filtering while
+  keeping all provider acquisition and credentials inside Cosmoaudition.
+- Added a distinct Hydrosphere Field to the backend manifest, dashboard,
+  provenance, and smoke coverage so marine signals are not folded into
+  atmospheric or geological observations.
+- Preserved catalog normalization through mapping receipts and dashboard
+  provenance. The Mapping Loom now declares its second-stage normalized
+  projection instead of leaving source-range metadata attached to a `[0, 1]`
+  value.
+- Raised the Akousma dependency to Earworm 0.7.0 / schema 1.6 and documented
+  Oída 0.10.0, gateway v0.6, Akousmata 0.7.0, and AKOÚŌ 0.9.2. GERM-created
+  sounds remain cultivation records: accountable auditum data is preserved
+  when supplied, never fabricated as a listening report.
+
 ## 0.4.1 — Sonic Matter Framework contract corrections
 
 - Fixed the Cosmoaudition frame bridge to consume the published

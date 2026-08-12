@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Query
 from server.cosmoaudition import (
     COSMOAUDITION_GERM_CONTRACT,
     COSMOAUDITION_MODULATION_CONTRACT,
+    COSMOAUDITION_SIGNAL_CATALOG_CONTRACT,
+    COSMOAUDITION_SUPPORTED_MODULATION_CONTRACTS,
     CosmoauditionBridge,
     CosmoauditionBridgeError,
     cosmoaudition_modules_manifest,
@@ -50,6 +52,15 @@ def _bridge_status_from_error(exc: Exception) -> dict[str, Any]:
     }
 
 
+def _source_selection(sources: str | None) -> str | None:
+    if not sources:
+        return None
+    values = [item.strip() for item in sources.split(",") if item.strip()]
+    if not values or len(values) > 64 or any(len(item) > 128 for item in values):
+        raise HTTPException(status_code=422, detail="sources must contain bounded source ids")
+    return ",".join(dict.fromkeys(values))
+
+
 def _query_params(
     *,
     mode: Literal["live", "fixture"],
@@ -62,11 +73,9 @@ def _query_params(
         params["lat"] = str(latitude)
     if longitude is not None:
         params["lon"] = str(longitude)
-    if sources:
-        values = [item.strip() for item in sources.split(",") if item.strip()]
-        if not values or len(values) > 64 or any(len(item) > 128 for item in values):
-            raise HTTPException(status_code=422, detail="sources must contain bounded source ids")
-        params["sources"] = ",".join(dict.fromkeys(values))
+    source_selection = _source_selection(sources)
+    if source_selection:
+        params["sources"] = source_selection
     return params
 
 
@@ -112,8 +121,28 @@ def list_modules() -> dict[str, Any]:
     return {
         "contract": COSMOAUDITION_GERM_CONTRACT,
         "modulationContract": COSMOAUDITION_MODULATION_CONTRACT,
+        "supportedModulationContracts": list(COSMOAUDITION_SUPPORTED_MODULATION_CONTRACTS),
+        "signalCatalogContract": COSMOAUDITION_SIGNAL_CATALOG_CONTRACT,
         "modules": cosmoaudition_modules_manifest(),
         "principle": "observations become authored controls; they are not claimed as source voices",
+    }
+
+
+@router.get("/signals")
+def list_signals(
+    sources: str | None = Query(default=None, max_length=2_048),
+) -> dict[str, Any]:
+    """Return Cosmoaudition's canonical, optionally source-filtered signal catalog."""
+
+    try:
+        payload = _bridge().signal_catalog(sources=_source_selection(sources))
+        validate_json_compatible(payload, label="Cosmoaudition signal catalog")
+    except (CosmoauditionBridgeError, ValueError) as exc:
+        return _bridge_status_from_error(exc)
+    return {
+        "available": True,
+        "contract": COSMOAUDITION_GERM_CONTRACT,
+        "payload": payload,
     }
 
 
@@ -216,12 +245,16 @@ def _read_archive(path: Path) -> dict[str, Any]:
             or path.resolve().parent != _archive_dir().resolve()
             or path.stat().st_size > MAX_ARCHIVE_BYTES + 100_000
         ):
-            raise HTTPException(status_code=404, detail=f"Observation archive not found: {path.stem}")
+            raise HTTPException(
+                status_code=404, detail=f"Observation archive not found: {path.stem}"
+            )
         value = json.loads(path.read_text(encoding="utf-8"))
     except HTTPException:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise HTTPException(status_code=404, detail=f"Observation archive not found: {path.stem}") from exc
+        raise HTTPException(
+            status_code=404, detail=f"Observation archive not found: {path.stem}"
+        ) from exc
     if not isinstance(value, dict):
         raise HTTPException(status_code=422, detail="Observation archive must be a JSON object")
     return value
@@ -263,7 +296,9 @@ def list_archives() -> dict[str, Any]:
 @router.post("/archives")
 def save_archive(request: CosmoauditionArchiveRequest) -> dict[str, Any]:
     if len(_archive_entries()) >= MAX_ARCHIVES:
-        raise HTTPException(status_code=409, detail=f"Observation archive limit reached ({MAX_ARCHIVES})")
+        raise HTTPException(
+            status_code=409, detail=f"Observation archive limit reached ({MAX_ARCHIVES})"
+        )
     try:
         encoded = json.dumps(request.snapshot, allow_nan=False, separators=(",", ":")).encode(
             "utf-8"

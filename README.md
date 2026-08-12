@@ -8,12 +8,12 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.4.1`.
+Current release: `0.5.0`.
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
 through the [Sonic Matter Framework](#sonic-matter-framework-integration), whose
-protocol boundary is MASA 0.1.0.
+protocol boundary is MASA 0.2.0.
 
 GERM is an independent Sonic Field Labs project. It can use Stable Audio 3
 providers, but it is not an official Stability AI product.
@@ -100,10 +100,10 @@ promising one universal hardware minimum.
 - Micro/Matter modules for grains, cells, swarms, membranes, spectral tissue,
   quanta, microscope analysis, saved matter profiles, biomes, and incubated
   evolution.
-- A separate Cosmoaudition module category with cosmic, Earth, biosphere,
+- A separate Cosmoaudition module category with cosmic, Earth, hydrosphere, biosphere,
   human-machine, relational, event, semantic, uncertainty, archive, mapping,
   and matter-processing modules.
-- Optional MASA 0.1 sidecars for successful generations and Matter Analysis
+- Optional MASA 0.2 sidecars for successful generations and Matter Analysis
   artifacts. Sonic Lineage `sound_id` remains GERM's canonical identity.
 - Wavetable Forge conversion, prompt, mutation, render, import/export, and
   audition routes.
@@ -139,14 +139,14 @@ inside its cultivation graph:
 
 | Component | Version / contract | Boundary in GERM |
 | --- | --- | --- |
-| [MASA](https://github.com/sonicfieldlabs/MASA) | 0.1.0 (MIT) | Optional descriptive JSON sidecars under `output/masa/`, citing the published canonical schema at `masa.sonicfield.org`. They never replace Sonic Lineage or turn a successful render into a failure. |
-| MASA Processing | `masa-processing-request` 0.1.0 | Every Micro module declares a granular or spectral operation in MASA's engine-neutral terms. GERM states the intention and binds no DSP library. |
+| [MASA](https://github.com/sonicfieldlabs/MASA) | 0.2.0 (MIT) | Optional descriptive JSON sidecars under `output/masa/`, citing the published canonical schema at `masa.sonicfield.org`. They never replace Sonic Lineage or turn a successful render into a failure. |
+| MASA Processing | `masa-processing-request` 0.2.0 | Every Micro module declares a granular or spectral operation in MASA's engine-neutral terms. GERM states the intention and binds no DSP library. |
 | GERM Matter Analysis | — | A bounded local analyzer informed by the shared measured / inferred / unavailable distinction; it is not a claim of listening or a fourth framework project. |
-| [Cosmoaudition](https://github.com/sonicfieldlabs/cosmoaudition) | `cosmo/modulation/v0.1` | A loopback-only, response-bounded HTTP bridge reads source status, snapshots, and modulation frames. GERM never contacts observation providers directly. |
+| [Cosmoaudition](https://github.com/sonicfieldlabs/cosmoaudition) | `cosmo/modulation/v0.2` and `cosmo/signal-catalog/v0.2` | A loopback-only, response-bounded HTTP bridge reads source status, canonical signal definitions, snapshots, and modulation frames. GERM retains v0.1 frame compatibility and never contacts observation providers directly. |
 
 ### Micro modules as MASA processing operations
 
-MASA 0.1.0 carries Roads's granular vocabulary as a protocol layer, so a Micro
+MASA 0.2.0 carries Roads's granular vocabulary as a protocol layer, so a Micro
 module can say what it wants done to matter without naming an engine:
 
 | Micro module | Operation | Character |
@@ -176,11 +176,18 @@ GERM routes. It reads the frame's `controls`, never its bare `values` map:
 a value arrives with the decision that produced it, or it does not arrive.
 Out-of-range or structurally invalid controls are withheld with an explicit
 bridge reason. Frame-level `signals` and `sources` travel beside the routes so
-their source, unit, sphere, epistemic status, and temporal character remain
+their source, unit, sphere, epistemic status, temporal character, signal kind,
+and declared normalization remain
 traceable through `signalId`. Withheld routes and emitted absences are reported
 rather than dropped. Server-Sent Events are deliberately not bridged, because
 this bridge is a bounded request/response client; poll `/cosmoaudition/frame`
 instead.
+
+`GET /cosmoaudition/signals` exposes the source-filterable catalog used by
+Cosmoaudition v0.2. GERM validates its finite input ranges, `[0, 1]` output,
+clipping rule, attribution fields, and epistemic axes before using it. The
+Hydrosphere Field selects marine and hydrological observations without folding
+them into the atmospheric/geological Earth field.
 
 ## Listening Stack integration
 
@@ -191,10 +198,10 @@ listening, re-listening, sonic memory, and cultivation.
 
 | Component | Version / contract | GERM integration |
 | --- | --- | --- |
-| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.9.2 / `oida/gateway/v0.5` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
-| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.6.1 / akousma spec v1.5 | Export generation context and preserve provenance, lineage, attributable disagreement resolution, and additive revisions. |
-| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.6.1 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata. |
-| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.1 / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
+| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.10.0 / `oida/gateway/v0.6` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
+| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.7.0 / Akousma spec 1.6 / `earworm/auditum/v2` | Preserve accountable listener types, route decisions, honest absence, disagreement, provenance, lineage, and additive revisions without treating them as equivalent. |
+| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.7.0 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata and retain supplied auditum blocks. |
+| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.2 / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
 | [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.2 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
 | [ORAM](https://github.com/sonicfieldlabs/oram) | 0.4.1 | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
 

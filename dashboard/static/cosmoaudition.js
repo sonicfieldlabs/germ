@@ -8,6 +8,7 @@ export const COSMOAUDITION_MODULATOR_TYPES = new Set([
   "cosmo_observation",
   "cosmo_cosmic_field",
   "cosmo_earth_field",
+  "cosmo_hydrosphere_field",
   "cosmo_biosphere_field",
   "cosmo_human_machine_field",
   "cosmo_relational_index",
@@ -37,6 +38,7 @@ export function cosmoauditionSignalMatches(modulatorType, signal = {}) {
   const sphere = String(signal.sphere || "").toLowerCase();
   if (modulatorType === "cosmo_cosmic_field") return sphere === "cosmos";
   if (modulatorType === "cosmo_earth_field") return ["atmosphere", "geosphere"].includes(sphere);
+  if (modulatorType === "cosmo_hydrosphere_field") return sphere === "hydrosphere";
   if (modulatorType === "cosmo_biosphere_field") return sphere === "biosphere";
   if (modulatorType === "cosmo_human_machine_field") return ["human", "machine"].includes(sphere);
   return true;
@@ -111,5 +113,12 @@ export function cosmoauditionMappingSignal(selected) {
     value: normalized,
     normalized,
     unit: "normalized",
+    normalization: {
+      method: "linear",
+      inputRange: [0, 1],
+      outputRange: [0, 1],
+      clipping: "clamp",
+      basis: "GERM maps Cosmoaudition's catalog-normalized projection without reinterpreting its source range.",
+    },
   };
 }

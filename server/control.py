@@ -71,7 +71,7 @@ def default_control_ports() -> list[ControlPort]:
             max=1.0,
             metadata={
                 "implementation": "loopback_api_bridge",
-                "contract": "cosmoaudition-germ/v0.1",
+                "contract": "cosmoaudition-germ/v0.2",
                 "epistemic_boundary": "authored mapping, not source identity",
             },
         ),
@@ -90,7 +90,7 @@ def default_control_ports() -> list[ControlPort]:
             kind="metadata",
             direction="output",
             scope="metadata",
-            metadata={"contract": "cosmoaudition-germ/v0.1"},
+            metadata={"contract": "cosmoaudition-germ/v0.2"},
         ),
         ControlPort(
             id="time:clock",

@@ -29,8 +29,7 @@ def _akousma():
         import akousma
     except ModuleNotFoundError as exc:  # pragma: no cover - environment-dependent
         raise AkousmaUnavailable(
-            "the 'akousma' package is not installed; "
-            "reinstall germ with its declared dependencies"
+            "the 'akousma' package is not installed; reinstall germ with its declared dependencies"
         ) from exc
     return akousma
 
@@ -192,8 +191,7 @@ def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
 
     if not evidence:
         tags = [
-            str(tag)
-            for tag in (record.get("tags") if isinstance(record.get("tags"), list) else [])
+            str(tag) for tag in (record.get("tags") if isinstance(record.get("tags"), list) else [])
         ]
         if tags:
             evidence.append({"namespace": "record.tags", "text": ", ".join(tags)})
@@ -344,8 +342,7 @@ def _maybe_link_recurrence(store, record: dict[str, Any]) -> None:
     matches = [
         candidate
         for candidate in store.find_by_hash(content_hash)
-        if isinstance(candidate, dict)
-        and candidate.get("akousma_id") != record.get("akousma_id")
+        if isinstance(candidate, dict) and candidate.get("akousma_id") != record.get("akousma_id")
     ]
     if not matches:
         return
@@ -423,7 +420,7 @@ def record_generation(
     store=None,
 ) -> dict[str, Any]:
     """Write a germ generation into the shared store as a new akousma
-    (spec v1.5).
+    (Akousma spec 1.6).
 
     The audio stays where germ wrote it (referenced by ``file://`` uri +
     content hash); ``lineage.parent_akousma_ids`` points at the source

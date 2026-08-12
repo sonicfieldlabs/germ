@@ -30,8 +30,8 @@ overrides = [
 
 [[package]]
 name = "akousma"
-version = "0.6.1"
-source = { git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.6.1#48a87c5cd2eafb126c3ce9dc3eaa7b29dcc9dad1" }
+version = "0.7.0"
+source = { git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.7.0#c130fa61423517a0cc2ca8071124537978fad825" }
 dependencies = [
     { name = "jsonschema" },
 ]
@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "germ"
-version = "0.4.1"
+version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "akousma" },
@@ -307,7 +307,7 @@ python-provider = [
 
 [package.metadata]
 requires-dist = [
-    { name = "akousma", git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.6.1" },
+    { name = "akousma", git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.7.0" },
     { name = "fastapi", specifier = ">=0.139" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.7" },

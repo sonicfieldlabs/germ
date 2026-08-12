@@ -38,8 +38,8 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.6.1"' in project
-    assert 'tag = "v0.6.1"' in project
+    assert '"akousma>=0.7.0"' in project
+    assert 'tag = "v0.7.0"' in project
     assert 'subdirectory = "packages/py-akousma"' in project
     assert 'path = "../earworm' not in project
 
@@ -51,13 +51,13 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.4.1"
-    assert 'version = "0.4.1"' in _read("pyproject.toml")
-    assert 'Current release: `0.4.1`.' in _read("README.md")
-    assert 'version: "0.4.1"' in _read("CITATION.cff")
-    assert 'date-released: "2026-08-09"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.4.1"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="7"' in _read("apps/macos/script/build_and_run.sh")
+    assert __version__ == "0.5.0"
+    assert 'version = "0.5.0"' in _read("pyproject.toml")
+    assert "Current release: `0.5.0`." in _read("README.md")
+    assert 'version: "0.5.0"' in _read("CITATION.cff")
+    assert 'date-released: "2026-08-11"' in _read("CITATION.cff")
+    assert 'MARKETING_VERSION="0.5.0"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="8"' in _read("apps/macos/script/build_and_run.sh")
 
 
 def test_openapi_operation_ids_are_present_and_unique() -> None:
@@ -72,8 +72,6 @@ def test_openapi_operation_ids_are_present_and_unique() -> None:
     ]
     assert all(operation_ids)
     duplicates = {
-        operation_id: count
-        for operation_id, count in Counter(operation_ids).items()
-        if count > 1
+        operation_id: count for operation_id, count in Counter(operation_ids).items() if count > 1
     }
     assert duplicates == {}

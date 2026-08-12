@@ -23,7 +23,7 @@ import {
   cosmoauditionUnitFor,
   cosmoauditionPreviousOutput,
   cosmoauditionMappingSignal,
-} from "./cosmoaudition.js?v=20260731-audit-p1";
+} from "./cosmoaudition.js?v=20260811-v02";
 
 /* Appearance preferences -------------------------------------------------
    Oída and germ share the same warm-neutral surface system. Germ keeps one
@@ -3777,6 +3777,7 @@ function modulatorLabel(modulatorType) {
     cosmo_observation: "Observation Source",
     cosmo_cosmic_field: "Cosmic Field",
     cosmo_earth_field: "Earth Field",
+    cosmo_hydrosphere_field: "Hydrosphere Field",
     cosmo_biosphere_field: "Biosphere Field",
     cosmo_human_machine_field: "Human–Machine Field",
     cosmo_relational_index: "Relational Index",
@@ -4314,6 +4315,9 @@ function normalizeModulatorNode(node) {
     cosmo_earth_field: {
       mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "earth",
     },
+    cosmo_hydrosphere_field: {
+      mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "hydrosphere",
+    },
     cosmo_biosphere_field: {
       mode: "fixture", latitude: 4.711, longitude: -74.0721, signalId: "", currentValue: null, available: false, status: "not fetched", sphere: "biosphere",
     },
@@ -4398,7 +4402,7 @@ function normalizeModulatorNode(node) {
 function cosmoauditionNodeProvenance(node) {
   if (!COSMOAUDITION_MODULATOR_TYPES.has(node?.modulatorType)) return null;
   return {
-    contract: "cosmoaudition-germ/v0.1",
+    contract: "cosmoaudition-germ/v0.2",
     module: node.modulatorType,
     mode: node.config?.mode || "fixture",
     generated_at: node.config?.generatedAt || null,
@@ -4409,6 +4413,8 @@ function cosmoauditionNodeProvenance(node) {
     confidence: node.config?.confidence || null,
     epistemic_status: node.config?.epistemicStatus || null,
     temporal_character: node.config?.temporalCharacter || null,
+    signal_kind: node.config?.signalKind || null,
+    normalization: node.config?.normalization || null,
     mapping_decision: node.config?.mappingDecision || null,
     value: node.config?.available === true ? finiteNumberOrNull(node.config?.currentValue) : null,
     available: node.config?.available === true,
@@ -4501,6 +4507,8 @@ async function refreshCosmoauditionNode(nodeId, { archive = false } = {}) {
       confidence: selected?.confidence || null,
       epistemicStatus: selected?.epistemicStatus || null,
       temporalCharacter: selected?.temporalCharacter || null,
+      signalKind: selected?.signalKind || null,
+      normalization: selected?.normalization || null,
       sphere: selected?.sphere || node.config?.sphere || "all",
       observationCount: signals.length,
       archiveId,
@@ -9908,6 +9916,7 @@ function canvasModulatorNodeMarkup(node, selected, style) {
     cosmo_observation: "Project-neutral local observation signal source.",
     cosmo_cosmic_field: "Cosmic observations as bounded control material.",
     cosmo_earth_field: "Atmospheric and geological observations as bounded control material.",
+    cosmo_hydrosphere_field: "Marine and hydrological observations as bounded control material.",
     cosmo_biosphere_field: "Species and biosphere observations as bounded control material.",
     cosmo_human_machine_field: "Human and machine activity as bounded control material.",
     cosmo_relational_index: "Averages available relations without replacing missing values with zero.",

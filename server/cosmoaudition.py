@@ -18,15 +18,23 @@ from server.schemas import (
 from server.storage import utc_now_iso
 
 
-COSMOAUDITION_GERM_CONTRACT = "cosmoaudition-germ/v0.1"
+COSMOAUDITION_GERM_CONTRACT = "cosmoaudition-germ/v0.2"
 # The contract Cosmoaudition itself publishes over HTTP, SSE, OSC, and MASA.
 # GERM consumes it; it does not define it. Naming it here lets a frame be
 # checked against the contract it claims rather than trusted for its shape.
-COSMOAUDITION_MODULATION_CONTRACT = "cosmo/modulation/v0.1"
+COSMOAUDITION_MODULATION_CONTRACT_V1 = "cosmo/modulation/v0.1"
+COSMOAUDITION_MODULATION_CONTRACT = "cosmo/modulation/v0.2"
+COSMOAUDITION_SUPPORTED_MODULATION_CONTRACTS = (
+    COSMOAUDITION_MODULATION_CONTRACT,
+    COSMOAUDITION_MODULATION_CONTRACT_V1,
+)
+COSMOAUDITION_SIGNAL_CATALOG_CONTRACT = "cosmo/signal-catalog/v0.2"
+COSMOAUDITION_SIGNAL_CATALOG_VERSION = "0.2.0"
 COSMOAUDITION_REMOTE_PATHS = frozenset(
     {
         "/health",
         "/api/sources",
+        "/api/signals",
         "/api/snapshot",
         "/api/snapshot/masa",
         # The modulation framework: normalized signals with their epistemic
@@ -180,12 +188,13 @@ class CosmoauditionBridge:
         """
 
         payload = self.get_json("/api/frame", params={"mode": mode})
-        contract = payload.get("contract")
-        if contract != COSMOAUDITION_MODULATION_CONTRACT:
-            raise CosmoauditionBridgeError(
-                "Cosmoaudition frame does not declare "
-                f"{COSMOAUDITION_MODULATION_CONTRACT}"
-            )
+        _frame_contract(payload)
+        return payload
+
+    def signal_catalog(self, *, sources: str | None = None) -> dict[str, Any]:
+        params = {"sources": sources} if sources else None
+        payload = self.get_json("/api/signals", params=params)
+        _validate_signal_catalog(payload)
         return payload
 
     def status(self) -> dict[str, Any]:
@@ -241,6 +250,122 @@ def _frame_object_list(
     return list(value)
 
 
+_SIGNAL_SPHERES = frozenset(
+    {"cosmos", "atmosphere", "hydrosphere", "geosphere", "biosphere", "human", "machine"}
+)
+_EPISTEMIC_STATUSES = frozenset(
+    {"measured", "reported", "derived", "interpreted", "speculative", "undetermined"}
+)
+_TEMPORAL_CHARACTERS = frozenset({"event", "stream", "forecast", "aggregate", "context", "local"})
+_SIGNAL_KINDS = frozenset({"observation", "derived", "generator"})
+
+
+def _required_text(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} must be non-empty text")
+    return value
+
+
+def _validate_normalization(value: Any, *, label: str) -> None:
+    if not isinstance(value, dict):
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid normalization")
+    method = value.get("method")
+    if method not in {"linear", "log"}:
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid normalization method")
+    input_range = value.get("inputRange")
+    output_range = value.get("outputRange")
+    if (
+        not isinstance(input_range, (list, tuple))
+        or len(input_range) != 2
+        or not all(_finite_frame_number(item) for item in input_range)
+        or input_range[0] == input_range[1]
+    ):
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid normalization range")
+    if method == "log" and (input_range[0] <= 0 or input_range[1] <= 0):
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has non-positive log normalization")
+    if (
+        not isinstance(output_range, (list, tuple))
+        or len(output_range) != 2
+        or output_range[0] != 0
+        or output_range[1] != 1
+        or value.get("clipping") != "clamp"
+    ):
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid output normalization")
+    _required_text(value.get("basis"), label=f"{label} normalization basis")
+
+
+def _validate_signal_metadata(signal: dict[str, Any], *, label: str) -> None:
+    _required_text(signal.get("id"), label=f"{label} id")
+    _required_text(signal.get("sourceId"), label=f"{label} sourceId")
+    _required_text(signal.get("label"), label=f"{label} label")
+    _required_text(signal.get("unit"), label=f"{label} unit")
+    if signal.get("sphere") not in _SIGNAL_SPHERES:
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid sphere")
+    if signal.get("epistemicStatus") not in _EPISTEMIC_STATUSES:
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid epistemic status")
+    if signal.get("temporalCharacter") not in _TEMPORAL_CHARACTERS:
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid temporal character")
+    if signal.get("signalKind") not in _SIGNAL_KINDS:
+        raise CosmoauditionBridgeError(f"Cosmoaudition {label} has invalid signal kind")
+    _validate_normalization(signal.get("normalization"), label=label)
+
+
+def _validate_signal_catalog(payload: dict[str, Any]) -> None:
+    if payload.get("contract") != COSMOAUDITION_SIGNAL_CATALOG_CONTRACT:
+        raise CosmoauditionBridgeError(
+            f"Cosmoaudition signal catalog does not declare {COSMOAUDITION_SIGNAL_CATALOG_CONTRACT}"
+        )
+    if payload.get("version") != COSMOAUDITION_SIGNAL_CATALOG_VERSION:
+        raise CosmoauditionBridgeError("Cosmoaudition signal catalog has an unsupported version")
+    signals = _frame_object_list(payload, "signals", required=True)
+    seen: set[str] = set()
+    for index, signal in enumerate(signals):
+        _validate_signal_metadata(signal, label=f"catalog signal {index}")
+        signal_id = str(signal["id"])
+        if signal_id in seen:
+            raise CosmoauditionBridgeError(
+                f"Cosmoaudition signal catalog repeats signal id: {signal_id}"
+            )
+        seen.add(signal_id)
+
+
+def _frame_contract(frame: dict[str, Any]) -> str:
+    contract = frame.get("contract")
+    if contract not in COSMOAUDITION_SUPPORTED_MODULATION_CONTRACTS:
+        supported = ", ".join(COSMOAUDITION_SUPPORTED_MODULATION_CONTRACTS)
+        raise CosmoauditionBridgeError(
+            f"Cosmoaudition frame does not declare a supported modulation contract: {supported}"
+        )
+    assert isinstance(contract, str)
+    if contract == COSMOAUDITION_MODULATION_CONTRACT:
+        catalog = frame.get("signalCatalog")
+        if not isinstance(catalog, dict):
+            raise CosmoauditionBridgeError("Cosmoaudition v0.2 frame is missing signalCatalog")
+        if (
+            catalog.get("contract") != COSMOAUDITION_SIGNAL_CATALOG_CONTRACT
+            or catalog.get("version") != COSMOAUDITION_SIGNAL_CATALOG_VERSION
+        ):
+            raise CosmoauditionBridgeError("Cosmoaudition v0.2 frame has an invalid signalCatalog")
+        href = _required_text(catalog.get("href"), label="signalCatalog href")
+        if href != "/api/signals" and not href.startswith("/api/signals?"):
+            raise CosmoauditionBridgeError("Cosmoaudition signalCatalog href is not local")
+        signals = _frame_object_list(frame, "signals", required=True)
+        for index, signal in enumerate(signals):
+            _validate_signal_metadata(signal, label=f"frame signal {index}")
+            if "normalized" not in signal:
+                raise CosmoauditionBridgeError(
+                    f"Cosmoaudition frame signal {index} has no normalized value"
+                )
+            normalized = signal.get("normalized")
+            if normalized is not None and (
+                not _finite_frame_number(normalized) or not 0 <= normalized <= 1
+            ):
+                raise CosmoauditionBridgeError(
+                    f"Cosmoaudition frame signal {index} has invalid normalized value"
+                )
+    return contract
+
+
 def _control_bridge_reason(control: dict[str, Any], status: Any) -> str | None:
     if status not in EXECUTABLE_FRAME_STATUSES:
         return None if status in WITHHELD_FRAME_STATUSES else "invalid-status"
@@ -279,11 +404,7 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
     went missing is a fact about the frame.
     """
 
-    if frame.get("contract") != COSMOAUDITION_MODULATION_CONTRACT:
-        raise CosmoauditionBridgeError(
-            "Cosmoaudition frame does not declare "
-            f"{COSMOAUDITION_MODULATION_CONTRACT}"
-        )
+    frame_contract = _frame_contract(frame)
 
     controls = _frame_object_list(frame, "controls", required=True)
     signals = _frame_object_list(frame, "signals")
@@ -327,11 +448,12 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
 
     absences = frame.get("absences")
     return {
-        "contract": COSMOAUDITION_MODULATION_CONTRACT,
+        "contract": frame_contract,
         "frameId": frame.get("frameId"),
         "generatedAt": frame.get("generatedAt"),
         "acquisitionMode": frame.get("acquisitionMode"),
         "originMode": frame.get("originMode"),
+        "signalCatalog": frame.get("signalCatalog"),
         "routes": routes,
         "withheld": withheld,
         # Preserve frame-level source evidence. `signalId` is the join key; the
@@ -340,7 +462,9 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
         "signals": signals,
         "sources": sources,
         "absences": absences if isinstance(absences, list) else [],
-        "attribution": frame.get("attribution") if isinstance(frame.get("attribution"), list) else [],
+        "attribution": frame.get("attribution")
+        if isinstance(frame.get("attribution"), list)
+        else [],
         "masaRecordHref": frame.get("masaRecordHref"),
         "note": (
             "Values carry the decision that produced them. A held or uncertain "
@@ -357,14 +481,30 @@ def cosmoaudition_modules_manifest() -> list[dict[str, Any]]:
             "kind": "observation",
             "sphere": None,
         },
-        {"id": "cosmo_cosmic_field", "label": "Cosmic Field", "kind": "observation", "sphere": "cosmos"},
+        {
+            "id": "cosmo_cosmic_field",
+            "label": "Cosmic Field",
+            "kind": "observation",
+            "sphere": "cosmos",
+        },
         {
             "id": "cosmo_earth_field",
             "label": "Earth Field",
             "kind": "observation",
             "spheres": ["atmosphere", "geosphere"],
         },
-        {"id": "cosmo_biosphere_field", "label": "Biosphere Field", "kind": "observation", "sphere": "biosphere"},
+        {
+            "id": "cosmo_hydrosphere_field",
+            "label": "Hydrosphere Field",
+            "kind": "observation",
+            "sphere": "hydrosphere",
+        },
+        {
+            "id": "cosmo_biosphere_field",
+            "label": "Biosphere Field",
+            "kind": "observation",
+            "sphere": "biosphere",
+        },
         {
             "id": "cosmo_human_machine_field",
             "label": "Human–Machine Field",
@@ -401,6 +541,9 @@ def _base_decision(
         "epistemicStatus": signal.epistemicStatus if signal else None,
         "temporalCharacter": signal.temporalCharacter if signal else None,
         "signalKind": signal.signalKind if signal else None,
+        "normalization": signal.normalization.model_dump()
+        if signal and signal.normalization
+        else None,
         "eventKey": signal.eventKey if signal else None,
         "observedAt": signal.timestamp if signal else None,
         "smoothingMs": mapping.smoothingMs,
@@ -441,9 +584,7 @@ def _missing_decision(
     previous = request.previousOutput
     policy = request.missingData or mapping.missingData
     if policy == "refuse":
-        return _without_output(
-            mapping, signal, previous, status="refused", reason="policy-refusal"
-        )
+        return _without_output(mapping, signal, previous, status="refused", reason="policy-refusal")
     if policy == "interpolate-explicitly":
         return _without_output(
             mapping,
@@ -490,32 +631,24 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
     signal = request.signal
     previous = request.previousOutput
     if not request.enabled:
-        return _without_output(
-            mapping, signal, previous, status="skipped", reason="route-disabled"
-        )
+        return _without_output(mapping, signal, previous, status="skipped", reason="route-disabled")
 
     # A zero amount is the operator turning this route off, and it must be read
     # as that rather than scaled through. Scaling emits outputRange[0], which on
     # a reversed range such as (760, 180) is the strongest value the mapping can
     # produce: silence requested, maximum delivered, reported as `applied`.
     if request.amount == 0:
-        return _without_output(
-            mapping, signal, previous, status="skipped", reason="route-disabled"
-        )
+        return _without_output(mapping, signal, previous, status="skipped", reason="route-disabled")
     if signal is None:
         return _missing_decision(request, reason="missing-signal")
     if signal.id != mapping.signalId:
-        return _without_output(
-            mapping, signal, previous, status="refused", reason="invalid-input"
-        )
+        return _without_output(mapping, signal, previous, status="refused", reason="invalid-input")
     if signal.confidence == "error":
         return _missing_decision(request, reason="source-error")
     if signal.value is None:
         return _missing_decision(request, reason="missing-value")
     if not math.isfinite(signal.value):
-        return _without_output(
-            mapping, signal, previous, status="refused", reason="invalid-input"
-        )
+        return _without_output(mapping, signal, previous, status="refused", reason="invalid-input")
 
     raw_normalized: float
     output_value: float
@@ -529,11 +662,13 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
                 mapping, signal, previous, status="refused", reason="invalid-input"
             )
         category = mapping.categories[match_index]
-        raw_normalized = 1.0 if len(mapping.categories) == 1 else match_index / (len(mapping.categories) - 1)
+        raw_normalized = (
+            1.0 if len(mapping.categories) == 1 else match_index / (len(mapping.categories) - 1)
+        )
         normalized = raw_normalized * request.amount
-        output_value = mapping.outputRange[0] + (
-            category.output - mapping.outputRange[0]
-        ) * request.amount
+        output_value = (
+            mapping.outputRange[0] + (category.output - mapping.outputRange[0]) * request.amount
+        )
     else:
         assert mapping.inputRange is not None
         start, end = mapping.inputRange
@@ -555,9 +690,9 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
                 mapping, signal, previous, status="refused", reason="invalid-input"
             )
         normalized = raw_normalized * request.amount
-        output_value = mapping.outputRange[0] + (
-            mapping.outputRange[1] - mapping.outputRange[0]
-        ) * normalized
+        output_value = (
+            mapping.outputRange[0] + (mapping.outputRange[1] - mapping.outputRange[0]) * normalized
+        )
         if mapping.scale == "quantized":
             output_value = float(round(output_value))
 
@@ -566,8 +701,10 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
             mapping, signal, previous, status="refused", reason="invalid-mapping"
         )
     uncertain = signal.confidence in {"low", "stale"}
-    reason = "low-confidence" if signal.confidence == "low" else (
-        "stale-input" if signal.confidence == "stale" else "mapped"
+    reason = (
+        "low-confidence"
+        if signal.confidence == "low"
+        else ("stale-input" if signal.confidence == "stale" else "mapped")
     )
     return {
         **_base_decision(mapping, signal, previous),
