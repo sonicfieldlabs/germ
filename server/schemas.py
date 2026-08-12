@@ -70,6 +70,7 @@ CosmoauditionEpistemicStatus = Literal[
     "derived",
     "interpreted",
     "speculative",
+    "undetermined",
 ]
 CosmoauditionTemporalCharacter = Literal[
     "event",
@@ -83,6 +84,7 @@ CosmoauditionSignalKind = Literal["observation", "derived", "generator"]
 CosmoauditionSphere = Literal[
     "cosmos",
     "atmosphere",
+    "hydrosphere",
     "geosphere",
     "biosphere",
     "human",
@@ -97,6 +99,7 @@ CosmoauditionMissingData = Literal[
     "map-uncertainty",
     "refuse",
 ]
+CosmoauditionNormalizationMethod = Literal["linear", "log"]
 WavetableExtractionMode = Literal["simple", "cycle", "spectral", "harmonic", "texture"]
 WavetableExportFormat = Literal["gwt", "wav-stack", "single-cycle", "metadata"]
 WavetableGenerationMode = Literal[
@@ -365,6 +368,24 @@ class MatterAnalysisResult(BaseModel):
     error: str | None = None
 
 
+class CosmoauditionNormalization(JSONRequestModel):
+    method: CosmoauditionNormalizationMethod
+    inputRange: tuple[float, float]
+    outputRange: tuple[float, float]
+    clipping: Literal["clamp"]
+    basis: str = Field(min_length=1, max_length=2_000)
+
+    @model_validator(mode="after")
+    def validate_normalization_ranges(self) -> "CosmoauditionNormalization":
+        if self.inputRange[0] == self.inputRange[1]:
+            raise ValueError("normalization inputRange must describe a non-zero range")
+        if self.method == "log" and min(self.inputRange) <= 0:
+            raise ValueError("log normalization requires a positive inputRange")
+        if self.outputRange != (0.0, 1.0):
+            raise ValueError("normalization outputRange must be [0, 1]")
+        return self
+
+
 class CosmoauditionSignal(JSONRequestModel):
     id: str = Field(min_length=1, max_length=256)
     label: str = Field(default="Observation", min_length=1, max_length=500)
@@ -379,6 +400,7 @@ class CosmoauditionSignal(JSONRequestModel):
     epistemicStatus: CosmoauditionEpistemicStatus | None = None
     temporalCharacter: CosmoauditionTemporalCharacter | None = None
     signalKind: CosmoauditionSignalKind | None = None
+    normalization: CosmoauditionNormalization | None = None
     eventKey: str | None = Field(default=None, max_length=500)
     confidence: CosmoauditionConfidence = "medium"
     staleAfterSeconds: float | None = Field(default=None, ge=0.0, le=31_536_000.0)
@@ -429,18 +451,13 @@ class CosmoauditionMapping(JSONRequestModel):
             # Declaring that absence should sound, without saying what it sounds
             # like, would otherwise degrade silently to `skip` at runtime.
             if self.uncertaintyOutput is None:
-                raise ValueError(
-                    "map-uncertainty requires an uncertaintyOutput inside outputRange"
-                )
+                raise ValueError("map-uncertainty requires an uncertaintyOutput inside outputRange")
         if self.scale == "categorical":
             if not self.categories:
                 raise ValueError("categorical mappings require categories")
             if len({entry.value for entry in self.categories}) != len(self.categories):
                 raise ValueError("categorical mapping values must be unique")
-            if any(
-                not output_lower <= entry.output <= output_upper
-                for entry in self.categories
-            ):
+            if any(not output_lower <= entry.output <= output_upper for entry in self.categories):
                 raise ValueError("categorical mapping outputs must be inside outputRange")
         else:
             if self.inputRange is None or self.inputRange[0] >= self.inputRange[1]:
@@ -465,9 +482,7 @@ class CosmoauditionMapRequest(JSONRequestModel):
     @model_validator(mode="after")
     def validate_missing_data_override(self) -> "CosmoauditionMapRequest":
         if self.missingData == "map-uncertainty" and self.mapping.uncertaintyOutput is None:
-            raise ValueError(
-                "map-uncertainty requires an uncertaintyOutput inside outputRange"
-            )
+            raise ValueError("map-uncertainty requires an uncertaintyOutput inside outputRange")
         return self
 
 
@@ -1438,9 +1453,7 @@ class ControlOSCMessage(JSONRequestModel):
                 raise ValueError("OSC values cannot be booleans")
             if isinstance(value, int) and not -(2**31) <= value < 2**31:
                 raise ValueError("OSC integer values must fit signed 32-bit encoding")
-            if isinstance(value, float) and (
-                not math.isfinite(value) or abs(value) > 3.4028235e38
-            ):
+            if isinstance(value, float) and (not math.isfinite(value) or abs(value) > 3.4028235e38):
                 raise ValueError("OSC float values must fit finite 32-bit encoding")
             if isinstance(value, str):
                 if len(value.encode("utf-8")) > 1024:

@@ -73,6 +73,7 @@ categories:
 | Observation Source | Reads one bounded local snapshot. |
 | Cosmic Field | Selects `cosmos` observations. |
 | Earth Field | Selects atmospheric and geological observations. |
+| Hydrosphere Field | Selects marine and hydrological observations. |
 | Biosphere Field | Selects biosphere observations. |
 | Human–Machine Field | Selects human and machine observations. |
 | Relational Index | Composes available normalized relations. |
@@ -86,29 +87,32 @@ categories:
 GERM connects only to the separate Cosmoaudition System on an explicit HTTP
 loopback URL. It accepts no redirects, proxies only allowlisted routes, ignores
 environment proxies, and caps the response body. The allowlist covers
-`/health`, `/api/sources`, `/api/snapshot`, `/api/snapshot/masa`,
+`/health`, `/api/sources`, `/api/signals`, `/api/snapshot`, `/api/snapshot/masa`,
 `/api/modulation`, and `/api/frame`. `/api/stream` is deliberately excluded:
 it is Server-Sent Events, and this bridge is a bounded request/response client
 that reads a complete body and closes.
 
-A modulation frame is verified against the contract it claims —
-`cosmo/modulation/v0.1` — before it is read. `GET /cosmoaudition/frame`
+A modulation frame is verified against the contract it claims before it is
+read. GERM prefers `cosmo/modulation/v0.2`, validates its
+`cosmo/signal-catalog/v0.2` reference and per-signal normalization, and retains
+explicit v0.1 compatibility. `GET /cosmoaudition/frame`
 resolves one frame into GERM routes using its `controls`, never the bare
 `values` map that exists for transports carrying only numbers. Using that map
 would turn a skipped route into a real zero. Withheld routes and emitted
-absences travel in the response instead of disappearing from it. Provider credentials and
-astronomical, geological, weather, biosphere, human, or machine APIs remain on
-the Cosmoaudition side of the boundary.
+absences travel in the response instead of disappearing from it. Provider
+credentials and astronomical, geological, weather, biosphere, human, or
+machine APIs remain on the Cosmoaudition side of the boundary.
 
 An observation is not active control until it has been fetched and marked
 available. Unavailable observations are skipped in generation, realtime, and
-clocked routes. Mapping receipts retain signal, source, confidence,
-epistemic status, temporal character, mapping status, and the statement that
-the relation is authored rather than a source-identity claim.
+clocked routes. Mapping receipts retain signal, source, confidence, epistemic
+status, temporal character, signal kind, normalization, mapping status, and
+the statement that the relation is authored rather than a source-identity
+claim.
 
 ## MASA processing layer
 
-MASA 0.1.0 carries the granular and spectral vocabulary as a protocol layer, so
+MASA 0.2.0 carries the granular and spectral vocabulary as a protocol layer, so
 a Micro module can state what it wants done to matter without naming a DSP
 engine. Each module declares one operation:
 
@@ -151,9 +155,9 @@ Two backend contracts now make the conceptual layer reusable outside the dashboa
   `POST /micro/matter-analysis`) writes a `matter_analysis` artifact under
   `output/micro/` and an optional MASA analysis sidecar under `output/masa/`.
 - Cosmoaudition bridge: `/cosmoaudition/*` exposes bounded status, source,
-  snapshot, mapping, and local archive contracts without copying provider
+  signal catalog, snapshot, mapping, and local archive contracts without copying provider
   acquisition into GERM.
-- MASA sidecars: every successful committed generation can write a MASA 0.1
+- MASA sidecars: every successful committed generation can write a MASA 0.2
   interoperability record under `output/masa/`. Sidecar failure is annotated
   but cannot invalidate audio, metadata, Sonic Lineage, Oída, or Akousmata.
 

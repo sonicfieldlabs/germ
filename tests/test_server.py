@@ -43,7 +43,13 @@ from server.routes import image_to_audio as image_routes
 from server.routes import micro as micro_routes
 from server.routes import wavetables as wavetable_routes
 from server.routes.time_render import time_clock_summary
-from server.schemas import GenerationResult, GenerateRequest, InpaintRequest, TimeClock, TimeRenderRequest
+from server.schemas import (
+    GenerationResult,
+    GenerateRequest,
+    InpaintRequest,
+    TimeClock,
+    TimeRenderRequest,
+)
 from server.storage import (
     JOB_EVICTION_GRACE_SECONDS,
     MAX_LINEAGE_CHILD_LOCKS,
@@ -70,8 +76,7 @@ def restore_control_state_for_control_tests(request: pytest.FixtureRequest):
         control_registry.cv_profiles_path,
     ]
     original_state = {
-        path: path.read_text(encoding="utf-8") if path.exists() else None
-        for path in state_paths
+        path: path.read_text(encoding="utf-8") if path.exists() else None for path in state_paths
     }
     original_events = control_registry.events()
     existing_files = set(control_dir.iterdir())
@@ -300,10 +305,7 @@ def test_control_graph_does_not_follow_metadata_symlinks(tmp_path: Path) -> None
         link.unlink(missing_ok=True)
 
     assert response.status_code == 200
-    assert all(
-        node["id"] != "pytest_external_symlink_sound"
-        for node in response.json()["nodes"]
-    )
+    assert all(node["id"] != "pytest_external_symlink_sound" for node in response.json()["nodes"])
 
 
 def test_control_audio_analysis_and_cv_safe_render() -> None:
@@ -549,7 +551,9 @@ def test_strain_registry_roundtrip_and_generation_metadata() -> None:
         },
     )
     assert generate_response.status_code == 200
-    metadata = json.loads(Path(generate_response.json()["metadata_files"][0]).read_text(encoding="utf-8"))
+    metadata = json.loads(
+        Path(generate_response.json()["metadata_files"][0]).read_text(encoding="utf-8")
+    )
     assert metadata["lora_strains"][0]["id"] == strain["id"]
     assert metadata["lora_strains"][0]["name"] == "pytest dust strain"
     assert metadata["lora_strains"][0]["prompt_vocabulary"] == ["dust", "grain", "cell"]
@@ -795,8 +799,34 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
         def status(self) -> dict:
             return {
                 "available": True,
-                "contract": "cosmoaudition-germ/v0.1",
+                "contract": "cosmoaudition-germ/v0.2",
                 "remote": {"ok": True},
+            }
+
+        def signal_catalog(self, *, sources: str | None = None) -> dict:
+            assert sources in {None, "open_meteo_marine"}
+            return {
+                "contract": "cosmo/signal-catalog/v0.2",
+                "version": "0.2.0",
+                "signals": [
+                    {
+                        "id": "marine_wave_height",
+                        "sourceId": "open_meteo_marine",
+                        "label": "Wave height",
+                        "unit": "m",
+                        "sphere": "hydrosphere",
+                        "epistemicStatus": "reported",
+                        "temporalCharacter": "forecast",
+                        "signalKind": "observation",
+                        "normalization": {
+                            "method": "linear",
+                            "inputRange": [0, 8],
+                            "outputRange": [0, 1],
+                            "clipping": "clamp",
+                            "basis": "Bounded marine forecast range.",
+                        },
+                    }
+                ],
             }
 
         def get_json(self, path: str, *, params: dict | None = None) -> dict:
@@ -839,6 +869,17 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
     assert modules.status_code == 200
     module_ids = {item["id"] for item in modules.json()["modules"]}
     assert {"cosmo_observation", "cosmo_matter_modulator", "matter_analysis"} <= module_ids
+    assert "cosmo_hydrosphere_field" in module_ids
+    assert modules.json()["modulationContract"] == "cosmo/modulation/v0.2"
+    assert "cosmo/modulation/v0.1" in modules.json()["supportedModulationContracts"]
+
+    catalog = client.get("/cosmoaudition/signals")
+    assert catalog.status_code == 200
+    assert catalog.json()["payload"]["signals"][0]["sphere"] == "hydrosphere"
+    filtered_catalog = client.get(
+        "/cosmoaudition/signals?sources=open_meteo_marine,open_meteo_marine"
+    )
+    assert filtered_catalog.status_code == 200
 
     mapping = {
         "mapping": {
@@ -1051,7 +1092,7 @@ def test_matter_analysis_persists_explicit_states_and_masa_sidecar() -> None:
     assert artifact["lineage"]["operation"] == "matter_analysis"
     assert artifact["masa"]["status"] == "written"
     sidecar = json.loads(Path(result["masa_sidecar_file"]).read_text(encoding="utf-8"))
-    assert sidecar["masaVersion"] == "0.1.0"
+    assert sidecar["masaVersion"] == "0.2.0"
     assert sidecar["profiles"] == ["core", "audio", "analysis"]
     assert sidecar["claims"] == []
     assert sidecar["measurements"]
@@ -1205,7 +1246,7 @@ def test_mock_generate_creates_wav_and_metadata() -> None:
     assert metadata["masa"]["status"] == "written"
     assert metadata["masa"]["canonical_identity"] == "sound_id"
     masa_sidecar = json.loads(Path(metadata["masa"]["sidecar_path"]).read_text(encoding="utf-8"))
-    assert masa_sidecar["masaVersion"] == "0.1.0"
+    assert masa_sidecar["masaVersion"] == "0.2.0"
     assert masa_sidecar["extensions"]["germ:lineage"]["soundId"] == metadata["sound_id"]
 
 
@@ -1287,9 +1328,7 @@ def test_earworm_sessions_do_not_appear_as_library_items() -> None:
     metadata_files = [item.get("metadata_file") for item in library.json()["items"]]
     assert metadata_file in metadata_files
     assert session_file not in metadata_files
-    assert not any(
-        str(name).endswith(".earworm.session.json") for name in metadata_files if name
-    )
+    assert not any(str(name).endswith(".earworm.session.json") for name in metadata_files if name)
 
 
 def test_earworm_session_trace_fixtures_are_not_committed() -> None:
@@ -1488,7 +1527,9 @@ def test_wavetable_prompt_route_wraps_prompt_and_creates_table() -> None:
             "frame_count": 4,
             "frame_size": 512,
             "output_name": "pytest_prompt_table",
-            "modulators": [{"target_path": "prompt", "final_value": "glassy metallic vowel with motion"}],
+            "modulators": [
+                {"target_path": "prompt", "final_value": "glassy metallic vowel with motion"}
+            ],
         },
     )
 
@@ -1677,7 +1718,9 @@ def test_library_lists_wavetable_assets_without_breaking_audio_items() -> None:
     assert response.status_code == 200
     items = response.json()["items"]
     table_items = [item for item in items if item.get("asset_type") == "wavetable"]
-    audio_items = [item for item in items if item.get("audio_file") == storage.relative_path(audio_path)]
+    audio_items = [
+        item for item in items if item.get("audio_file") == storage.relative_path(audio_path)
+    ]
     assert any(item["wavetable_id"] == wavetable["id"] for item in table_items)
     assert audio_items
     assert all(item.get("asset_type") == "audio" for item in audio_items)
@@ -1733,9 +1776,18 @@ def test_wavetable_control_graph_includes_lineage_edges() -> None:
     edges = graph["edges"]
     assert any(node["id"] == parent["id"] and node["type"] == "wavetable" for node in nodes)
     assert any(node["id"] == child["id"] and node["type"] == "wavetable" for node in nodes)
-    assert any(edge["to"] == parent["id"] and edge["type"] == "prompt-to-wavetable" for edge in edges)
-    assert any(edge["from"] == parent["id"] and edge["type"] == "wavetable-render" for edge in edges)
-    assert any(edge["from"] == parent["id"] and edge["to"] == child["id"] and edge["type"] == "wavetable-mutation" for edge in edges)
+    assert any(
+        edge["to"] == parent["id"] and edge["type"] == "prompt-to-wavetable" for edge in edges
+    )
+    assert any(
+        edge["from"] == parent["id"] and edge["type"] == "wavetable-render" for edge in edges
+    )
+    assert any(
+        edge["from"] == parent["id"]
+        and edge["to"] == child["id"]
+        and edge["type"] == "wavetable-mutation"
+        for edge in edges
+    )
     assert not any(
         edge["type"] == "wavetable-child" and not str(edge["from"]).startswith("wt_")
         for edge in edges
@@ -1814,7 +1866,9 @@ def test_mock_generate_records_modulation_metadata() -> None:
     assert metadata["modulated_negative_prompt"] == "speech, vocals"
     assert metadata["modulators"][0]["type"] == "prompt_modulator"
     assert metadata["operation_params"]["modulators"][0]["id"] == "route_prompt_mod"
-    assert metadata["lineage"]["operation_params"]["modulated_prompt"] == "short brittle ceramic click"
+    assert (
+        metadata["lineage"]["operation_params"]["modulated_prompt"] == "short brittle ceramic click"
+    )
 
 
 def test_mock_generate_records_semantic_effect_metadata() -> None:
@@ -1861,7 +1915,9 @@ def test_mock_generate_records_semantic_effect_metadata() -> None:
     assert metadata["semantic_layers"][0]["source_type"] == "space"
     assert metadata["semantic_effects"][0]["fx_type"] == "space"
     assert metadata["generation_context"]["semantic_fx_ids"] == ["node_space"]
-    assert metadata["operation_params"]["semantic_layers"][0]["prompt_layer"].startswith("large metallic tunnel")
+    assert metadata["operation_params"]["semantic_layers"][0]["prompt_layer"].startswith(
+        "large metallic tunnel"
+    )
     assert metadata["lineage"]["operation_params"]["generation_context"]["semantic_fx_count"] == 1
 
 
@@ -2328,7 +2384,9 @@ def test_listener_scores_wav_and_rejects_external_path(tmp_path: Path) -> None:
 def test_listener_scores_24_bit_pcm_without_loading_the_whole_file() -> None:
     audio_path = settings.audio_dir / "pytest_listener_24bit.wav"
     sample_rate = 8_000
-    samples = [int(2_000_000 * math.sin(2 * math.pi * 220 * index / sample_rate)) for index in range(800)]
+    samples = [
+        int(2_000_000 * math.sin(2 * math.pi * 220 * index / sample_rate)) for index in range(800)
+    ]
     frames = b"".join(sample.to_bytes(3, "little", signed=True) for sample in samples)
     with wave.open(str(audio_path), "wb") as wav:
         wav.setnchannels(1)
@@ -2961,8 +3019,7 @@ def test_job_eviction_keeps_recent_terminal_jobs_during_grace_window() -> None:
         assert len(storage.jobs) == MAX_TRACKED_JOBS + 1
 
         old = (
-            datetime.now(timezone.utc)
-            - timedelta(seconds=JOB_EVICTION_GRACE_SECONDS + 1)
+            datetime.now(timezone.utc) - timedelta(seconds=JOB_EVICTION_GRACE_SECONDS + 1)
         ).isoformat()
         for job in storage.jobs.values():
             job["created_at"] = old
@@ -4138,7 +4195,9 @@ def test_mlx_multi_range_inpaint_cleans_intermediate_on_failure(monkeypatch) -> 
     result = provider.inpaint(request)
     assert result.status == "error"
     assert len(calls) == 2
-    assert not list((settings.output_root / "intermediate").glob("pytest_mlx_multi_fail_*_range_*.wav"))
+    assert not list(
+        (settings.output_root / "intermediate").glob("pytest_mlx_multi_fail_*_range_*.wav")
+    )
 
 
 def test_python_lora_uses_stable_audio_model_methods() -> None:
@@ -4247,7 +4306,7 @@ def test_files_rename_endpoint() -> None:
         "lineage": {
             "id": "sound_pytest_rename_test",
             "audio_path": "output/audio/pytest_rename_test.wav",
-            "metadata_path": "output/audio/pytest_rename_test.json"
+            "metadata_path": "output/audio/pytest_rename_test.json",
         },
         "earworm": {
             "session_id": "sess_sound_pytest_rename_test",
@@ -4267,17 +4326,17 @@ def test_files_rename_endpoint() -> None:
         json={
             "audio_path": storage.relative_path(audio_path),
             "metadata_path": storage.relative_path(metadata_path),
-            "new_stem": "pytest_renamed_ok"
-        }
+            "new_stem": "pytest_renamed_ok",
+        },
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    
+
     assert new_audio_path.exists()
     assert new_metadata_path.exists()
     assert not audio_path.exists()
     assert not metadata_path.exists()
-    
+
     # Verify metadata updates
     updated_meta = json.loads(new_metadata_path.read_text(encoding="utf-8"))
     assert updated_meta["sound_id"] == "sound_pytest_rename_test"
@@ -4647,12 +4706,8 @@ def test_files_rename_restores_sidecar_when_final_metadata_commit_fails(
 
 
 def test_files_rename_refuses_a_sidecar_owned_by_another_sound() -> None:
-    audio_path, metadata_path, _, metadata, _ = _masa_rename_fixture(
-        "pytest_masa_sidecar_owner"
-    )
-    _, _, foreign_sidecar, _, _ = _masa_rename_fixture(
-        "pytest_masa_sidecar_foreign"
-    )
+    audio_path, metadata_path, _, metadata, _ = _masa_rename_fixture("pytest_masa_sidecar_owner")
+    _, _, foreign_sidecar, _, _ = _masa_rename_fixture("pytest_masa_sidecar_foreign")
     target_audio = settings.audio_dir / "pytest_masa_sidecar_owner_target.wav"
     target_metadata = settings.metadata_dir / "pytest_masa_sidecar_owner_target.json"
     target_audio.unlink(missing_ok=True)
@@ -4749,19 +4804,16 @@ def test_files_bulk_delete_endpoint() -> None:
             "items": [
                 {
                     "audio_path": storage.relative_path(audio_path1),
-                    "metadata_path": storage.relative_path(metadata_path1)
+                    "metadata_path": storage.relative_path(metadata_path1),
                 },
-                {
-                    "audio_path": storage.relative_path(audio_path2),
-                    "metadata_path": None
-                }
+                {"audio_path": storage.relative_path(audio_path2), "metadata_path": None},
             ]
-        }
+        },
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert int(response.json()["deleted_count"]) == 2
-    
+
     assert not audio_path1.exists()
     assert not metadata_path1.exists()
     assert not audio_path2.exists()
@@ -4915,7 +4967,7 @@ def test_files_bulk_delete_rejects_more_than_500_items() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MASA 0.1.0 protocol boundary and the Micro processing layer
+# MASA 0.2.0 protocol boundary and the Micro processing layer
 # ---------------------------------------------------------------------------
 
 
@@ -4925,9 +4977,7 @@ def test_masa_records_cite_the_published_canonical_schema() -> None:
 
     from server.masa_bridge import MASA_SCHEMA, build_generation_record
 
-    assert MASA_SCHEMA == (
-        "https://masa.sonicfield.org/schemas/0.1.0/matter-record.schema.json"
-    )
+    assert MASA_SCHEMA == ("https://masa.sonicfield.org/schemas/0.2.0/matter-record.schema.json")
     record = build_generation_record(
         {
             "sound_id": "snd_schema",
@@ -4938,7 +4988,7 @@ def test_masa_records_cite_the_published_canonical_schema() -> None:
         }
     )
     assert record["$schema"] == MASA_SCHEMA
-    assert record["masaVersion"] == "0.1.0"
+    assert record["masaVersion"] == "0.2.0"
     assert "smo.sonicfield.org" not in json.dumps(record)
 
 
@@ -4957,8 +5007,8 @@ def test_every_micro_module_declares_a_valid_processing_operation() -> None:
             created_at="2026-08-07T12:00:00.000Z",
         )
         assert request["requestType"] == "masa-processing-request"
-        assert request["requestVersion"] == "0.1.0"
-        assert request["masaVersion"] == "0.1.0"
+        assert request["requestVersion"] == "0.2.0"
+        assert request["masaVersion"] == "0.2.0"
         assert request["operationType"] == operation
         assert request["inputs"]
         # `processing-request.schema.json` sets additionalProperties: false and
@@ -5050,7 +5100,7 @@ def test_processing_request_route_builds_and_rejects_unknown_modules() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cosmoaudition modulation framework (cosmo/modulation/v0.1)
+# Cosmoaudition modulation framework (v0.2 preferred, v0.1 compatible)
 # ---------------------------------------------------------------------------
 
 
@@ -5179,7 +5229,7 @@ def test_mapping_schema_rejects_outputs_outside_its_declared_range() -> None:
 def test_modulation_endpoints_are_allowlisted_and_stream_is_not() -> None:
     from server.cosmoaudition import COSMOAUDITION_REMOTE_PATHS
 
-    assert {"/api/modulation", "/api/frame", "/api/snapshot/masa"} <= set(
+    assert {"/api/modulation", "/api/frame", "/api/signals", "/api/snapshot/masa"} <= set(
         COSMOAUDITION_REMOTE_PATHS
     )
     # Server-Sent Events cannot be read by a bounded request/response client.
@@ -5295,6 +5345,39 @@ def _frame(**overrides: object) -> dict:
     return frame
 
 
+def _frame_v2(**overrides: object) -> dict:
+    frame = _frame(contract="cosmo/modulation/v0.2")
+    normalizations = {
+        "s1": [0.0, 100.0],
+        "s2": [0.0, 1.0],
+        "s3": [0.0, 1.0],
+    }
+    normalized = {"s1": 0.5, "s2": None, "s3": None}
+    labels = {"s1": "Earth observation", "s2": "Context signal", "s3": "Aggregate signal"}
+    for signal in frame["signals"]:
+        signal.update(
+            {
+                "label": labels[signal["id"]],
+                "signalKind": "observation" if signal["id"] == "s1" else "derived",
+                "normalized": normalized[signal["id"]],
+                "normalization": {
+                    "method": "linear",
+                    "inputRange": normalizations[signal["id"]],
+                    "outputRange": [0, 1],
+                    "clipping": "clamp",
+                    "basis": "Declared test projection.",
+                },
+            }
+        )
+    frame["signalCatalog"] = {
+        "contract": "cosmo/signal-catalog/v0.2",
+        "version": "0.2.0",
+        "href": "/api/signals",
+    }
+    frame.update(overrides)
+    return frame
+
+
 def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     from server.cosmoaudition import modulation_routes_from_frame
 
@@ -5319,6 +5402,33 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     assert withheld["delay.time"]["status"] == "skipped"
     assert withheld["delay.time"]["value"] is None
     assert resolved["absences"] == [{"signalId": "s2", "reason": "provider unavailable"}]
+
+
+def test_v02_frame_preserves_catalog_normalization_and_contract() -> None:
+    from server.cosmoaudition import modulation_routes_from_frame
+
+    resolved = modulation_routes_from_frame(_frame_v2())
+    assert resolved["contract"] == "cosmo/modulation/v0.2"
+    assert resolved["signalCatalog"] == {
+        "contract": "cosmo/signal-catalog/v0.2",
+        "version": "0.2.0",
+        "href": "/api/signals",
+    }
+    assert resolved["signals"][0]["normalization"]["inputRange"] == [0.0, 100.0]
+
+
+def test_v02_frame_rejects_invalid_signal_metadata_and_remote_catalog_href() -> None:
+    from server.cosmoaudition import CosmoauditionBridgeError, modulation_routes_from_frame
+
+    invalid_range = _frame_v2()
+    invalid_range["signals"][0]["normalization"]["inputRange"] = [1, 1]
+    with pytest.raises(CosmoauditionBridgeError, match="normalization range"):
+        modulation_routes_from_frame(invalid_range)
+
+    remote_catalog = _frame_v2()
+    remote_catalog["signalCatalog"]["href"] = "https://example.test/api/signals"
+    with pytest.raises(CosmoauditionBridgeError, match="href is not local"):
+        modulation_routes_from_frame(remote_catalog)
 
 
 def test_frame_resolution_ignores_the_bare_values_map() -> None:
@@ -5374,14 +5484,14 @@ def test_a_frame_that_does_not_declare_the_contract_is_refused() -> None:
         base_url="http://127.0.0.1:8797", timeout_seconds=1.0, max_response_bytes=1_000
     )
     bridge.get_json = lambda path, params=None: {"frameId": "x", "controls": []}  # type: ignore[assignment]
-    with pytest.raises(CosmoauditionBridgeError, match="cosmo/modulation/v0.1"):
+    with pytest.raises(CosmoauditionBridgeError, match="supported modulation contract"):
         bridge.frame()
 
 
 def test_frame_resolution_itself_refuses_an_unclaimed_contract() -> None:
     from server.cosmoaudition import CosmoauditionBridgeError, modulation_routes_from_frame
 
-    with pytest.raises(CosmoauditionBridgeError, match="cosmo/modulation/v0.1"):
+    with pytest.raises(CosmoauditionBridgeError, match="supported modulation contract"):
         modulation_routes_from_frame(_frame(contract="unrelated/v1"))
 
 

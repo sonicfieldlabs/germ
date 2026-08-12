@@ -567,12 +567,26 @@ principle.
 
 ## GET /cosmoaudition/sources
 
+## GET /cosmoaudition/signals
+
+Returns the validated `cosmo/signal-catalog/v0.2` definitions, optionally
+filtered by a bounded comma-separated `sources` list. Catalog entries retain
+source, unit, sphere, epistemic status, temporal character, signal kind, and
+the declared normalization method, ranges, clipping rule, and basis.
+
 ## GET /cosmoaudition/snapshot
+
+## GET /cosmoaudition/modulation
+
+## GET /cosmoaudition/frame
 
 Proxies the corresponding allowlisted Cosmoaudition route through a bounded,
 no-redirect local bridge. Query parameters are `mode=fixture|live`, optional
-`lat`, `lon`, and a bounded comma-separated `sources` list. Bridge failures
-return `available: false` as explicit state rather than fabricated signals.
+`lat`, `lon`, and a bounded comma-separated `sources` list where supported.
+The frame endpoint accepts Cosmoaudition v0.2 and the prior v0.1 contract;
+v0.2 signal metadata and normalization are validated before route resolution.
+Bridge failures return `available: false` as explicit state rather than
+fabricated signals.
 
 ## POST /cosmoaudition/map
 

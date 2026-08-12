@@ -247,6 +247,7 @@ async function checkCosmoauditionDataBoundary() {
     { id: "failed", sphere: "cosmos", normalized: null, confidence: "error", error: "offline" },
     { id: "stream", sphere: "cosmos", normalized: 0.5, confidence: "high", temporalCharacter: "stream" },
     { id: "event", sphere: "cosmos", normalized: 0.75, confidence: "medium", temporalCharacter: "event" },
+    { id: "marine", sphere: "hydrosphere", normalized: 0.25, confidence: "high" },
   ];
   assert.deepEqual(
     cosmo.cosmoauditionUsableSignals("cosmo_cosmic_field", signals).map((signal) => signal.id),
@@ -266,7 +267,12 @@ async function checkCosmoauditionDataBoundary() {
     signals.filter((signal) => signal.id !== "event"),
   );
   assert.equal(cosmo.cosmoauditionUnitFor({ modulatorType: "cosmo_event_pulsar" }, signals, event), null);
+  assert.equal(
+    cosmo.cosmoauditionSelectedSignal({ modulatorType: "cosmo_hydrosphere_field", config: {} }, signals)?.id,
+    "marine",
+  );
   assert.equal(cosmo.cosmoauditionMappingSignal(signals[1]).value, null);
+  assert.deepEqual(cosmo.cosmoauditionMappingSignal(signals[0]).normalization.inputRange, [0, 1]);
   assert.equal(cosmo.cosmoauditionPreviousOutput({ config: { currentValue: 0.5, available: false } }), null);
   assert.equal(cosmo.cosmoauditionPreviousOutput({ config: { currentValue: 0, available: true } }), 0);
 }
@@ -337,6 +343,7 @@ function checkCosmoauditionAndMatterContracts() {
     "cosmo_observation",
     "cosmo_cosmic_field",
     "cosmo_earth_field",
+    "cosmo_hydrosphere_field",
     "cosmo_biosphere_field",
     "cosmo_human_machine_field",
     "cosmo_relational_index",
@@ -355,8 +362,9 @@ function checkCosmoauditionAndMatterContracts() {
   assert.match(html, /data-fx="matter_analysis"/, "Matter Analysis card should be present");
   assert.match(app, /\/cosmoaudition\/snapshot/, "Cosmoaudition snapshot bridge should be wired");
   assert.match(app, /\/cosmoaudition\/map/, "Cosmoaudition mapping bridge should be wired");
+  assert.match(app, /cosmoaudition-germ\/v0\.2/, "Cosmoaudition provenance should declare v0.2");
   assert.match(app, /\/matter\/analyze/, "Matter Analysis route should be wired");
-  assert.match(app, /cosmoaudition\.js\?v=20260731-audit-p1/, "App should use the audited Cosmoaudition data boundary");
+  assert.match(app, /cosmoaudition\.js\?v=20260811-v02/, "App should use the v0.2 Cosmoaudition data boundary");
   assert.match(cosmo, /finiteNumberOrNull/, "Cosmoaudition should distinguish unavailable values from zero");
   assert.match(
     app,

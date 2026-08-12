@@ -349,7 +349,7 @@ def test_prompt_derivation_prioritizes_dynamic_generative_namespace(client, stor
     assert body["handoff"]["evidence"][0]["namespace"] == "akouo.generative-listening"
 
 
-def test_generation_writes_v15_record_with_sa_lineage_bridge(client, seeded, store_path):
+def test_generation_writes_v16_record_with_sa_lineage_bridge(client, seeded, store_path):
     audio_file = _allowed_audio("organism with spaces.wav")
     organism_metadata = {
         "sound_id": "organism_007",
@@ -399,7 +399,8 @@ def test_generation_writes_v15_record_with_sa_lineage_bridge(client, seeded, sto
     )
     assert response.status_code == 200, response.text
     record = response.json()["record"]
-    assert record["schema_version"] == "1.5.0"
+    assert record["schema_version"] == "1.6.0"
+    assert "auditum" not in record
     assert "%20" in record["audio"]["uri"]
 
     # skimmable summary + earworm session link

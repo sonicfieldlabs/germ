@@ -7,17 +7,17 @@ from uuid import NAMESPACE_URL, uuid5
 from server.identity import PRODUCT_NAME, __version__
 
 
-MASA_VERSION = "0.1.0"
-# The canonical identifier root of the published MASA 0.1.0 release
-# (sonicfieldlabs/MASA, tag v0.1.0). Records that cite any other root are
+MASA_VERSION = "0.2.0"
+# The canonical identifier root of the published MASA 0.2.0 release
+# (sonicfieldlabs/MASA, tag v0.2.0). Records that cite any other root are
 # rejected by the reference validator, because `$schema` is a protocol constant
 # rather than a hint, so this string is the single place it is written.
 MASA_CANONICAL_ROOT = "https://masa.sonicfield.org/"
-MASA_SCHEMA = f"{MASA_CANONICAL_ROOT}schemas/0.1.0/matter-record.schema.json"
-MASA_PROCESSING_REQUEST_VERSION = "0.1.0"
+MASA_SCHEMA = f"{MASA_CANONICAL_ROOT}schemas/0.2.0/matter-record.schema.json"
+MASA_PROCESSING_REQUEST_VERSION = "0.2.0"
 
 # GERM's Micro modules are granular and spectral instruments in Roads's sense.
-# MASA 0.1.0 gives that vocabulary an engine-neutral request contract, so a
+# MASA 0.2.0 gives that vocabulary an engine-neutral request contract, so a
 # module can state what it wants done to matter without naming a DSP library.
 MICRO_MODULE_OPERATIONS: dict[str, str] = {
     "grain_culture": "matter.granulate",
