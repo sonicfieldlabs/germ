@@ -35,7 +35,7 @@ python-provider = [
     "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git",
 ]
 dev = [
-    "httpx2>=2.7",
+    "httpx2>=2.12.0",
     "pytest>=8.2.0",
     "ruff>=0.6.0",
 ]
