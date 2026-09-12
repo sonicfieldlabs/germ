@@ -25,6 +25,7 @@ apps/germ.app/
 .codex/
 
 # Local tool caches and state
+.cache/
 .uv-cache/
 .uv-tools/
 .playwright-cli/
