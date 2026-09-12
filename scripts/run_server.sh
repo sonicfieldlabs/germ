@@ -6,6 +6,7 @@ cd "$PROJECT_ROOT"
 
 UVICORN_ARGS=(
   server.main:app
+  --timeout-graceful-shutdown "${GERM_SHUTDOWN_GRACE_SECONDS:-2}"
   --host "${GERM_HOST:-${GERMINATOR_HOST:-127.0.0.1}}"
   --port "${GERM_PORT:-${GERMINATOR_PORT:-5178}}"
 )

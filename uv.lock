@@ -29,12 +29,36 @@ overrides = [
 ]
 
 [[package]]
-name = "akousma"
-version = "0.7.0"
-source = { git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.7.0#c130fa61423517a0cc2ca8071124537978fad825" }
+name = "akouo-contract"
+version = "0.9.2"
+source = { directory = "../akouo" }
 dependencies = [
     { name = "jsonschema" },
+    { name = "referencing" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.22" },
+    { name = "referencing", specifier = ">=0.35" },
+]
+
+[[package]]
+name = "akousma"
+version = "0.7.0"
+source = { directory = "../earworm/packages/py-akousma" }
+dependencies = [
+    { name = "jsonschema" },
+    { name = "referencing" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jsonschema", specifier = ">=4.22" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "referencing", specifier = ">=0.35" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "annotated-doc"
@@ -286,12 +310,16 @@ name = "germ"
 version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "akouo-contract" },
     { name = "akousma" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "soundfile" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -307,15 +335,18 @@ python-provider = [
 
 [package.metadata]
 requires-dist = [
-    { name = "akousma", git = "https://github.com/sonicfieldlabs/earworm.git?subdirectory=packages%2Fpy-akousma&tag=v0.7.0" },
+    { name = "akouo-contract", directory = "../akouo" },
+    { name = "akousma", directory = "../earworm/packages/py-akousma" },
     { name = "fastapi", specifier = ">=0.139" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.7" },
+    { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "soundfile", specifier = ">=0.13.1,<0.14" },
     { name = "stable-audio-3", marker = "extra == 'python-provider'", git = "https://github.com/Stability-AI/stable-audio-3.git" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]

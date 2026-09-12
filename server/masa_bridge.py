@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -322,6 +323,9 @@ def build_generation_record(metadata: dict[str, Any]) -> dict[str, Any]:
         "audio": _audio_technical(metadata),
     }
 
+    if metadata.get("output_integrity"):
+        output_representation["integrity"] = metadata["output_integrity"]
+
     relations = [
         {
             "id": _id("relation", f"{sound_id}:{parent}"),
@@ -431,6 +435,18 @@ def build_generation_record(metadata: dict[str, Any]) -> dict[str, Any]:
         "claimRefs": [],
         "extensions": {"germ:lineage": {"soundId": sound_id}},
     }
+
+    if isinstance(metadata.get("generation_lifecycle"), dict):
+        receipt["extensions"]["germ:lifecycle"] = metadata["generation_lifecycle"]
+    derivation = (metadata.get("source") or {}).get("derivation")
+    if isinstance(derivation, dict):
+        receipt["extensions"]["germ:derivation"] = derivation
+    cosmo = metadata.get("source", {}).get("cosmoaudition")
+    if cosmo:
+        receipt["extensions"]["germ:cosmoaudition"] = deepcopy(cosmo)
+    if metadata.get("synthesis"):
+        receipt["extensions"]["germ:synthesis"] = deepcopy(metadata["synthesis"])
+    receipt["extensions"]["germ:execution"] = {"jobId": metadata.get("generation_job_id"), "contract": "masa/0.2.0", "profile": "generation"}
 
     return {
         "$schema": MASA_SCHEMA,

@@ -14,6 +14,7 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
   let currentGain = null;
   let currentTable = null;
   let holdActive = false;
+  let generation = 0;
 
   const ATTACK = 0.006;
   const RELEASE = 0.045;
@@ -37,6 +38,7 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
   // Release-then-stop: every voice ends through a short gain ramp, never a
   // hard stop() — the old engine clicked on each preview and stop.
   function stop() {
+    generation += 1;
     const source = currentSource;
     const gainNode = currentGain;
     currentSource = null;
@@ -57,6 +59,13 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
       try { source.disconnect(); } catch {}
       try { gainNode?.disconnect(); } catch {}
     }, (RELEASE + 0.05) * 1000);
+  }
+
+  async function dispose() {
+    stop();
+    const context = ownContext;
+    ownContext = null;
+    if (context && context.state !== "closed") await context.close();
   }
 
   async function loadWavetable(detail, frames) {
@@ -88,8 +97,10 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
 
   async function previewFrame({ position = 0, note = "C3", gain = 0.45, duration = 0.7 } = {}) {
     stop();
+    const requestGeneration = generation;
     const ctx = ensureContext();
     if (ctx.state === "suspended") await ctx.resume();
+    if (requestGeneration !== generation) return;
     const oscillator = ctx.createOscillator();
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
@@ -118,8 +129,10 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
 
   async function holdNote({ position = 0, note = "C3", gain = 0.35 } = {}) {
     stop();
+    const requestGeneration = generation;
     const ctx = ensureContext();
     if (ctx.state === "suspended") await ctx.resume();
+    if (requestGeneration !== generation) return;
     const oscillator = ctx.createOscillator();
     const gainNode = ctx.createGain();
     oscillator.setPeriodicWave(periodicWaveForFrame(position));
@@ -159,6 +172,7 @@ export function createGermSynthEngine({ getContext = null, getDestination = null
     previewFrame,
     holdNote,
     stop,
+    dispose,
     renderPreviewBuffer,
     get currentTable() { return currentTable; },
     get holdActive() { return holdActive; },

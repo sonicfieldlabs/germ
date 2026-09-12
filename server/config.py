@@ -126,6 +126,7 @@ class Settings:
             "output",
             legacy="GERMINATOR_OUTPUT_DIR",
         )
+        self.library_audio_roots = _path_list_from_env("GERM_LIBRARY_AUDIO_ROOTS", [])
         self.audio_dir = self.output_root / "audio"
         self.metadata_dir = self.output_root / "metadata"
         self.upload_dir = self.output_root / "uploads"
@@ -168,6 +169,7 @@ class Settings:
             minimum=1.0,
             maximum=86400.0,
         )
+        self.worker_shutdown_seconds = _float_from_env("GERM_WORKER_SHUTDOWN_SECONDS", 7.0, minimum=0.0, maximum=60.0)
         self.job_workers = _int_from_env(
             "GERM_JOB_WORKERS",
             1,

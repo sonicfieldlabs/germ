@@ -460,3 +460,55 @@ def _page_lineage(record: dict[str, Any], payload: dict[str, Any]) -> str:
         f"<a href='/dashboard'>germ dashboard →</a></div>"
     )
     return _shell("germ — lineage explorer", body)
+
+
+@router.get('/akousma/derivation/templates')
+def derivation_templates():
+    from server.derivation import catalog
+    return catalog()
+
+
+@router.post('/akousma/derivation/plan')
+def plan_derivation(body: dict[str, Any]):
+    from server.derivation import build
+    store = _store()
+    try:
+        return build(store, body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    finally:
+        store.close()
+
+
+@router.post('/akousma/derivation/generate')
+def generate_from_records(body: dict[str, Any]):
+    from server.generation_workflow import execute
+    try:
+        return execute(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/akousma/generation/decision")
+def retain_generation_decision(body: dict) -> dict:
+    from server.generation_decisions import retain
+
+    try:
+        return retain(body)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/akousma/agent-sounds")
+def export_agent_sounds(body: dict):
+    from server.agent_sounds import package
+    try:
+        if set(body) != {"metadata_files", "recipient_requirements"}:
+            raise ValueError("Expected metadata_files and recipient_requirements")
+        return package(**body)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

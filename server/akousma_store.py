@@ -189,6 +189,30 @@ def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
                 evidence.append({"namespace": str(namespace), "text": text})
                 break
 
+    if not evidence and record.get("record_kind") == "observation_account":
+        # A retained non-audio observation can condition a new composition. Keep
+        # that distinction explicit instead of pretending it contained heard audio.
+        for namespace, block in listening.items():
+            payload = _entry_payload(block) if isinstance(block, dict) else None
+            report = payload.get("report") if isinstance(payload, dict) else None
+            if not isinstance(report, dict):
+                continue
+            fragments = []
+            for feature in report.get("features", [])[:8]:
+                if not isinstance(feature, dict):
+                    continue
+                value = feature.get("value")
+                if not isinstance(value, dict) or value.get("status") != "known":
+                    continue
+                scalar = value.get("value")
+                if isinstance(scalar, (str, int, float)) and not isinstance(scalar, bool):
+                    fragments.append(f"{feature.get('name', 'observation')}: {str(scalar)[:200]} {value.get('unit', '')}".strip())
+            if fragments:
+                evidence.append({"namespace": str(namespace), "text":
+                    "Compositional context from a retained non-audio observation: " + "; ".join(fragments) +
+                    ". This is attributed data, not recovered or heard audio."})
+                break
+
     if not evidence:
         tags = [
             str(tag) for tag in (record.get("tags") if isinstance(record.get("tags"), list) else [])

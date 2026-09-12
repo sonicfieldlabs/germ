@@ -31,6 +31,7 @@ fi
 
 UVICORN_ARGS=(
   server.main:app
+  --timeout-graceful-shutdown "${GERM_SHUTDOWN_GRACE_SECONDS:-2}"
   --host "${GERM_HOST}"
   --port "${GERM_PORT}"
 )

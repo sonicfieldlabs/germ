@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-ProviderId = Literal["mock", "stable_audio_python", "stable_audio_mlx", "stability_api"]
+ProviderId = Literal["research", "ace_step", "synthesis", "mock", "stable_audio_python", "stable_audio_mlx", "stability_api"]
 ModeId = Literal["text-to-audio", "audio-to-audio", "inpainting", "continuation"]
 SnapDivision = Literal["1/4", "1/8", "1/16", "1/32", "triplet"]
 TimeModuleType = Literal[
@@ -732,6 +732,7 @@ class WavetableOperationResult(BaseModel):
 
 
 class BaseGenerationRequest(JSONRequestModel):
+    masa_contracts: list[str] = Field(default_factory=lambda: ["masa/0.2.0"], max_length=16)
     provider: ProviderId = "mock"
     model: str = Field(default="mock-sine", min_length=1, max_length=500)
     prompt: str = Field(default="", max_length=10_000)

@@ -380,3 +380,28 @@ node scripts/smoke_dashboard.mjs
 ## License
 
 MPL-2.0. See [LICENSE](LICENSE).
+
+Unreleased owner tooling: [bounded MASA granulation execution](docs/processing-adapter.md)
+reuses the existing granular AudioWorklet and emits validated processing receipts.
+
+### Derivation templates
+
+The local G6/G4 integration adds retained-record variation, combination and structured
+agent-report plans at `/akousma/derivation/plan`, with template discovery at
+`/akousma/derivation/templates`. Plans preserve parents and permissions and use bounded
+parameters; they do not start generation. See [derivation](docs/derivation.md) for
+mapping rules, handoff and the required local AKOÚŌ/Earworm sibling checkouts.
+
+For explicit execution, `/akousma/derivation/generate` links the existing provider
+result to retained parents, output hashes and MASA Generation receipts. Optional
+Oída re-listening uses the existing bridge. See [linked generation](docs/linked-generation.md).
+
+Queued and synchronous generation now share bounded admission, cancellation and app
+shutdown handling. Retained job receipts are available at `/jobs/{id}/receipt`.
+See [job lifecycle](docs/job-lifecycle.md) for settlement states and provider limits.
+
+Local D4 adapters and decisions: [bounded CPU synthesis](docs/synthesis-adapters.md)
+uses the existing queue/library/receipt paths; [retained subsequent-listening
+decisions](docs/generation-decisions.md) use A13/E16 without automatic follow-up jobs.
+
+D5 local integration: [cosmo-and-agent-packs](docs/cosmo-and-agent-packs.md). Unreleased; no automatic publication.

@@ -31,7 +31,13 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         return
 
     try:
-        process.wait(timeout=5)
+        # Allow the server's HTTP grace and bounded worker drain to complete.
+        try:
+            drain = min(60.0, max(0.0, float(os.environ.get("GERM_WORKER_SHUTDOWN_SECONDS", "7"))))
+            grace = max(0.0, float(os.environ.get("GERM_SHUTDOWN_GRACE_SECONDS", "2")))
+        except ValueError:
+            drain, grace = 7.0, 2.0
+        process.wait(timeout=max(12.0, drain + grace + 2.0))
         return
     except subprocess.TimeoutExpired:
         pass
@@ -62,7 +68,10 @@ def main() -> int:
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
 
-    command = [sys.executable, "-m", "uvicorn", args.app, *args.uvicorn_args]
+    uvicorn_args = list(args.uvicorn_args)
+    if not any(value.startswith("--timeout-graceful-shutdown") for value in uvicorn_args):
+        uvicorn_args.extend(["--timeout-graceful-shutdown", os.environ.get("GERM_SHUTDOWN_GRACE_SECONDS", "2")])
+    command = [sys.executable, "-m", "uvicorn", args.app, *uvicorn_args]
     child = subprocess.Popen(
         command,
         cwd=Path.cwd(),

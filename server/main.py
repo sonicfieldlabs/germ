@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -38,6 +40,7 @@ from server.routes import (
     strains,
     time_render,
     wavetables,
+    workspace,
 )
 from server.performance import PerformanceMiddleware
 from server.security import LocalOriginAndHeadersMiddleware
@@ -45,7 +48,19 @@ from server.security import LocalOriginAndHeadersMiddleware
 
 settings = get_settings()
 
+@asynccontextmanager
+async def lifespan(_app):
+    from server.registry import job_runner
+    job_runner.startup()
+    try:
+        yield
+    finally:
+        job_runner.shutdown(wait=False)
+        _app.state.shutdown_settled = await asyncio.to_thread(job_runner.wait_for_settlement, settings.worker_shutdown_seconds)
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title=PRODUCT_NAME,
     description=(
         f"{PRODUCT_NAME} FastAPI sidecar for local Stable Audio 3 providers, "
@@ -127,6 +142,9 @@ app.include_router(micro.router)
 app.include_router(sessions.router)
 app.include_router(jobs.router)
 app.include_router(library.router)
+app.include_router(workspace.router)
+from server.routes import research
+app.include_router(research.router)
 app.include_router(listener.router)
 app.include_router(files.router)
 app.include_router(time_render.router)

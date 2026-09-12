@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import time
+from akousma.deployments import DeploymentRegistry
 
 from server.config import Settings, get_settings
 from server.control import ControlRegistry
+from server.providers.research_provider import ResearchProvider
+from server.providers.ace_step_provider import ACEStepProvider
 from server.providers.base import AudioGenerationProvider
 from server.providers.mock_provider import MockProvider
+from server.providers.synthesis_provider import SynthesisProvider
 from server.providers.stability_api_provider import StabilityAPIProvider
 from server.providers.stable_audio_mlx_provider import StableAudioMLXProvider
 from server.providers.stable_audio_python_provider import StableAudioPythonProvider
@@ -20,10 +24,14 @@ PROVIDER_STATUS_TTL_SECONDS = 30.0
 
 class ProviderRegistry:
     def __init__(self, settings: Settings, storage: StorageManager) -> None:
+        self.deployments = DeploymentRegistry("germ")
         self.settings = settings
         self.storage = storage
         self.providers: dict[str, AudioGenerationProvider] = {
             "mock": MockProvider(storage),
+            "research": ResearchProvider(storage),
+            "ace_step": ACEStepProvider(storage),
+            "synthesis": SynthesisProvider(storage),
             "stable_audio_python": StableAudioPythonProvider(storage),
             "stable_audio_mlx": StableAudioMLXProvider(storage, settings),
             "stability_api": StabilityAPIProvider(storage, settings),
@@ -82,6 +90,15 @@ class ProviderRegistry:
         self._status_cache = None
         self._status_cache_at = 0.0
         return result
+
+    def reboot_model(self, provider_id: str, model_id: str, device: str = "auto") -> dict:
+        if provider_id in {"ace_step", "synthesis"}:
+            self.providers[provider_id] = (ACEStepProvider if provider_id == "ace_step" else SynthesisProvider)(self.storage)
+            return self.load_model(provider_id, model_id, device)
+        if provider_id != "stable_audio_mlx":
+            raise ValueError("Gateway reboot is available for the local Stable Audio MLX provider")
+        self.providers[provider_id] = StableAudioMLXProvider(self.storage, self.settings)
+        return self.load_model(provider_id, model_id, device)
 
     def loaded_models(self) -> list[str]:
         return [

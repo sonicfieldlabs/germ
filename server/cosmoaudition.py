@@ -41,6 +41,7 @@ COSMOAUDITION_REMOTE_PATHS = frozenset(
         # status, emitted absences, and travelling attribution.
         "/api/modulation",
         "/api/frame",
+        "/api/generation-frame",
     }
 )
 # `/api/stream` is deliberately absent. It is Server-Sent Events, and this

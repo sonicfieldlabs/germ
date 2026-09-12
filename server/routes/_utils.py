@@ -29,33 +29,22 @@ MODE_SPECS: dict[ModeId, tuple[type[BaseModel], str]] = {
 
 
 def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -> GenerationResult:
-    job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}))
-    request_model = request_model.model_copy(update={"job_id": job_id})
-    started = time.perf_counter()
+    from server.registry import job_runner
+    from server.job_runner import JobQueueFullError
+    from concurrent.futures import CancelledError
+    job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}), status="queued")
     try:
-        provider = registry.get(getattr(request_model, "provider"))
-        method = getattr(provider, method_name)
-        # Providers record their own result; no extra record_result needed.
-        result = method(request_model)
-        storage.update_job(
-            job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
-        )
-        return result
-    except Exception as exc:
-        result = storage.write_error_metadata(
-            request=request_model,
-            mode=mode,
-            job_id=job_id,
-            error=str(exc),
-            provider=getattr(request_model, "provider", None),
-            model=getattr(request_model, "model", None),
-        )
-        storage.update_job(
-            job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
-        )
-        return result
+        future = job_runner.submit(job_id, run_provider_method_with_existing_job, request_model,
+                                   job_id=job_id, mode=mode, method_name=method_name)
+    except (JobQueueFullError, RuntimeError) as exc:
+        storage.update_job(job_id, status="error", error=str(exc), metrics={"execution_state": "not_admitted"})
+        storage.write_job_receipt(job_id)
+        raise HTTPException(429 if isinstance(exc, JobQueueFullError) else 503, str(exc)) from exc
+    try:
+        return future.result()
+    except CancelledError:
+        return GenerationResult(job_id=job_id, status="cancelled", mode=mode,
+                                error="job cancelled before execution")
 
 
 def request_model_for_mode(mode: ModeId, payload: dict[str, Any]) -> tuple[BaseModel, str]:
@@ -82,16 +71,25 @@ def run_provider_method_with_existing_job(
             error="job cancelled before execution",
             mode=mode,
         )
-    storage.update_job(job_id, status="running")
+    storage.update_job(job_id, status="running", metrics={"execution_state": "running"})
     started = time.perf_counter()
     provider = None
     try:
+        source = getattr(request_model, "source", {})
+        if isinstance(source.get("derivation"), dict):
+            from server.generation_workflow import admit_derivation
+            admit_derivation(request_model)
+        if cancel_event and cancel_event.is_set():
+            return GenerationResult(job_id=job_id, status="cancelled", mode=mode, error="job cancelled before provider admission")
         provider = registry.get(getattr(request_model, "provider"))
         if cancel_event:
             provider.register_cancel_event(job_id, cancel_event)
         method = getattr(provider, method_name)
         # Providers record their own result; no extra record_result needed.
         result = method(request_model)
+        if cancel_event and cancel_event.is_set() and result.status != "cancelled":
+            result = result.model_copy(update={"status": "cancelled", "error": "provider settled after cancellation request; any artifacts are retained"})
+            storage.record_result(result)
         storage.update_job(
             job_id,
             metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import array
 import json
+from hashlib import sha256
 import math
 import sys
 import wave
@@ -167,6 +168,13 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
     """Send generated audio to Oída, then ask Oída for the next editable prompt."""
     audio_path = _resolve_audio_path(request.audio_path)
     metadata_path = _resolve_metadata_path(request.metadata_path)
+    def audio_hash():
+        digest = sha256()
+        with audio_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    before_hash = audio_hash()
     source_generation_id = _source_oida_generation_id(metadata_path, request.context)
     listen_payload = {
         "path": str(audio_path),
@@ -293,7 +301,12 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
         warnings.append("oida_prompt_truncated_to_10000_characters")
     if len(raw_negative_prompt) > len(negative_prompt):
         warnings.append("oida_negative_prompt_truncated_to_10000_characters")
+    after_hash = audio_hash()
+    if before_hash != after_hash:
+        warnings.append("relisten_source_changed_no_output_binding")
     extension = {
+        "output_sha256": before_hash if before_hash == after_hash else None,
+        "audio_path": storage.relative_path(audio_path),
         "contract": "germ.oida-relisten/v0.1",
         "provider": "oida",
         "event_id": str(event["id"]),

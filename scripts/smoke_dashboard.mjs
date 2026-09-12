@@ -373,6 +373,44 @@ function checkCosmoauditionAndMatterContracts() {
   );
 }
 
+
+async function checkStoppedResumeDoesNotSound() {
+  const { createGermSynthEngine } = await loadDashboardModule("wavetable_synth.js");
+  for (const method of ["previewFrame", "holdNote"]) {
+    let resume;
+    let oscillators = 0;
+    const context = {close: () => {throw Error("shared context must not be closed");}, state: "suspended", resume: () => new Promise(resolve => {resume = resolve;}), createOscillator: () => {oscillators++; throw Error("cancelled preview created oscillator");}};
+    const engine = createGermSynthEngine({getContext: () => context});
+    const pending = engine[method]();
+    engine.stop();
+    resume();
+    await pending;
+    assert.equal(oscillators, 0, "Stop must fence a suspended audio-context resume");
+    await engine.dispose(); // A shared context remains owned by its host.
+  }
+  let closed = 0;
+  let resumed;
+  const previousWindow = globalThis.window;
+  globalThis.window = {AudioContext: class {
+    state = "suspended";
+    resume() {return new Promise(resolve => {resumed = resolve;});}
+    async close() {closed++; this.state = "closed";}
+    createOscillator() {throw Error("disposed preview created oscillator");}
+  }};
+  try {
+    const owned = createGermSynthEngine();
+    const pending = owned.previewFrame();
+    await owned.dispose();
+    resumed();
+    await pending;
+    await owned.dispose();
+    assert.equal(closed, 1, "dispose must close its owned context exactly once");
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+}
+
 checkJsSyntax();
 checkDuplicateIds();
 checkCssVars();
@@ -381,6 +419,7 @@ checkMicroRenderer();
 checkWavetableContracts();
 await checkAudioEngineContracts();
 await checkWavetableZeroGain();
+await checkStoppedResumeDoesNotSound();
 await checkCosmoauditionDataBoundary();
 checkPetriActionContracts();
 checkTimelineContracts();

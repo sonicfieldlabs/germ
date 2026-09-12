@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import pytest
 from pathlib import Path
 
 # Resolve the temp root so it matches the canonical paths used by the storage
@@ -35,3 +36,14 @@ os.environ["GERMINATOR_ALLOWED_MODEL_ROOTS"] = f"{_TEST_OUTPUT_ROOT},vendor/stab
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     """Remove the isolated output tree once the whole session is done."""
     shutil.rmtree(_TEST_OUTPUT_ROOT, ignore_errors=True)
+
+
+# Match application lifecycle for legacy tests that use TestClient without a context.
+
+
+@pytest.fixture(autouse=True)
+def managed_job_runner():
+    from server.registry import job_runner
+    job_runner.startup()
+    yield
+    job_runner.shutdown(wait=True)

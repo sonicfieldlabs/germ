@@ -2128,8 +2128,9 @@ def test_generation_request_uses_modulated_prompt_as_effective_prompt() -> None:
     assert request.generation_context["prompt_contract"]["modulated"] is True
 
 
+@pytest.mark.parametrize("changed_audio", [False, True])
 def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, changed_audio: bool,
 ) -> None:
     audio_path = settings.audio_dir / "pytest_oida_relisten.wav"
     write_sine_wav(audio_path, duration=0.25, amplitude=0.2)
@@ -2167,6 +2168,8 @@ def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
         def post(self, url: str, *, json: dict) -> FakeResponse:
             self.calls.append((url, json))
             if url.endswith("/gateway/listen"):
+                if changed_audio:
+                    write_sine_wav(audio_path, duration=0.25, amplitude=0.3)
                 return FakeResponse(
                     {
                         "contract": "oida.gateway/v0.1",
@@ -2222,6 +2225,9 @@ def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
     updated = json.loads(metadata_path.read_text(encoding="utf-8"))
     latest = updated["extensions"]["germ.relisten"]["latest"]
     assert latest["event_id"] == "evt_reheard"
+    from hashlib import sha256
+    assert latest["output_sha256"] == (None if changed_audio else sha256(audio_path.read_bytes()).hexdigest())
+    assert ("relisten_source_changed_no_output_binding" in body["warnings"]) == changed_audio
     assert FakeClient.calls[0][0].endswith("/gateway/listen")
     assert FakeClient.calls[1][0].endswith("/generation/prompt")
 
