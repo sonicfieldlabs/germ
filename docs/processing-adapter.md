@@ -77,7 +77,7 @@ python -m server.processing_adapter \
 
 Run from the GERM source distribution with its existing Python dependencies and
 Node available. The adapter uses the repository's shared dashboard and script
-assets; a standalone packaged adapter is not supplied here. Python callers pass
+assets, also included in the current wheel. Python callers pass
 the same six values to `execute`, optionally with a `threading.Event` for
 cancellation and a timeout of at most 30 seconds. The child has a 128 MiB Node
 heap limit. Only one child is created by each invocation; hosts must bound the
@@ -134,3 +134,5 @@ G7 also exposes the same granular DSP through the bounded `synthesis` provider
 for application generation/library/lifecycle integration. That path records a
 negotiated generation receipt; it does not accept or replace this owner-only
 MASA processing authority contract. See [synthesis-adapters.md](synthesis-adapters.md).
+
+Optional `matter.derive` shoebox simulation and its effective recipe are documented in [Simulated fields](simulated-fields.md).

@@ -14,7 +14,7 @@ RATES = (44100, 48000, 96000, 192000)
 def admit(model, parameters, duration):
     if model not in MODELS or not isinstance(parameters, dict):
         raise ValueError("Unknown spectral oscillator")
-    common = {"sample_rate", "frequency", "gain"}
+    common = {"sample_rate", "frequency", "gain", "gaps", "clock_ppm", "envelope_seconds"}
     specific = {
         "additive": {"partials", "frequencies"},
         "chirp": {"end_frequency"},
@@ -41,6 +41,30 @@ def admit(model, parameters, duration):
             raise ValueError("Invalid spectral parameter: " + key)
         return value
 
+    clock_ppm = number("clock_ppm", 0, -1000, 1000)
+    gaps = p.setdefault("gaps", [])
+    if (
+        not isinstance(gaps, list)
+        or len(gaps) > 32
+        or any(
+            not isinstance(g, list)
+            or len(g) != 2
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in g)
+            or not 0 <= g[0] < g[1] <= duration
+            for g in gaps
+        )
+    ):
+        raise ValueError("Supply at most 32 ordered gap intervals within the render")
+    envelope = p.setdefault("envelope_seconds", [0.006, 0.045])
+    if (
+        not isinstance(envelope, list)
+        or len(envelope) != 2
+        or any(
+            type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= duration
+            for v in envelope
+        )
+    ):
+        raise ValueError("Envelope attack/release must lie within the render")
     f = number("frequency", 220, 0.1, 90000)
     number("gain", 0.2, 0, 1)
     if model == "additive":
@@ -86,6 +110,7 @@ def admit(model, parameters, duration):
         count = number("harmonics", 16, 1, 128, True)
         number("duty", 0.5, 0.01, 0.99)
         bounds = f, f * count
+    bounds = tuple(b * (1 + clock_ppm / 1e6) for b in bounds)
     if bounds[0] <= 0 or bounds[1] >= rate / 2 or bounds[1] > 90000:
         raise ValueError("Declared components cross zero, Nyquist or the 90 kHz ceiling")
     return p, bounds
@@ -109,7 +134,7 @@ def render(model, parameters, duration, seed, cancelled):
     if model == "additive":
         frequencies, amplitudes = p["frequencies"], p["partials"]
     elif model == "band-noise":
-        frequencies = rng.uniform(*bounds, p["components"])
+        frequencies = rng.uniform(p["low_frequency"], p["high_frequency"], p["components"])
         amplitudes = np.ones(p["components"])
         phases = rng.uniform(0, 2 * math.pi, p["components"])
     elif model == "pulse":
@@ -131,10 +156,19 @@ def render(model, parameters, duration, seed, cancelled):
         if time.monotonic() > deadline:
             raise TimeoutError("Spectral synthesis exceeded 30 seconds")
         indices = np.arange(start, min(start + 8192, total))
-        t = indices / rate
+        t = indices / rate * (1 + p["clock_ppm"] / 1e6)
         if model == "chirp":
             value = np.sin(
-                2 * math.pi * (f * t + 0.5 * (p["end_frequency"] - f) / duration * t * t)
+                2
+                * math.pi
+                * (
+                    f * t
+                    + 0.5
+                    * (p["end_frequency"] - f)
+                    / (duration * (1 + p["clock_ppm"] / 1e6))
+                    * t
+                    * t
+                )
             )
         else:
             value = np.zeros(len(t))
@@ -143,11 +177,15 @@ def render(model, parameters, duration, seed, cancelled):
                     2 * math.pi * frequency * t + (phases[j] if phases is not None else 0)
                 )
             value /= max(1, sum(abs(a) for a in amplitudes))
-        # Rate-aware 6 ms / 45 ms raised-cosine transitions; finite windows leak energy.
-        ramp = np.minimum(
-            1, np.minimum(indices / (0.006 * rate), (total - 1 - indices) / (0.045 * rate))
-        )
+        attack, release = p["envelope_seconds"]
+        ramp = np.ones(len(indices))
+        if attack:
+            ramp = np.minimum(ramp, indices / (attack * rate))
+        if release:
+            ramp = np.minimum(ramp, (total - 1 - indices) / (release * rate))
         envelope = 0.5 - 0.5 * np.cos(math.pi * ramp)
+        for begin, end in p["gaps"]:
+            envelope[(indices >= round(begin * rate)) & (indices < round(end * rate))] = 0
         output[start : start + len(t)] = np.rint(value * gain * envelope * 32767).astype(np.int16)
     measured = measure(output, rate)
     return output, dict(

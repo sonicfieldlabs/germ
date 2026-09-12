@@ -1,6 +1,6 @@
 [project]
 name = "germ"
-version = "0.6.0"
+version = "0.6.1"
 description = "Local-first modular laboratory for generative microsound, Stable Audio workflows, and lineage-aware cultivation."
 readme = "README.md"
 license = "MPL-2.0"
@@ -37,6 +37,7 @@ Repository = "https://github.com/sonicfieldlabs/germ"
 Issues = "https://github.com/sonicfieldlabs/germ/issues"
 
 [project.optional-dependencies]
+room = ["pyroomacoustics==0.10.0", "scipy>=1.14,<2"]
 spectral = ["akousmata>=0.8.1; python_version >= '3.11'"]
 python-provider = [
     "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git",

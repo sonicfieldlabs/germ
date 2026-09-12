@@ -735,7 +735,11 @@ class StorageManager:
                 else None
             )
             extensions = {"germ.prompt-contract": prompt_contract} if prompt_contract else {}
+            simulation = (metadata.get("synthesis") or {}).get("simulated")
+            if simulation:
+                extensions["germ.simulated"] = simulation
             record = record_generation(
+                designed=bool(simulation),
                 audio_path=output_audio_path,
                 prompt=str(metadata.get("prompt") or ""),
                 model=str(metadata.get("model") or ""),

@@ -363,6 +363,12 @@ class SynthesisProvider(AudioGenerationProvider):
         if not request.job_id:
             raise ValueError("Submit synthesis through the existing job service")
         seed = request.seed if request.seed >= 0 else self.storage.random_seed()
+        if request.source.get("simulated") and (
+            request.source["simulated"] != {"contract": "germ/simulated-source/v1"}
+            or request.model not in {"additive", "chirp", "band-noise"}
+            or set(request.source) != {"simulated", "synthesis"}
+        ):
+            raise ValueError("Designed sources require an independent oscillator recipe")
         parameters = dict(request.source.get("synthesis", {}))
         brief = audification = None
         if request.source.get("spectral_frame"):
@@ -436,6 +442,20 @@ class SynthesisProvider(AudioGenerationProvider):
                 ).hexdigest(),
                 semantics="Digital synthesis; no physical capture or new listening",
             )
+            if request.source.get("simulated"):
+                if request.source["simulated"] != {"contract": "germ/simulated-source/v1"}:
+                    raise ValueError("Invalid simulated source contract")
+                synthesis["simulated"] = dict(
+                    contract="germ/simulated-source/v1",
+                    source_type="designed",
+                    source_sha256=hashlib.sha256(audio.read_bytes()).hexdigest(),
+                    seed=seed,
+                    model=request.model,
+                    duration=request.duration,
+                    parameters=spectral["effective_parameters"],
+                    clock="Digital sample index; clock_ppm perturbs oscillator time only",
+                    gaps="Sample intervals replaced with zero; not missing observations",
+                )
             if brief:
                 synthesis["spectral_frame"] = brief
             if audification:

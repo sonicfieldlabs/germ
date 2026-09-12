@@ -405,3 +405,5 @@ uses the existing queue/library/receipt paths; [retained subsequent-listening
 decisions](docs/generation-decisions.md) use A13/E16 without automatic follow-up jobs.
 
 D5 local integration: [cosmo-and-agent-packs](docs/cosmo-and-agent-packs.md). Unreleased; no automatic publication.
+
+Local Phase 8: [designed aperture-test sources and optional simulated rooms](docs/simulated-fields.md) use bounded oscillators and MASA descendant receipts. These are digital simulations, not measured-room evidence.

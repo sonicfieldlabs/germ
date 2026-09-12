@@ -15,6 +15,7 @@ import os
 import secrets
 import shutil
 import signal
+import sys
 import subprocess
 import tempfile
 import threading
@@ -85,10 +86,18 @@ def engine_parameters(request):
     }:
         raise Refused("adapter supports only the declared granulation parameter subset")
     grain, emission, selection = p["grain"], p["emission"], p["selection"]
-    if set(grain) - {"durationMs", "envelope", "amplitudeScatter", "pitchScatterCents", "panScatter"}:
+    if set(grain) - {
+        "durationMs",
+        "envelope",
+        "amplitudeScatter",
+        "pitchScatterCents",
+        "panScatter",
+    }:
         raise Refused("unsupported grain field")
     size = grain["durationMs"]
-    if set(size) != {"min", "max"} or any(type(v) not in (int, float) or not math.isfinite(v) for v in size.values()):
+    if set(size) != {"min", "max"} or any(
+        type(v) not in (int, float) or not math.isfinite(v) for v in size.values()
+    ):
         raise Refused("invalid grain duration")
     for key, maximum in (("amplitudeScatter", 0), ("pitchScatterCents", 700), ("panScatter", 1)):
         value = grain.get(key, 0)
@@ -103,7 +112,12 @@ def engine_parameters(request):
     if set(emission) != {"mode", "grainsPerSecond"} or emission["mode"] != "synchronous":
         raise Refused("only synchronous block-quantized emission without totalGrains is supported")
     rate = emission["grainsPerSecond"]
-    if type(rate) not in (int, float) or not math.isfinite(rate) or not 4 <= rate <= 120 or rate * size["min"] / 1000 > 40:
+    if (
+        type(rate) not in (int, float)
+        or not math.isfinite(rate)
+        or not 4 <= rate <= 120
+        or rate * size["min"] / 1000 > 40
+    ):
         raise Refused("density or simultaneous grain budget exceeded")
     if selection != {"order": "random"} or p["output"] != {"kind": "texture"}:
         raise Refused("only random ring-buffer selection and texture output are supported")
@@ -160,6 +174,38 @@ def render(config, directory, cancel, timeout):
                 process.wait(timeout=2)
 
 
+def render_room(config, temp, cancel, timeout):
+    config["receipt"] = str(temp / "room-receipt.json")
+    path = temp / "room-config.json"
+    path.write_text(json.dumps(config))
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name("room_engine.py")), str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={**os.environ, "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
+    )
+    try:
+        deadline = time.monotonic() + timeout
+        while process.poll() is None:
+            check_cancel(cancel)
+            if time.monotonic() > deadline:
+                raise TimeoutError("room simulation exceeded execution deadline")
+            cancel.wait(0.01)
+        check_cancel(cancel)
+        if process.returncode:
+            raise RuntimeError(
+                "Room engine failed; install GERM room support and check admitted input"
+            )
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+
 def execute(
     request, record, source_path, authority, output_root, validator, *, cancel=None, timeout=30
 ):
@@ -173,6 +219,8 @@ def execute(
         raise ValueError("execution timeout must be finite and at most 30 seconds")
     cancel = cancel or threading.Event()
     request, record, authority = map(copy.deepcopy, (request, record, authority))
+    room = request.get("operationType") == "matter.derive"
+    engine_id = "germ:pyroomacoustics" if room else "germ:granular-worklet"
     source_path, output_root, validator = map(Path, (source_path, output_root, validator))
     output_root.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid4())
@@ -200,8 +248,8 @@ def execute(
             outputs=[],
             tool=known(
                 dict(
-                    id="germ:granular-worklet",
-                    name="GERM granular AudioWorklet",
+                    id=engine_id,
+                    name="GERM simulated shoebox" if room else "GERM granular AudioWorklet",
                     version=known(__version__),
                     kind="software",
                 )
@@ -225,6 +273,11 @@ def execute(
                 )
             },
         )
+        if room:
+            extension = receipt["extensions"]["germ:processing"]
+            extension["engineSha256"] = file_digest(Path(__file__).with_name("room_engine.py"))
+            extension.pop("dspSha256", None)
+            extension.pop("nodeVersion", None)
         # Validate the supplied policy shape before using it, including refusal paths.
         validate("receipt", receipt, validator, temp)
         result_record = copy.deepcopy(record)
@@ -263,7 +316,12 @@ def execute(
             )
             if source is None or source["policyRefs"] != request["policyRefs"]:
                 raise Refused("source representation or policies do not match")
-            params, seed = engine_parameters(request)
+            if room:
+                from server.room_engine import parameters as room_parameters
+
+                params, seed = room_parameters(request)
+            else:
+                params, seed = engine_parameters(request)
             if source_path.stat().st_size > MAX_BYTES:
                 raise Refused("source exceeds the 12 MiB byte limit")
             before = file_digest(source_path)
@@ -279,13 +337,15 @@ def execute(
                     or not 0 < frames <= rate * MAX_SECONDS
                 ):
                     raise Refused("input must be bounded mono/stereo 16-bit PCM WAV at 8–96 kHz")
-                if frames / rate < params["sizeMs"] / 1000 + 0.05:
+                if room and (channels != 1 or rate not in {16000, 44100, 48000, 96000}):
+                    raise Refused("Room source must be mono PCM16 at 16, 44.1, 48 or 96 kHz")
+                if not room and frames / rate < params["sizeMs"] / 1000 + 0.05:
                     raise Refused("source is too short to fill the granulator history")
                 raw = wav.readframes(frames)
                 if len(raw) != frames * channels * 2:
                     raise Refused("truncated source PCM")
             (temp / "input.pcm").write_bytes(raw)
-            render(
+            (render_room if room else render)(
                 dict(
                     input=str(temp / "input.pcm"),
                     output=str(temp / "output.wav"),
@@ -303,6 +363,12 @@ def execute(
             check_cancel(cancel)
             if expiry <= datetime.now(timezone.utc):
                 raise Refused("host authorization expired during execution")
+            room_receipt = None
+            if room:
+                room_receipt = json.loads((temp / "room-receipt.json").read_text())
+                frames = room_receipt["frames"]
+                if type(frames) is not int or not 0 < frames <= rate * 35:
+                    raise RuntimeError("Room output frame budget exceeded")
             with wave.open(str(temp / "output.wav"), "rb") as wav:
                 if (
                     wav.getnchannels(),
@@ -360,7 +426,7 @@ def execute(
                     id="urn:uuid:" + str(uuid4()),
                     type="masa:Relation",
                     subject=descendant_id,
-                    predicate="masa:granulated-from",
+                    predicate="masa:derived-from" if room else "masa:granulated-from",
                     object=source["id"],
                     assertedBy=actor,
                     createdAt=utc_now_iso(),
@@ -373,9 +439,11 @@ def execute(
                 finalStatus="completed",
                 outputs=[descendant_id],
                 determinism=dict(
-                    state="seeded",
+                    state="deterministic" if room else "seeded",
                     seed=seed,
-                    note="Same engine/DSP hashes and Node runtime; dither disabled.",
+                    note="Same engine and dependency versions; dither disabled. Seed retained; room ISM uses no randomness."
+                    if room
+                    else "Same engine/DSP hashes and Node runtime; dither disabled.",
                 ),
             )
             receipt["extensions"]["germ:processing"].update(
@@ -389,6 +457,15 @@ def execute(
                 renderQuantum=128,
                 tail="truncated at source duration",
             )
+            if room:
+                extension = receipt["extensions"]["germ:processing"]
+                for key in ("dspSha256", "nodeVersion", "renderQuantum"):
+                    extension.pop(key, None)
+                extension.update(
+                    engineSha256=file_digest(Path(__file__).with_name("room_engine.py")),
+                    tail=room_receipt["tail"],
+                    room=room_receipt,
+                )
         except Cancelled as exc:
             receipt.update(finalStatus="cancelled", errors=[str(exc)])
         except Refused as exc:
@@ -414,15 +491,23 @@ def execute(
         if "processing" not in result_record["profiles"]:
             result_record["profiles"].append("processing")
         validate("record", result_record, validator, temp)
-        # A cancellation during final validation still discards the descendant.
-        if cancel.is_set() and receipt["finalStatus"] == "completed":
+        # Publication admission is rechecked after potentially slow offline validation.
+        expired = receipt["finalStatus"] == "completed" and expiry <= datetime.now(timezone.utc)
+        changed_source = (
+            receipt["finalStatus"] == "completed" and file_digest(source_path) != before
+        )
+        if (cancel.is_set() or expired or changed_source) and receipt["finalStatus"] == "completed":
             receipt.update(
-                finalStatus="cancelled",
+                finalStatus="cancelled" if cancel.is_set() else "refused",
                 outputs=[],
-                errors=["owner cancelled before publication"],
+                errors=[
+                    "owner cancelled before publication"
+                    if cancel.is_set()
+                    else "source authorization expired or source changed before publication"
+                ],
                 determinism={"state": "undetermined"},
             )
-            for key in ("soundId", "outputSha256"):
+            for key in ("soundId", "outputSha256", "room"):
                 receipt["extensions"]["germ:processing"].pop(key, None)
             result_record = copy.deepcopy(record)
             result_record["revision"] += 1

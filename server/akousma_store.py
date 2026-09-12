@@ -440,6 +440,7 @@ def record_generation(
     summary: str | None = None,
     session_id: str | None = None,
     germ_lineage: dict[str, Any] | None = None,
+    designed: bool = False,
     covenant: dict[str, Any] | None = None,
     store=None,
 ) -> dict[str, Any]:
@@ -491,7 +492,7 @@ def record_generation(
                 "content_hash": f"sha256:{digest.hexdigest()}",
             },
             originating_app="germ",
-            source_type="generated",
+            source_type="designed" if designed else "generated",
             origin="generated",
             listening=_envelope_listening(listening or {}),
             parent_akousma_ids=parent_akousma_ids or [],

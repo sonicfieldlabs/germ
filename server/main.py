@@ -44,6 +44,7 @@ from server.routes import (
     workspace,
     research,
     spectral,
+    simulated,
 )
 from server.performance import PerformanceMiddleware
 from server.security import LocalOriginAndHeadersMiddleware
@@ -149,6 +150,7 @@ app.include_router(jobs.router)
 app.include_router(library.router)
 app.include_router(workspace.router)
 app.include_router(spectral.router)
+app.include_router(simulated.router)
 app.include_router(research.router)
 app.include_router(listener.router)
 app.include_router(files.router)
