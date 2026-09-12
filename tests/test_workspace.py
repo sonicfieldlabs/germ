@@ -27,6 +27,7 @@ def test_shared_library_is_stable_read_only_and_blocks_escaped_audio(monkeypatch
     assert all(row.get("sound_id") != item["sound_id"] for row in editable)
     assert any(row["key"] == key for row in client.get("/workspace/library").json()["items"])
     before = path.read_bytes()
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     assert client.get(f"/library/audio/{key}").content == before
     assert client.get(f"/library/audio/{key}/resolve").json()["sound_id"] == item["sound_id"]
     outside = tmp_path / "outside.wav"

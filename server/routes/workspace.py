@@ -344,4 +344,10 @@ def job_sounds(job_id: str):
 @router.get("/capabilities")
 def workspace_capabilities():
     from server.workspace_capabilities import catalog
-    return {"generators": catalog(registry)}
+    from server.spectral_synthesis import MODELS, RATES
+    return {"generators": catalog(registry), "spectral_generation": {
+        "contract": "germ/spectral-generation/v1", "models": sorted(MODELS),
+        "sample_rates_hz": list(RATES), "maximum_duration_seconds": 30,
+        "playback": "explicit session opt-in; unknown and beyond-reference scope locked by default",
+        "semantics": "Declared digital oscillator components, measured WAV energy and physical emission are distinct",
+    }}

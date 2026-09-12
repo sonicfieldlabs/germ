@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import array
 import json
-from hashlib import sha256
 import math
 import sys
 import wave
 from collections import deque
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
@@ -175,6 +176,10 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
                 digest.update(chunk)
         return digest.hexdigest()
     before_hash = audio_hash()
+    if request.route_preset == "agent-native":
+        return _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash)
+    if request.native_options is not None:
+        raise HTTPException(422, "native_options require the agent-native route")
     source_generation_id = _source_oida_generation_id(metadata_path, request.context)
     listen_payload = {
         "path": str(audio_path),
@@ -344,6 +349,73 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
         remembered=remembered,
         akousma_id=new_akousma_id or existing_akousma_id,
         warnings=warnings,
+    )
+
+
+def _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash):
+    """Inspect original digital bytes; native evidence is not a prompt/listening event."""
+    if not request.native_options or not request.native_options.get("permission_ref"):
+        raise HTTPException(422, "Agent-native requires native_options.permission_ref")
+    options = dict(request.native_options)
+    if any(key in options for key in ("path", "source_sha256")):
+        raise HTTPException(422, "GERM binds the native source path and hash")
+    memory = options.get("memory", "none")
+    if not isinstance(memory, str) or memory not in {"none", "record", "record_audio"}:
+        raise HTTPException(422, "Invalid native memory selection")
+    if request.remember != (memory != "none"):
+        raise HTTPException(422, "remember must match native_options.memory")
+    if request.privacy_mode == "incognito" and memory != "none":
+        raise HTTPException(422, "Incognito refuses native retention")
+    options.update(source_sha256=before_hash)
+    operation_id = options.setdefault("operation_id", uuid4().hex)
+    try:
+        with httpx.Client(timeout=settings.oida_timeout_seconds) as client:
+            response = client.post(
+                f"{settings.oida_url}/gateway/listen",
+                json={
+                    "path": str(audio_path), "source_type": "file", "route_preset": "agent-native",
+                    "operation_id": operation_id, "native_options": options,
+                    "remember": request.remember, "retain_library_audio": memory == "record_audio",
+                    "privacy_mode": request.privacy_mode,
+                },
+            )
+            _raise_oida_error(response, "native digital re-listening")
+            body = _response_object(response, "native digital re-listening")
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Oída native digital re-listening is unavailable") from exc
+    if body.get("outcome") not in ("measured", "unavailable"):
+        raise HTTPException(502, "Oída returned no native outcome")
+    if body["outcome"] == "measured" and not isinstance(body.get("report"), dict):
+        raise HTTPException(502, "Oída returned no native report")
+    warnings = []
+    same_bytes = before_hash == audio_hash()
+    if not same_bytes:
+        warnings.append("relisten_source_changed_no_output_binding")
+    record = body.get("record") if isinstance(body.get("record"), dict) else {}
+    native = {
+        "outcome": body["outcome"], "record_ref": record.get("akousma_id"),
+        "retained_record_ref": body.get("akousma_id"),
+        "aperture": _compact_external_json(body.get("aperture")),
+        "report_projection": _compact_external_json(body.get("report")),
+        "projection_limits": "Report projection is bounded; Oída owns the complete native account.",
+        "next_action": _compact_external_json(body.get("next_action")),
+    }
+    extension = {
+        "contract": "germ.oida-native-relisten/v1", "output_sha256": before_hash if same_bytes else None,
+        "audio_path": storage.relative_path(audio_path), "operation_id": operation_id,
+        "route_preset": "agent-native", "relisten_mode": "agent_native", "native_result": native,
+        "remembered": bool(body.get("akousma_id")), "akousma_id": body.get("akousma_id"),
+    }
+    # Link the later account from GERM metadata; Oída owns its native validation/retention.
+    if request.privacy_mode != "incognito":
+        _persist_relisten_context(metadata_path, extension, warnings)
+    return ListenerRelistenResult(
+        contract=extension["contract"], audio_path=storage.relative_path(audio_path),
+        metadata_path=storage.relative_path(metadata_path) if metadata_path else None,
+        route_preset="agent-native", relisten_mode="agent_native",
+        listening_event_id="", generation_id="", prompt="", negative_prompt="",
+        native_result=native, remembered=extension["remembered"],
+        akousma_id=body.get("akousma_id"), warnings=warnings,
     )
 
 

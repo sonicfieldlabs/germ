@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from server.playback import install_playback_gate
 from server.config import get_settings
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_DESCRIPTION, PRODUCT_NAME, __version__
 from server.routes import (
@@ -41,6 +42,8 @@ from server.routes import (
     time_render,
     wavetables,
     workspace,
+    research,
+    spectral,
 )
 from server.performance import PerformanceMiddleware
 from server.security import LocalOriginAndHeadersMiddleware
@@ -119,6 +122,8 @@ async def request_validation_error_handler(
         )
     return JSONResponse(status_code=422, content={"detail": details})
 
+install_playback_gate(app)
+
 app.include_router(health.router)
 app.include_router(diagnostics.router)
 app.include_router(earworm.router)
@@ -143,7 +148,7 @@ app.include_router(sessions.router)
 app.include_router(jobs.router)
 app.include_router(library.router)
 app.include_router(workspace.router)
-from server.routes import research
+app.include_router(spectral.router)
 app.include_router(research.router)
 app.include_router(listener.router)
 app.include_router(files.router)

@@ -28,7 +28,18 @@ class SynthesisProvider(AudioGenerationProvider):
         return True
 
     def list_models(self):
-        return ["additive", "physical-string", "sample", "wavetable", "granular"]
+        return [
+            "audification",
+            "additive",
+            "chirp",
+            "band-noise",
+            "fm",
+            "pulse",
+            "physical-string",
+            "sample",
+            "wavetable",
+            "granular",
+        ]
 
     def load_model(self, model_id, device="auto"):
         if model_id not in self.list_models():
@@ -48,6 +59,10 @@ class SynthesisProvider(AudioGenerationProvider):
         self.load_model(request.model)
         if not 0.1 <= request.duration <= 30 or request.batch_size != 1:
             raise ValueError("Synthesis requires one output of 0.1–30 seconds")
+        from server.spectral_synthesis import MODELS
+
+        if request.model in MODELS or request.model == "audification":
+            return self._generate_spectral(request)
         p = request.source.get("synthesis", {})
         allowed = {
             "frequency",
@@ -101,6 +116,7 @@ class SynthesisProvider(AudioGenerationProvider):
         source_hash = None
         samples = None
         table = None
+        resampling = None
         if request.model in {"sample", "granular"}:
             source_path = self.storage.resolve_existing_input_audio_path(
                 p.get("input_audio_path", "")
@@ -115,7 +131,7 @@ class SynthesisProvider(AudioGenerationProvider):
                 if (
                     wav.getsampwidth() != 2
                     or wav.getnchannels() not in (1, 2)
-                    or not 8000 <= wav.getframerate() <= 96000
+                    or not 8000 <= wav.getframerate() <= 192000
                     or not 0 < wav.getnframes() <= wav.getframerate() * 30
                 ):
                     raise ValueError("Sample must be bounded mono/stereo PCM16 WAV")
@@ -125,6 +141,14 @@ class SynthesisProvider(AudioGenerationProvider):
                     samples.byteswap()
                 if len(samples) != wav.getnframes() * channels:
                     raise ValueError("Truncated source PCM")
+        if request.model == "sample" and source_rate != self.sample_rate:
+            import numpy as np
+            from server.rate_conversion import filtered_convert
+
+            mono = np.asarray(samples, dtype=np.float64).reshape(-1, channels).mean(axis=1) / 32768
+            converted, resampling = filtered_convert(mono, source_rate, self.sample_rate)
+            samples = array.array("h", np.rint(converted * 32767).astype(np.int16))
+            source_rate, channels = self.sample_rate, 1
         if request.model == "wavetable":
             from server.processing_adapter import digest
 
@@ -282,6 +306,7 @@ class SynthesisProvider(AudioGenerationProvider):
                     "synthesis": {
                         "parameters": p,
                         "source_sha256": source_hash,
+                        "resampling": resampling,
                         "engine_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                         "runtime": sys.version,
                         "node_runtime": node_runtime if request.model == "granular" else None,
@@ -329,5 +354,119 @@ class SynthesisProvider(AudioGenerationProvider):
             metadata_files=[self.storage.relative_path(metadata)],
         )
 
+        self.storage.record_result(result)
+        return result
+
+    def _generate_spectral(self, request):
+        from server.spectral_synthesis import render
+
+        if not request.job_id:
+            raise ValueError("Submit synthesis through the existing job service")
+        seed = request.seed if request.seed >= 0 else self.storage.random_seed()
+        parameters = dict(request.source.get("synthesis", {}))
+        brief = audification = None
+        if request.source.get("spectral_frame"):
+            from server.spectral_brief import extract
+
+            if request.model != "additive":
+                raise ValueError("Spectral frames require the additive oscillator")
+            components, brief = extract(request.source["spectral_frame"])
+            parameters.update(components)
+        try:
+            if request.model == "audification":
+                from server import audify
+
+                if set(parameters) - {"sample_rate", "gain"}:
+                    raise ValueError("Audification accepts only output rate and gain")
+                pcm, spectral, audification = audify.render(
+                    request.source.get("audification"),
+                    parameters.get("sample_rate", 44100),
+                    request.duration,
+                    parameters.get("gain", 0.2),
+                    lambda: self.is_job_cancelled(request.job_id),
+                )
+            else:
+                pcm, spectral = render(
+                    request.model,
+                    parameters,
+                    request.duration,
+                    seed,
+                    lambda: self.is_job_cancelled(request.job_id),
+                )
+        except InterruptedError:
+            result = GenerationResult(
+                job_id=request.job_id,
+                status="cancelled",
+                provider=self.provider_id,
+                model=request.model,
+                mode="text-to-audio",
+                seed=seed,
+                duration=request.duration,
+                sample_rate=parameters.get("sample_rate", 44100),
+            )
+            self.storage.record_result(result)
+            return result
+        if brief and extract(request.source["spectral_frame"])[1] != brief:
+            raise ValueError("Spectral source retention or lineage changed during synthesis")
+        if audification:
+            current, source, _ = audify.resolve(request.source["audification"])
+            if (
+                audify.digest(current) != audification["source_series_sha256"]
+                or audify.digest(source) != audification["source_record_sha256"]
+            ):
+                raise ValueError("Observation source changed during synthesis")
+        if self.is_job_cancelled(request.job_id):
+            raise RuntimeError("Synthesis cancelled before publication")
+        rate = spectral["sample_rate_hz"]
+        audio, metadata = self.storage.reserve_paths(
+            request=request, mode="text-to-audio", job_id=request.job_id, count=1
+        )[0]
+        try:
+            with wave.open(str(audio), "wb") as wav:
+                wav.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+                wav.writeframes(pcm.astype("<i2").tobytes())
+            synthesis = dict(
+                parameters=parameters,
+                effective_parameters=spectral["effective_parameters"],
+                spectral=spectral,
+                seed=seed,
+                runtime=sys.version,
+                engine_sha256=hashlib.sha256(
+                    (Path(__file__).parents[1] / "spectral_synthesis.py").read_bytes()
+                ).hexdigest(),
+                semantics="Digital synthesis; no physical capture or new listening",
+            )
+            if brief:
+                synthesis["spectral_frame"] = brief
+            if audification:
+                synthesis["audification"] = audification
+            self.storage.write_metadata(
+                metadata_path=metadata,
+                request=request,
+                mode="text-to-audio",
+                provider=self.provider_id,
+                model=request.model,
+                seed=seed,
+                output_audio_path=audio,
+                sample_rate=rate,
+                status="done",
+                extra={"synthesis": synthesis},
+            )
+        except Exception:
+            if not metadata.exists():
+                audio.unlink(missing_ok=True)
+            raise
+        result = GenerationResult(
+            job_id=request.job_id,
+            status="done",
+            provider=self.provider_id,
+            model=request.model,
+            mode="text-to-audio",
+            seed=seed,
+            duration=request.duration,
+            sample_rate=rate,
+            audio_files=[self.storage.relative_path(audio)],
+            metadata_files=[self.storage.relative_path(metadata)],
+        )
         self.storage.record_result(result)
         return result

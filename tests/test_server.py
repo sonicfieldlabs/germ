@@ -1501,6 +1501,7 @@ def test_wavetable_import_and_exports() -> None:
     assert gwt_export.status_code == 200
     assert len(gwt_export.content) == 4 * 512 * 4
 
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     stack_export = client.get(f"/wavetables/{wavetable['id']}/export?format=wav-stack")
     assert stack_export.status_code == 200
     with wave.open(io.BytesIO(stack_export.content), "rb") as wav:
@@ -3403,6 +3404,7 @@ def test_generated_output_can_be_played_from_files_route() -> None:
     )
     assert response.status_code == 200
     audio_file = response.json()["audio_files"][0]
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     file_response = client.get(f"/files/{audio_file}")
     assert file_response.status_code == 200
     assert file_response.headers["content-type"].startswith("audio")
@@ -3448,6 +3450,7 @@ def test_files_route_refuses_to_serve_metadata_json() -> None:
     assert response.status_code == 200
     audio_file = response.json()["audio_files"][0]
     metadata_file = response.json()["metadata_files"][0]
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     # Audio is served, but the sibling metadata JSON is not exposed over GET.
     assert client.get(f"/files/{audio_file}").status_code == 200
     assert client.get(f"/files/{metadata_file}").status_code == 404

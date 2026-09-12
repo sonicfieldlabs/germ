@@ -1155,6 +1155,7 @@ class ListenerRelistenRequest(JSONRequestModel):
     intent: Literal["transform", "variation", "counterpoint", "sonification"] = "variation"
     privacy_mode: Literal["session", "incognito"] = "session"
     remember: bool = False
+    native_options: dict[str, Any] | None = None
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1164,7 +1165,7 @@ class ListenerRelistenResult(BaseModel):
     audio_path: str
     metadata_path: str | None = None
     route_preset: str
-    relisten_mode: Literal["generation_relisten", "gateway_listen"] = "gateway_listen"
+    relisten_mode: Literal["generation_relisten", "gateway_listen", "agent_native"] = "gateway_listen"
     source_generation_id: str | None = None
     listening_event_id: str
     generation_id: str
@@ -1173,6 +1174,7 @@ class ListenerRelistenResult(BaseModel):
     source_summary: str = ""
     listening_result: dict[str, Any] = Field(default_factory=dict)
     route_comparison: dict[str, Any] = Field(default_factory=dict)
+    native_result: dict[str, Any] = Field(default_factory=dict)
     remembered: bool = False
     akousma_id: str | None = None
     warnings: list[str] = Field(default_factory=list)

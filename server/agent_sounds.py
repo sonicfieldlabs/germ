@@ -64,6 +64,13 @@ def package(metadata_files, recipient_requirements):
                 },
                 human_perceptual_access="unknown",
             )
+        spectral = metadata.get("synthesis", {}).get("spectral")
+        if spectral:
+            if spectral.get("sample_rate_hz") != representation["sample_rate_hz"]:
+                raise ValueError("Spectral receipt and WAV rate disagree")
+            representation["sampled_band_hz"].update(
+                intended_band_hz=spectral["intended_band_hz"], measured=spectral["measured"],
+                scope=spectral["scope"], limitations=spectral["limitations"])
         entry = dict(
             id=masa["representation_id"],
             path=f"assets/{i:04d}.wav",

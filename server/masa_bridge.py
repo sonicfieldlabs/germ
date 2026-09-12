@@ -448,7 +448,7 @@ def build_generation_record(metadata: dict[str, Any]) -> dict[str, Any]:
         receipt["extensions"]["germ:synthesis"] = deepcopy(metadata["synthesis"])
     receipt["extensions"]["germ:execution"] = {"jobId": metadata.get("generation_job_id"), "contract": "masa/0.2.0", "profile": "generation"}
 
-    return {
+    record = {
         "$schema": MASA_SCHEMA,
         "masaVersion": MASA_VERSION,
         "id": record_id,
@@ -542,6 +542,33 @@ def build_generation_record(metadata: dict[str, Any]) -> dict[str, Any]:
             },
         },
     }
+
+    audification = metadata.get("synthesis", {}).get("audification")
+    if audification:
+        source = audification["source_graph"]
+        # Embed the exact selected source graph in the receipt. Top-level source
+        # projections carry external policy context rather than unresolved policy
+        # targets from a different MatterRecord; they grant no new permission.
+        for field in ("actors", "sources", "representations", "observations"):
+            existing = {item["id"] for item in record[field]}
+            projected = []
+            for item in source.get(field, []):
+                if item["id"] in existing:
+                    continue
+                item = deepcopy(item)
+                if item.get("policyRefs"):
+                    item.setdefault("extensions", {})["germ:external-policy-context"] = {
+                        "sourceRecordRef": audification["source_record_ref"],
+                        "sourcePolicyRefs": item["policyRefs"],
+                        "receiptLocation": "germ:synthesis.audification.source_graph.policies",
+                        "permission": "No new permission asserted by this projection",
+                    }
+                    item["policyRefs"] = [policy_id]
+                projected.append(item)
+            record[field] = [*projected, *record[field]]
+        record["mappings"].append(deepcopy(audification["mapping"]))
+        record["profiles"] = list(dict.fromkeys([*record["profiles"], "observation", "mapping"]))
+    return record
 
 
 def build_analysis_record(artifact: dict[str, Any]) -> dict[str, Any]:
