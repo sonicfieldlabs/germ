@@ -1,4 +1,5 @@
 import copy
+import hashlib
 from threading import Event
 
 from fastapi.testclient import TestClient
@@ -29,7 +30,10 @@ def test_shared_library_is_stable_read_only_and_blocks_escaped_audio(monkeypatch
     before = path.read_bytes()
     assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     assert client.get(f"/library/audio/{key}").content == before
-    assert client.get(f"/library/audio/{key}/resolve").json()["sound_id"] == item["sound_id"]
+    resolved = client.get(f"/library/audio/{key}/resolve").json()
+    assert resolved["sound_id"] == item["sound_id"]
+    assert resolved["sha256"] == hashlib.sha256(before).hexdigest()
+    assert resolved["duration"] == 1.0
     outside = tmp_path / "outside.wav"
     write_sine_wav(outside, duration=1, frequency=330)
     (root / "escape.wav").symlink_to(outside)

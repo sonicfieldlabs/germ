@@ -642,7 +642,23 @@ def resolve_library_audio(key: str) -> tuple[dict, Path]:
 @router.get("/library/audio/{key}/resolve")
 def library_audio_location(key: str):
     item, path = resolve_library_audio(key)
-    return {"path": str(path), "sound_id": item["sound_id"]}
+    # Compute only on explicit resolution, not while painting the library index.
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    import soundfile as sf
+
+    try:
+        info = sf.info(str(path))
+        duration = info.frames / info.samplerate
+    except (OSError, RuntimeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, "Cannot verify retained audio duration") from exc
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise HTTPException(409, "Library audio changed during resolution")
+    return {"path": str(path), "sound_id": item["sound_id"], "sha256": digest.hexdigest(), "duration": duration}
 
 
 @router.get("/library/audio/{key}")
