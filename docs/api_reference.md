@@ -8,6 +8,13 @@ http://127.0.0.1:5178
 
 ## GET /health
 
+## GET /owner/identity
+
+Returns `centaur/owner-identity/v1` with the process workspace, generation and an
+opaque effective-output binding. The route does not initialize output or load a
+provider. Workspace-bound mutations require the returned binding together with the
+workspace ID and generation headers.
+
 Returns server status, active provider, device, loaded models, and output directory.
 
 ## GET /models

@@ -1,5 +1,11 @@
 # Client integration
 
+In a Centaur workspace, `GET /owner/identity` reports the process generation and an
+opaque fingerprint of GERM's effective output root without initializing output.
+Every mutation requires matching workspace, generation and binding headers. GERM
+also verifies Oída's identity before its re-listening bridge sends an Oída mutation.
+Processes without workspace variables report legacy mode.
+
 Base URL:
 
 ```text

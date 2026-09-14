@@ -36,10 +36,20 @@ Two findings remain accepted temporarily for the optional local provider:
 
 | Advisory | Affected API | GERM exposure | Review deadline |
 | --- | --- | --- | --- |
-| `PYSEC-2026-139` / `CVE-2026-4538` | `torch.export.load` of `.pt2` artifacts | GERM does not call this API or accept `.pt2` model artifacts. No patched PyTorch release is currently published. | 2026-09-02 |
-| `GHSA-rrmf-rvhw-rf47` / `CVE-2025-3000` | TorchScript compilation | GERM does not compile user-supplied TorchScript. Moving to PyTorch 2.13 requires upstream Stable Audio and accelerator validation. | 2026-09-02 |
+| `PYSEC-2026-139` / `CVE-2026-4538` | `torch.export.load` of `.pt2` artifacts | GERM does not call this API or accept `.pt2` model artifacts. The local audit still reports this finding for the pinned pair. | 2026-09-20, or before enabling the optional runtime |
+| `GHSA-rrmf-rvhw-rf47` / `CVE-2025-3000` | TorchScript compilation | GERM does not compile user-supplied TorchScript. Moving to PyTorch 2.13 requires upstream Stable Audio and accelerator validation. | 2026-09-20, or before enabling the optional runtime |
 
 The exception ends immediately if GERM begins calling either API, if its model
 trust boundary changes, or when a compatible upstream runtime is available.
 The all-extras CI audit ignores only these identifiers and fails on any new
 finding.
+
+### Local review, 2026-09-13
+
+Repository call-site inspection found no new use of the excepted APIs. The
+all-extras dependency audit passes with exactly the same two exceptions; no
+additional advisory was suppressed. HTTPX2/HTTPCore2 were updated to 2.12.0,
+and the affected optional dependency bounds were refreshed. These software
+checks do not validate GPU/MPS inference with the new resolved dependencies.
+Keep optional model execution conditional on that validation and review the
+exceptions again before enabling it, or by the deadline above.

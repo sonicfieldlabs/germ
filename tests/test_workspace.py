@@ -28,7 +28,9 @@ def test_shared_library_is_stable_read_only_and_blocks_escaped_audio(monkeypatch
     assert all(row.get("sound_id") != item["sound_id"] for row in editable)
     assert any(row["key"] == key for row in client.get("/workspace/library").json()["items"])
     before = path.read_bytes()
-    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
+    assert (
+        client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
+    )
     assert client.get(f"/library/audio/{key}").content == before
     resolved = client.get(f"/library/audio/{key}/resolve").json()
     assert resolved["sound_id"] == item["sound_id"]
@@ -291,7 +293,15 @@ def test_selected_memory_context_preserves_identity_and_guidance(monkeypatch):
     assert context["memory_influences"][0]["sha256"] == workspace.digest(selected)
     assert "Sparse texture" in fields["prompt"] and "Roof resonance" in fields["prompt"]
     assert context["reasoning_session_id"] == "conv_one"
-    decision = client.post("/workspace/render", json={"mode":"memory", "record_ids":["akm_selected"], "reasoning_decision_id":"decision_one", "reasoning_summary":"A temporal gap"})
+    decision = client.post(
+        "/workspace/render",
+        json={
+            "mode": "memory",
+            "record_ids": ["akm_selected"],
+            "reasoning_decision_id": "decision_one",
+            "reasoning_summary": "A temporal gap",
+        },
+    )
     assert decision.status_code == 200, decision.text
     assert jobs[-1].request["generation_context"]["reasoning_decision_id"] == "decision_one"
     assert jobs[-1].request["generation_context"]["reasoning_session_id"] is None
@@ -327,33 +337,79 @@ def test_job_sounds_matches_explicit_outputs_only(monkeypatch, tmp_path):
     assert len(values) == 1 and values[0]["key"] == key
 
 
-def test_workspace_editing_checks_real_duration_and_keeps_source(monkeypatch,tmp_path):
-    _,path,key,item=external_audio(monkeypatch,tmp_path)
-    before=path.read_bytes();admitted=[]
-    monkeypatch.setattr(registry.get('stable_audio_mlx'),'is_available',lambda:True)
+def test_workspace_editing_checks_real_duration_and_keeps_source(monkeypatch, tmp_path):
+    _, path, key, item = external_audio(monkeypatch, tmp_path)
+    before = path.read_bytes()
+    admitted = []
+    monkeypatch.setattr(registry.get("stable_audio_mlx"), "is_available", lambda: True)
+
     def submit(job):
         admitted.append(job)
+
         class Ticket:
-            def model_dump(self):return {'job_id':'edit-test','status':'queued'}
+            def model_dump(self):
+                return {"job_id": "edit-test", "status": "queued"}
+
         return Ticket()
-    monkeypatch.setattr(workspace,'submit_job',submit)
-    r=client.post('/workspace/render',json={'mode':'audio','sound_keys':[key],'edit':'inpaint','inpaint_ranges':[[.2,.5]],'duration':1})
-    assert r.status_code==200,r.text
-    assert admitted[-1].mode=='inpainting'
-    assert admitted[-1].request['lineage']['parents']==[item['sound_id']]
-    r=client.post('/workspace/render',json={'mode':'audio','sound_keys':[key],'edit':'continue','duration':2})
-    assert r.status_code==200,r.text
-    assert admitted[-1].request['source_duration']==1
-    assert admitted[-1].request['target_duration']==2
-    assert path.read_bytes()==before
-    for body in [{'edit':'continue','duration':.5},{'edit':'inpaint','duration':1,'inpaint_ranges':[[.2,2]]},{'model':'synth-additive','duration':1}]:
-        assert client.post('/workspace/render',json={'mode':'audio','sound_keys':[key],**body}).status_code==422
-    assert len(admitted)==2
+
+    monkeypatch.setattr(workspace, "submit_job", submit)
+    r = client.post(
+        "/workspace/render",
+        json={
+            "mode": "audio",
+            "sound_keys": [key],
+            "edit": "inpaint",
+            "inpaint_ranges": [[0.2, 0.5]],
+            "duration": 1,
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert admitted[-1].mode == "inpainting"
+    assert admitted[-1].request["lineage"]["parents"] == [item["sound_id"]]
+    r = client.post(
+        "/workspace/render",
+        json={"mode": "audio", "sound_keys": [key], "edit": "continue", "duration": 2},
+    )
+    assert r.status_code == 200, r.text
+    assert admitted[-1].request["source_duration"] == 1
+    assert admitted[-1].request["target_duration"] == 2
+    assert path.read_bytes() == before
+    for body in [
+        {"edit": "continue", "duration": 0.5},
+        {"edit": "inpaint", "duration": 1, "inpaint_ranges": [[0.2, 2]]},
+        {"model": "synth-additive", "duration": 1},
+    ]:
+        assert (
+            client.post(
+                "/workspace/render", json={"mode": "audio", "sound_keys": [key], **body}
+            ).status_code
+            == 422
+        )
+    assert len(admitted) == 2
 
 
 def test_cpu_workspace_uses_existing_synthesizer_and_rejects_unknown_controls():
-    r=client.post('/workspace/render',json={'mode':'prompt','model':'synth-additive','duration':.2,'synthesis':{'frequency':330,'gain':.1}})
-    assert r.status_code==200,r.text
-    assert r.json()['jobs'][0]['provider']=='synthesis'
-    assert client.post('/workspace/render',json={'mode':'prompt','model':'synth-additive','synthesis':{'shell':'no'}}).status_code==422
-    assert client.post('/workspace/render',json={'mode':'prompt','model':'ace-turbo','edit':'continue'}).status_code==422
+    r = client.post(
+        "/workspace/render",
+        json={
+            "mode": "prompt",
+            "model": "synth-additive",
+            "duration": 0.2,
+            "synthesis": {"frequency": 330, "gain": 0.1},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["jobs"][0]["provider"] == "synthesis"
+    assert (
+        client.post(
+            "/workspace/render",
+            json={"mode": "prompt", "model": "synth-additive", "synthesis": {"shell": "no"}},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/workspace/render", json={"mode": "prompt", "model": "ace-turbo", "edit": "continue"}
+        ).status_code
+        == 422
+    )

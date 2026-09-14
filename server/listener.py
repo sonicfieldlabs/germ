@@ -3,6 +3,7 @@ from __future__ import annotations
 import array
 import json
 import math
+import os
 import sys
 import wave
 from collections import deque
@@ -56,6 +57,34 @@ GESTURE_WORDS = {
     "tone",
     "swell",
 }
+
+
+def _oida_workspace_headers() -> dict[str, str]:
+    workspace_id = os.getenv("LISTENINGSTACK_WORKSPACE_ID")
+    generation = os.getenv("LISTENINGSTACK_WORKSPACE_GENERATION")
+    if not workspace_id or not generation:
+        return {}
+    try:
+        with httpx.Client(timeout=2, trust_env=False) as client:
+            response = client.get(f"{settings.oida_url}/owner/identity")
+        response.raise_for_status()
+        identity = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, "Oída workspace identity is unavailable") from exc
+    if (
+        not isinstance(identity, dict)
+        or identity.get("contract") != "centaur/owner-identity/v1"
+        or identity.get("owner") != "oida"
+        or identity.get("workspace_id") != workspace_id
+        or identity.get("generation") != generation
+        or not isinstance(identity.get("binding"), str)
+    ):
+        raise HTTPException(409, "Oída workspace binding does not match GERM")
+    return {
+        "X-Centaur-Workspace": workspace_id,
+        "X-Centaur-Generation": generation,
+        "X-Centaur-Binding": identity["binding"],
+    }
 
 
 def enhance_prompt(request: ListenerEnhanceRequest) -> ListenerEnhanceResult:
@@ -169,12 +198,14 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
     """Send generated audio to Oída, then ask Oída for the next editable prompt."""
     audio_path = _resolve_audio_path(request.audio_path)
     metadata_path = _resolve_metadata_path(request.metadata_path)
+
     def audio_hash():
         digest = sha256()
         with audio_path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
     before_hash = audio_hash()
     if request.route_preset == "agent-native":
         return _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash)
@@ -198,7 +229,11 @@ def relisten_with_oida(request: ListenerRelistenRequest) -> ListenerRelistenResu
     warnings: list[str] = []
     relisten_mode = "gateway_listen"
     try:
-        with httpx.Client(timeout=settings.oida_timeout_seconds) as client:
+        with httpx.Client(
+            timeout=settings.oida_timeout_seconds,
+            headers=_oida_workspace_headers(),
+            trust_env=False,
+        ) as client:
             if source_generation_id:
                 listen_response = client.post(
                     f"{settings.oida_url}/generation/relisten",
@@ -369,13 +404,21 @@ def _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash
     options.update(source_sha256=before_hash)
     operation_id = options.setdefault("operation_id", uuid4().hex)
     try:
-        with httpx.Client(timeout=settings.oida_timeout_seconds) as client:
+        with httpx.Client(
+            timeout=settings.oida_timeout_seconds,
+            headers=_oida_workspace_headers(),
+            trust_env=False,
+        ) as client:
             response = client.post(
                 f"{settings.oida_url}/gateway/listen",
                 json={
-                    "path": str(audio_path), "source_type": "file", "route_preset": "agent-native",
-                    "operation_id": operation_id, "native_options": options,
-                    "remember": request.remember, "retain_library_audio": memory == "record_audio",
+                    "path": str(audio_path),
+                    "source_type": "file",
+                    "route_preset": "agent-native",
+                    "operation_id": operation_id,
+                    "native_options": options,
+                    "remember": request.remember,
+                    "retain_library_audio": memory == "record_audio",
                     "privacy_mode": request.privacy_mode,
                 },
             )
@@ -393,7 +436,8 @@ def _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash
         warnings.append("relisten_source_changed_no_output_binding")
     record = body.get("record") if isinstance(body.get("record"), dict) else {}
     native = {
-        "outcome": body["outcome"], "record_ref": record.get("akousma_id"),
+        "outcome": body["outcome"],
+        "record_ref": record.get("akousma_id"),
         "retained_record_ref": body.get("akousma_id"),
         "aperture": _compact_external_json(body.get("aperture")),
         "report_projection": _compact_external_json(body.get("report")),
@@ -401,21 +445,33 @@ def _native_relisten(request, audio_path, metadata_path, before_hash, audio_hash
         "next_action": _compact_external_json(body.get("next_action")),
     }
     extension = {
-        "contract": "germ.oida-native-relisten/v1", "output_sha256": before_hash if same_bytes else None,
-        "audio_path": storage.relative_path(audio_path), "operation_id": operation_id,
-        "route_preset": "agent-native", "relisten_mode": "agent_native", "native_result": native,
-        "remembered": bool(body.get("akousma_id")), "akousma_id": body.get("akousma_id"),
+        "contract": "germ.oida-native-relisten/v1",
+        "output_sha256": before_hash if same_bytes else None,
+        "audio_path": storage.relative_path(audio_path),
+        "operation_id": operation_id,
+        "route_preset": "agent-native",
+        "relisten_mode": "agent_native",
+        "native_result": native,
+        "remembered": bool(body.get("akousma_id")),
+        "akousma_id": body.get("akousma_id"),
     }
     # Link the later account from GERM metadata; Oída owns its native validation/retention.
     if request.privacy_mode != "incognito":
         _persist_relisten_context(metadata_path, extension, warnings)
     return ListenerRelistenResult(
-        contract=extension["contract"], audio_path=storage.relative_path(audio_path),
+        contract=extension["contract"],
+        audio_path=storage.relative_path(audio_path),
         metadata_path=storage.relative_path(metadata_path) if metadata_path else None,
-        route_preset="agent-native", relisten_mode="agent_native",
-        listening_event_id="", generation_id="", prompt="", negative_prompt="",
-        native_result=native, remembered=extension["remembered"],
-        akousma_id=body.get("akousma_id"), warnings=warnings,
+        route_preset="agent-native",
+        relisten_mode="agent_native",
+        listening_event_id="",
+        generation_id="",
+        prompt="",
+        negative_prompt="",
+        native_result=native,
+        remembered=extension["remembered"],
+        akousma_id=body.get("akousma_id"),
+        warnings=warnings,
     )
 
 
@@ -648,7 +704,9 @@ def _resolve_metadata_path(raw_path: str | None) -> Path | None:
         if path.stat().st_size > MAX_LISTENER_METADATA_BYTES:
             raise HTTPException(status_code=413, detail="listener metadata exceeds the 10 MB limit")
     except OSError as exc:
-        raise HTTPException(status_code=422, detail="listener metadata could not be inspected") from exc
+        raise HTTPException(
+            status_code=422, detail="listener metadata could not be inspected"
+        ) from exc
     return path
 
 
@@ -743,7 +801,9 @@ def _wav_features(path: Path) -> dict[str, Any]:
             if compression != "NONE":
                 raise HTTPException(status_code=422, detail="compressed WAV audio is not supported")
             if channels <= 0 or channels > 8:
-                raise HTTPException(status_code=422, detail="audio must have between 1 and 8 channels")
+                raise HTTPException(
+                    status_code=422, detail="audio must have between 1 and 8 channels"
+                )
             if sample_rate <= 0 or sample_rate > 768_000:
                 raise HTTPException(status_code=422, detail="audio sample rate is invalid")
             if sample_width not in {1, 2, 3, 4}:
@@ -811,8 +871,7 @@ def _wav_features(path: Path) -> dict[str, Any]:
     rms = math.sqrt(sum_squares / total_frames)
     end_values = list(end_edge)
     edge_delta = math.sqrt(
-        sum((a - b) * (a - b) for a, b in zip(start_edge, end_values, strict=True))
-        / edge_count
+        sum((a - b) * (a - b) for a, b in zip(start_edge, end_values, strict=True)) / edge_count
     )
     return {
         "duration": round(total_frames / sample_rate, 6),

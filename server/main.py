@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -52,15 +55,19 @@ from server.security import LocalOriginAndHeadersMiddleware
 
 settings = get_settings()
 
+
 @asynccontextmanager
 async def lifespan(_app):
     from server.registry import job_runner
+
     job_runner.startup()
     try:
         yield
     finally:
         job_runner.shutdown(wait=False)
-        _app.state.shutdown_settled = await asyncio.to_thread(job_runner.wait_for_settlement, settings.worker_shutdown_seconds)
+        _app.state.shutdown_settled = await asyncio.to_thread(
+            job_runner.wait_for_settlement, settings.worker_shutdown_seconds
+        )
 
 
 app = FastAPI(
@@ -73,6 +80,49 @@ app = FastAPI(
     version=__version__,
     docs_url=None,
 )
+
+_WORKSPACE_ID = os.getenv("LISTENINGSTACK_WORKSPACE_ID")
+_WORKSPACE_GENERATION = os.getenv("LISTENINGSTACK_WORKSPACE_GENERATION")
+_WORKSPACE_BINDING = hashlib.sha256(
+    json.dumps(
+        ["germ", _WORKSPACE_ID, _WORKSPACE_GENERATION, str(settings.output_root.resolve())],
+        separators=(",", ":"),
+    ).encode()
+).hexdigest()
+
+
+@app.middleware("http")
+async def workspace_admission(request: Request, call_next):
+    if (
+        _WORKSPACE_ID
+        and _WORKSPACE_GENERATION
+        and request.method.upper() not in {"GET", "HEAD", "OPTIONS"}
+    ):
+        supplied = (
+            request.headers.get("x-centaur-workspace"),
+            request.headers.get("x-centaur-generation"),
+            request.headers.get("x-centaur-binding"),
+        )
+        if supplied != (_WORKSPACE_ID, _WORKSPACE_GENERATION, _WORKSPACE_BINDING):
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "GERM refused a stale or mismatched workspace binding"},
+            )
+    return await call_next(request)
+
+
+@app.get("/owner/identity")
+def owner_identity() -> dict[str, object]:
+    return {
+        "contract": "centaur/owner-identity/v1",
+        "owner": "germ",
+        "mode": "workspace" if _WORKSPACE_ID and _WORKSPACE_GENERATION else "legacy",
+        "workspace_id": _WORKSPACE_ID,
+        "generation": _WORKSPACE_GENERATION,
+        "binding": _WORKSPACE_BINDING,
+        "pid": os.getpid(),
+    }
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,8 +153,7 @@ async def request_validation_error_handler(
     errors = exc.errors()
     for error in errors[:100]:
         location = [
-            value if isinstance(value, int) else str(value)[:500]
-            for value in error.get("loc", ())
+            value if isinstance(value, int) else str(value)[:500] for value in error.get("loc", ())
         ]
         details.append(
             {
@@ -122,6 +171,7 @@ async def request_validation_error_handler(
             }
         )
     return JSONResponse(status_code=422, content={"detail": details})
+
 
 install_playback_gate(app)
 

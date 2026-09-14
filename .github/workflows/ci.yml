@@ -15,10 +15,32 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: germ
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          path: germ
+      - name: Checkout earworm contracts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: sonicfieldlabs/earworm
+          ref: a8b827b98222e8d437a766052c78860b311b3067
+          path: earworm
+      - name: Checkout akouo contracts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: sonicfieldlabs/akouo
+          ref: 110fe5b848f67840a724f347039b7b071b64e272
+          path: akouo
+      - name: Checkout akousmata contracts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: sonicfieldlabs/akousmata
+          ref: 23015d71ba28eb4092163cdfe2a7ccab632949be
+          path: akousmata
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
