@@ -28,10 +28,28 @@ MODE_SPECS: dict[ModeId, tuple[type[BaseModel], str]] = {
 }
 
 
+def preflight_deployment(request_model: BaseModel) -> None:
+    """Reject incomplete isolated deployments before creating a queued job.
+
+    This checks manifest structure, not multi-gigabyte hashes. The provider
+    repeats admission with digest verification immediately before execution.
+    """
+    try:
+        if getattr(request_model, "provider", None) == "ace_step":
+            from server.ace.deployment import deployment
+            deployment()
+        elif getattr(request_model, "provider", None) == "research":
+            from server.research.deployment import deployment
+            deployment(request_model.model)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HTTPException(422, "Isolated deployment admission failed; verify the deployment manifest") from exc
+
+
 def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -> GenerationResult:
     from server.registry import job_runner
     from server.job_runner import JobQueueFullError
     from concurrent.futures import CancelledError
+    preflight_deployment(request_model)
     job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}), status="queued")
     try:
         future = job_runner.submit(job_id, run_provider_method_with_existing_job, request_model,

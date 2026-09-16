@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from server.job_runner import JobQueueFullError
-from server.routes._utils import request_model_for_mode, run_provider_method_with_existing_job
+from server.routes._utils import preflight_deployment, request_model_for_mode, run_provider_method_with_existing_job
 from server.registry import job_runner, settings, storage
 from server.security import is_allowed_origin
 from server.schemas import JobStatus, JobSubmitRequest, JobSubmitResponse
@@ -32,6 +32,7 @@ def submit_job(request: JobSubmitRequest) -> JobSubmitResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    preflight_deployment(request_model)
     request_data = request_model.model_dump(exclude={"job_id"})
     job_id = storage.new_job(request.mode, request_data, status="queued")
     try:

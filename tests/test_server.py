@@ -3376,7 +3376,7 @@ def test_dashboard_static_app_serves() -> None:
 
 
 def test_api_reference_mentions_schema_routes() -> None:
-    docs = Path("docs/api_reference.md").read_text(encoding="utf-8")
+    docs = (Path(__file__).resolve().parents[1] / "docs/api_reference.md").read_text(encoding="utf-8")
     missing: list[str] = []
     excluded = {"/", "/dashboard", "/dashboard/"}
     for route in app.routes:

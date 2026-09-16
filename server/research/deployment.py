@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 
+from server.deployment_validation import require_artifact, validate_manifest
+
 
 def sha(path):
     value = hashlib.sha256()
@@ -17,7 +19,19 @@ def deployment(tool, verify=False):
     if not path:
         raise ValueError("Research instruments are not provisioned")
     config = json.loads(Path(path).read_text())
+    if not isinstance(config, dict) or not isinstance(config.get("tools"), dict):
+        raise ValueError("Research deployment requires a tools object")
+    if tool not in {"basic-pitch", "rave-guitar"} or tool not in config["tools"]:
+        raise ValueError("Research tool is not admitted")
     entry = config["tools"][tool]
+    validate_manifest(
+        entry, worker=Path(__file__).with_name("worker.py"),
+        adapter=Path(__file__).parents[1] / "providers/research_provider.py",
+        limits=dict(max_seconds=30, max_job_seconds=180, concurrency=1, offline=True),
+    )
+    require_artifact(entry, "model_path")
+    if not isinstance(entry.get("license"), str) or not entry["license"].strip():
+        raise ValueError("Research deployment requires a license")
     if (
         entry.get("status") != "admitted"
         or entry.get("tool") != tool
