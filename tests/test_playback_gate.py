@@ -58,3 +58,28 @@ def test_expiry_and_early_refusal_do_not_open_media(monkeypatch):
     now[0] += 901
     assert client.get("/library/audio/test").status_code == 403
     assert len(opened) == 1
+
+
+def test_station_authorization_metadata_is_not_browser_playback():
+    app = FastAPI()
+    authorized = []
+
+    @app.get("/library/audio/test/authorization")
+    def authorization():
+        authorized.append(True)
+        return {"contract": "germ/audio-authorization/v1"}
+
+    @app.get("/library/audio/evil/authorization")
+    def unexpected_audio():
+        return Response(b"pcm", media_type="audio/wav")
+
+    @app.get("/library/audio/test")
+    def audio():
+        return Response(b"pcm", media_type="audio/wav")
+
+    install_playback_gate(app)
+    client = TestClient(app)
+    assert client.get("/library/audio/test/authorization").status_code == 200
+    assert authorized == [True]
+    assert client.get("/library/audio/evil/authorization").status_code == 403
+    assert client.get("/library/audio/test").status_code == 403

@@ -51,7 +51,11 @@ def install_playback_gate(app, prefix=""):
             admitted = grants.get(token, 0) > monotonic()
         path = request.url.path.lower()
         media_route = (
-            ("/audio/" in path and not path.endswith("/resolve"))
+            (
+                "/audio/" in path
+                and not path.endswith("/resolve")
+                and not (path.startswith("/library/audio/") and path.endswith("/authorization"))
+            )
             or "/sources/radio/" in path
             or "/chunks/" in path
             or path.endswith(
