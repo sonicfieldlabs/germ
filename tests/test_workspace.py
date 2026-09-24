@@ -441,3 +441,29 @@ def test_cpu_workspace_uses_existing_synthesizer_and_rejects_unknown_controls():
         ).status_code
         == 422
     )
+
+
+def test_memory_replay_checks_the_named_item_as_the_full_listing_would(monkeypatch):
+    rows = [
+        {
+            "sound_id": "conditioned",
+            "title": "Conditioned",
+            "audio_exists": True,
+            "audio_file": "tone.wav",
+            "memory_ids": ["akm_one"],
+            "generation_context": {"memory_influences": [{"record_id": "akm_x", "sha256": "0" * 64}]},
+        },
+    ]
+    monkeypatch.setattr(library, "_library_cache", {"built_signature": None, "items": None})
+    monkeypatch.setattr(library, "_cached_output_signature_unlocked", lambda: 1)
+    monkeypatch.setattr(library, "_build_library_items", lambda: list(rows))
+    import server.memory_policy as policy
+    from fastapi import HTTPException
+
+    def refuse(context, session=None):
+        if context.get("memory_influences"):
+            raise HTTPException(423, "withheld")
+
+    monkeypatch.setattr(policy, "validate_context", refuse)
+    assert client.get("/workspace/library/by-memory/akm_one").json()["items"] == []
+    assert all(item["sound_id"] != "conditioned" for item in library.library_items())

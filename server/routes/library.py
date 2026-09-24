@@ -639,11 +639,18 @@ def _refresh_library_unlocked(signature=None):
 
 
 def library_memory_replay(record_id: str) -> list[dict]:
-    """Bounded exact-lineage lookup, invalidated with the canonical library index."""
+    """Bounded exact-lineage lookup, invalidated with the canonical library index.
+
+    The item it names is checked for permission afresh, as the full listing would,
+    so a caller can ask for one record's audio without paying for every item's check.
+    """
     with _library_cache_lock:
         _refresh_library_unlocked()
         item = _library_cache.get("memory_index", {}).get(record_id)
-        return [{**item, "memory_ids": list(item["memory_ids"])}] if item else []
+        source = _library_cache.get("key_index", {}).get(item["key"]) if item else None
+    if item is None or source is None or not _permitted_items([source]):
+        return []
+    return [{**item, "memory_ids": list(item["memory_ids"])}]
 
 
 def library_items() -> list[dict[str, Any]]:
@@ -657,15 +664,17 @@ def library_items() -> list[dict[str, Any]]:
 def _permitted_items(items):
     # Never cache permission. Mid-flight revocation can leave physical artifacts,
     # but those artifacts and their prompts must not become readable results.
-    from server.memory_policy import validate_context
+    # One request shares one admission session: each record is read once per request.
+    from server.memory_policy import AdmissionSession, validate_context
     permitted = []
-    for item in items:
-        context = item.get("generation_context") or (item.get("lineage", {}).get("operation_params") or {}).get("generation_context") or {}
-        try:
-            validate_context(context)
-            permitted.append(item)
-        except (HTTPException, KeyError, ValueError):
-            continue
+    with AdmissionSession() as session:
+        for item in items:
+            context = item.get("generation_context") or (item.get("lineage", {}).get("operation_params") or {}).get("generation_context") or {}
+            try:
+                validate_context(context, session=session)
+                permitted.append(item)
+            except (HTTPException, KeyError, ValueError):
+                continue
     return permitted
 
 
