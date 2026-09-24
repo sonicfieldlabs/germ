@@ -28,7 +28,7 @@ def test_memory_replay_index_is_bounded_exact_and_invalidated(monkeypatch):
 
     monkeypatch.setattr(library, "_build_library_items", build)
     result = client.get("/workspace/library/by-memory/akm_one").json()
-    assert result == {"items": [{"key": library.library_key(rows[0]), "title": "Retained", "memory_ids": ["akm_one"]}], "count": 1}
+    assert result == {"items": [{"key": library.library_key(rows[0]), "title": "Retained", "memory_ids": ["akm_one"], "duration": None}], "count": 1}
     for identifier in ("akm_on", "akm_other", "akm_gone"):
         assert client.get("/workspace/library/by-memory/" + identifier).json()["items"] == []
     assert len(builds) == 1

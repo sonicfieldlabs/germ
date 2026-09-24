@@ -633,6 +633,7 @@ def _refresh_library_unlocked(signature=None):
                     "key": library_key(item),
                     "title": str(item.get("title") or "Retained listening audio")[:256],
                     "memory_ids": [rid],
+                    "duration": item.get("duration"),
                 })
         _library_cache.update(items=items, built_signature=signature, memory_index=memory_index,
                               key_index={library_key(item): item for item in items})
