@@ -59,7 +59,19 @@ def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -
         storage.write_job_receipt(job_id)
         raise HTTPException(429 if isinstance(exc, JobQueueFullError) else 503, str(exc)) from exc
     try:
-        return future.result()
+        result = future.result()
+        # Future.result can wake before its done callbacks persist lifecycle
+        # receipts. A synchronous success must include that durable boundary.
+        deadline = time.monotonic() + 10
+        while True:
+            job = storage.get_job(job_id)
+            if job and job.metrics.get("lifecycle_receipt_error"):
+                raise HTTPException(503, "Generation settled but its lifecycle receipt could not be written; inspect job " + job_id)
+            if job and job.metrics.get("receipt_ready"):
+                return result
+            if time.monotonic() >= deadline:
+                raise HTTPException(503, "Generation settled but its lifecycle receipt is unconfirmed; inspect this job before retrying")
+            time.sleep(.01)
     except CancelledError:
         return GenerationResult(job_id=job_id, status="cancelled", mode=mode,
                                 error="job cancelled before execution")
@@ -93,6 +105,8 @@ def run_provider_method_with_existing_job(
     started = time.perf_counter()
     provider = None
     try:
+        from server.memory_policy import validate_conditioning
+        validate_conditioning(request_model)
         source = getattr(request_model, "source", {})
         if isinstance(source.get("derivation"), dict):
             from server.generation_workflow import admit_derivation
@@ -105,6 +119,9 @@ def run_provider_method_with_existing_job(
         method = getattr(provider, method_name)
         # Providers record their own result; no extra record_result needed.
         result = method(request_model)
+        # Providers may have written artifacts already. A failed recheck keeps
+        # the job failed and records that fact; it never claims erasure.
+        validate_conditioning(request_model)
         if cancel_event and cancel_event.is_set() and result.status != "cancelled":
             result = result.model_copy(update={"status": "cancelled", "error": "provider settled after cancellation request; any artifacts are retained"})
             storage.record_result(result)

@@ -11,6 +11,34 @@ from server.audio_io import write_sine_wav
 client = TestClient(app)
 
 
+def test_memory_replay_index_is_bounded_exact_and_invalidated(monkeypatch):
+    revision = [1]
+    builds = []
+    rows = [
+        {"sound_id": "one", "title": "Retained", "audio_exists": True, "audio_file": "tone.wav", "memory_ids": ["akm_one"]},
+        {"sound_id": "bad", "audio_exists": True, "audio_file": "bad.wav", "memory_ids": "akm_other"},
+        {"sound_id": "gone", "audio_exists": False, "audio_file": "gone.wav", "memory_ids": ["akm_gone"]},
+    ]
+    monkeypatch.setattr(library, "_library_cache", {"built_signature": None, "items": None})
+    monkeypatch.setattr(library, "_cached_output_signature_unlocked", lambda: revision[0])
+
+    def build():
+        builds.append(True)
+        return list(rows)
+
+    monkeypatch.setattr(library, "_build_library_items", build)
+    result = client.get("/workspace/library/by-memory/akm_one").json()
+    assert result == {"items": [{"key": library.library_key(rows[0]), "title": "Retained", "memory_ids": ["akm_one"]}], "count": 1}
+    for identifier in ("akm_on", "akm_other", "akm_gone"):
+        assert client.get("/workspace/library/by-memory/" + identifier).json()["items"] == []
+    assert len(builds) == 1
+    assert client.get("/workspace/library/by-memory/bad.id").status_code == 422
+    rows.clear()
+    revision[0] += 1
+    assert client.get("/workspace/library/by-memory/akm_one").json()["items"] == []
+    assert len(builds) == 2
+
+
 def external_audio(monkeypatch, tmp_path):
     root = tmp_path / "library"
     root.mkdir()

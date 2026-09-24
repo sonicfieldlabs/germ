@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from server.akousma_store import AkousmaUnavailable, derive_prompt_contract, open_store
 from server.registry import registry, job_runner
 from server.routes.jobs import submit_job
-from server.routes.library import library_items, library_key, resolve_library_audio
+from server.routes.library import library_items, library_key, library_memory_replay, resolve_library_audio
 from server.schemas import JobSubmitRequest
 
 router = APIRouter(prefix="/workspace")
@@ -78,10 +78,12 @@ def memory_context(record_ids=None, prompt_budget=9400):
             )
         fragments, influences, excluded = [], [], []
         for record in records:
-            covenant = record.get("covenant") or {}
-            if record.get("provenance", {}).get("consent_status") == "restricted" or any(
-                covenant.get(k) for k in ("withheld", "rules_applied", "commitments")
-            ):
+            from server.memory_policy import admitted_record
+            try:
+                admitted_record(store, record)
+            except HTTPException as exc:
+                if record_ids or exc.status_code != 423:
+                    raise
                 excluded.append(
                     {
                         "record_id": record["akousma_id"],
@@ -179,6 +181,14 @@ def sounds():
             children.setdefault(parent, []).append(item["sound_id"])
     for item in items:
         item["children"] = children.get(item["sound_id"], [])
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/library/by-memory/{record_id}")
+def memory_replay(record_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", record_id):
+        raise HTTPException(422, "Invalid memory record ID")
+    items = library_memory_replay(record_id)
     return {"items": items, "count": len(items)}
 
 

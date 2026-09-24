@@ -366,6 +366,9 @@ class StorageManager:
             status = "cancelled"
             error = "completion arrived after cancellation request; output bytes retained"
         request_data = request.model_dump(exclude={"job_id"})
+        if status == "done":
+            from server.memory_policy import validate_context
+            validate_context(request_data.get("generation_context") or {})
         request_data["lora"] = self._compact_lora_specs(request_data.get("lora", []))
         runtime = self._runtime_from_provider(provider)
         germinator_mode = self._germinator_mode(mode)
@@ -710,6 +713,8 @@ class StorageManager:
 
         try:
             from server.akousma_store import organism_lineage_extension, record_generation, open_store
+            from server.memory_policy import validate_context
+            validate_context(request_data.get("generation_context") or {})
 
             if isinstance(source.get("derivation"), dict):
                 from server.generation_workflow import check_sources
@@ -1105,6 +1110,7 @@ class StorageManager:
                 "status": job.status, "created_at": job.created_at, "recorded_at": utc_now_iso(),
                 "provider": job.provider, "model": job.model, "mode": job.mode,
                 "request_sha256": request_hash,
+                "memory_conditioning": {"memory_influences": [{"record_id": item.get("record_id"), "sha256": item.get("sha256")} for item in (job.request.get("generation_context") or {}).get("memory_influences", [])]},
                 "audio_files": job.audio_files, "metadata_files": job.metadata_files,
                 "metrics": {k: v for k, v in job.metrics.items() if k != "receipt_ready"}, "error": str(job.error)[:2000] if job.error else None,
                 "scope": "Local runner lifecycle; artifact pointers do not certify audio or remote cancellation",

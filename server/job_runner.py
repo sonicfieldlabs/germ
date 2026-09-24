@@ -118,7 +118,8 @@ class JobRunner:
             )
         self.storage.update_job(job_id, metrics={"execution_state": "settled"})
         self.storage.write_job_receipt(job_id)
-        self.storage.update_job(job_id, metrics={"receipt_ready": True})
+        settled = self.storage.get_job(job_id)
+        self.storage.update_job(job_id, metrics={"receipt_ready": bool(settled and not settled.metrics.get("lifecycle_receipt_error"))})
         with self._lock:
             future = self._futures.pop(job_id, None)
             self._cancel_events.pop(job_id, None)

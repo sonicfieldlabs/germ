@@ -68,13 +68,18 @@ def get_job(job_id: str) -> JobStatus:
     job = storage.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+    from server.memory_policy import validate_context
+    validate_context(job.request.get("generation_context") or {})
     return job
 
 
 @router.get("/jobs/{job_id}/receipt")
 def job_receipt(job_id: str):
     try:
-        return storage.read_job_receipt(job_id)
+        value = storage.read_job_receipt(job_id)
+        from server.memory_policy import validate_context
+        validate_context(value.get("memory_conditioning") or {})
+        return value
     except FileNotFoundError as exc:
         raise HTTPException(404, "No retained lifecycle receipt") from exc
     except ValueError as exc:
@@ -116,6 +121,12 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
                 return
 
             payload = job.model_dump()
+            from server.memory_policy import validate_context
+            try:
+                validate_context(job.request.get("generation_context") or {})
+            except HTTPException:
+                await websocket.send_json({"job_id": job_id, "status": "withheld_or_unavailable"})
+                return
             signature = (payload["status"], payload["updated_at"])
             if signature != last_signature:
                 await websocket.send_json(payload)
