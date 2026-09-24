@@ -15,6 +15,9 @@ import server.listener
 from server.memory_policy import AdmissionSession, digest, validate_context
 
 
+BATCH = {"supported": True}
+
+
 class Store:
     opened = 0
 
@@ -64,9 +67,25 @@ def world(monkeypatch):
             routing.append(url)
             return Response({"view": {"state": "available"}, "record": deepcopy(records["memory"])})
 
+        def post(self, url, headers=None, json=None):
+            routing.append(("batch", tuple(json["ids"])))
+            if not BATCH["supported"]:
+                raise __import__("httpx").HTTPStatusError("404", request=None, response=None)
+            return Response(
+                {
+                    "contract": "oida/archive-digests/v1",
+                    "views": {
+                        i: {"state": "available", "record_sha256": digest(records[i])}
+                        for i in json["ids"]
+                        if i in records
+                    },
+                }
+            )
+
         def close(self):
             pass
 
+    BATCH["supported"] = True
     monkeypatch.setenv("LISTENINGSTACK_WORKSPACE_ID", "ws_fixture")
     monkeypatch.setattr(server.akousma_store, "open_store", open_store)
     monkeypatch.setattr(
@@ -109,3 +128,33 @@ def test_a_refusal_is_remembered_for_the_request_only(world):
                 validate_context(stale, session=session)
     assert len(routing) == 1
     validate_context(influenced(record))  # a fresh request, admitted
+
+
+@pytest.mark.parametrize("supported", [True, False])
+def test_a_listing_prefetches_every_digest_in_one_request_or_reads_each(world, supported):
+    record, stores, routing = world
+    BATCH["supported"] = supported
+    with AdmissionSession() as session:
+        session.prefetch(["memory", "memory"])
+        for _ in range(3):
+            validate_context(influenced(record), session=session)
+    batches = [call for call in routing if isinstance(call, tuple)]
+    singles = [call for call in routing if not isinstance(call, tuple)]
+    assert batches == [("batch", ("memory",))]
+    assert singles == ([] if supported else [singles[0]]) and len(singles) == (
+        0 if supported else 1
+    )
+
+
+def test_a_prefetched_digest_that_differs_is_refused(world):
+    record, stores, routing = world
+    with AdmissionSession() as session:
+        session.prefetch(["memory"])
+        record["summary"] = "Changed after the prefetch"
+        stores.clear()
+        with pytest.raises(HTTPException) as refused:
+            validate_context(
+                {"memory_influences": [{"record_id": "memory", "sha256": digest(record)}]},
+                session=session,
+            )
+    assert refused.value.status_code == 423

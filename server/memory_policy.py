@@ -30,6 +30,7 @@ class AdmissionSession:
         self._client = None
         self._headers = None
         self._verdicts = {}
+        self._digests = {}
 
     def __enter__(self):
         return self
@@ -48,14 +49,48 @@ class AdmissionSession:
             self._store = open_store()
         return self._store
 
-    def current(self, identifier):
+    def _connect(self):
         from server.listener import _oida_workspace_headers
-        from server.registry import settings
 
         if self._headers is None:
             self._headers = _oida_workspace_headers()
         if self._client is None:
             self._client = httpx.Client(timeout=10, trust_env=False, follow_redirects=False)
+
+    def prefetch(self, identifiers):
+        """Read the current view and digest of many records in one request.
+
+        An Oída without the batch route, or any failure, leaves each record to be read on
+        its own when it is checked; nothing is assumed from a failed prefetch.
+        """
+        if not os.getenv("LISTENINGSTACK_WORKSPACE_ID"):
+            return
+        from server.registry import settings
+
+        wanted = [i for i in dict.fromkeys(identifiers) if i not in self._digests and re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", str(i))]
+        try:
+            self._connect()
+            for start in range(0, len(wanted), 500):
+                response = self._client.post(
+                    f"{settings.oida_url}/reasoning/workspace/routing/archive/digests",
+                    headers=self._headers,
+                    json={"ids": wanted[start : start + 500]},
+                )
+                response.raise_for_status()
+                value = response.json()
+                if value.get("contract") != "oida/archive-digests/v1":
+                    return
+                self._digests.update(value.get("views") or {})
+        except (httpx.HTTPError, ValueError, HTTPException):
+            return
+
+    def current(self, identifier):
+        from server.registry import settings
+
+        if identifier in self._digests:
+            row = self._digests[identifier]
+            return {"view": {"state": row.get("state")}, "record_sha256": row.get("record_sha256")}
+        self._connect()
         response = self._client.get(
             f"{settings.oida_url}/reasoning/workspace/routing/archive/{identifier}",
             headers=self._headers,
@@ -99,7 +134,8 @@ def admitted_record(store, record, session=None):
                     response = client.get(f"{settings.oida_url}/reasoning/workspace/routing/archive/{identifier}", headers=_oida_workspace_headers())
                 response.raise_for_status()
                 current = response.json()
-            if current.get("view", {}).get("state") != "available" or digest(current.get("record")) != digest(record):
+            current_digest = current["record_sha256"] if "record_sha256" in current else digest(current.get("record"))
+            if current.get("view", {}).get("state") != "available" or current_digest != digest(record):
                 raise HTTPException(423, "Memory policy or content changed")
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(503, "Current memory permission is unavailable") from exc

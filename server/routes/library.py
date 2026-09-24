@@ -668,9 +668,21 @@ def _permitted_items(items):
     # One request shares one admission session: each record is read once per request.
     from server.memory_policy import AdmissionSession, validate_context
     permitted = []
-    with AdmissionSession() as session:
+    def context_of(item):
+        return item.get("generation_context") or (item.get("lineage", {}).get("operation_params") or {}).get("generation_context") or {}
+
+    def influence_ids():
         for item in items:
-            context = item.get("generation_context") or (item.get("lineage", {}).get("operation_params") or {}).get("generation_context") or {}
+            context = context_of(item)
+            influences = context.get("memory_influences") if isinstance(context, dict) else None
+            for influence in influences if isinstance(influences, list) else []:
+                if isinstance(influence, dict):
+                    yield influence.get("record_id")
+
+    with AdmissionSession() as session:
+        session.prefetch(influence_ids())
+        for item in items:
+            context = context_of(item)
             try:
                 validate_context(context, session=session)
                 permitted.append(item)
