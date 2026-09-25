@@ -24,16 +24,32 @@ RIGHTS_FIELDS = (
 )
 
 
+def _has_rights(record):
+    for path in RIGHTS_FIELDS:
+        node = record
+        for key in path[:-1]:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict) and path[-1] in node:
+            return True
+    return False
+
+
 def without_rights(record):
     """The record as it was before a curator recorded its rights: those fields removed, and
-    any container the assertion created, and left otherwise empty, removed with them."""
-    value = copy.deepcopy(record)
+    any container the assertion created, and left otherwise empty, removed with them.
+
+    Only the containers on a rights path are copied; everything else is shared with the
+    record, which is never modified. A full deep copy of every memory a render drew on
+    took about 3 s for 113 records (25 September 2026).
+    """
+    value = dict(record)
     for path in RIGHTS_FIELDS:
         trail, node = [], value
         for key in path[:-1]:
             if not isinstance(node, dict) or not isinstance(node.get(key), dict):
                 node = None
                 break
+            node[key] = dict(node[key])  # copy on the path only
             trail.append((node, key))
             node = node[key]
         if not isinstance(node, dict) or path[-1] not in node:
@@ -45,6 +61,25 @@ def without_rights(record):
     return value
 
 
+class Admitted:
+    """An admitted record's digest, and its digest without recorded rights, computed only
+    when a dependency does not match the first. Unpacks as ``(full, bare)``."""
+
+    def __init__(self, record, full):
+        self.record = record
+        self.full = full
+        self._bare = None
+
+    @property
+    def bare(self):
+        if self._bare is None:
+            self._bare = digest(without_rights(self.record)) if _has_rights(self.record) else self.full
+        return self._bare
+
+    def __iter__(self):
+        return iter((self.full, self.bare))
+
+
 def matches_admitted(admitted, expected):
     """A conditioning dependency still holds when the record is the one it bound, or that record
     with only its rights recorded since. Found 25 September 2026: recording consent rewrites a
@@ -52,8 +87,10 @@ def matches_admitted(admitted, expected):
     drew on (66-110), so recording rights refused every such render as changed memory."""
     if admitted is None:
         return False
-    full, bare = admitted
-    return expected in (full, bare)
+    if not isinstance(admitted, Admitted):
+        full, bare = admitted
+        return expected in (full, bare)
+    return expected == admitted.full or expected == admitted.bare
 
 
 class AdmissionSession:
@@ -146,10 +183,8 @@ class AdmissionSession:
         if identifier not in self._verdicts:
             try:
                 record = self.store.get(identifier)
-                admitted = admitted_record(self.store, record, session=self) if record else None
-                self._verdicts[identifier] = (
-                    (digest(admitted), digest(without_rights(admitted))) if admitted else None
-                )
+                admitted, full = admitted_record(self.store, record, session=self, with_digest=True) if record else (None, None)
+                self._verdicts[identifier] = Admitted(admitted, full) if admitted else None
             except HTTPException as exc:
                 self._verdicts[identifier] = exc
         verdict = self._verdicts[identifier]
@@ -158,8 +193,9 @@ class AdmissionSession:
         return verdict
 
 
-def admitted_record(store, record, session=None):
+def admitted_record(store, record, session=None, with_digest=False):
     identifier = record["akousma_id"]
+    own = None
     forgotten = getattr(store, "forgotten", lambda _: None)(identifier)
     covenant = retained_covenant(record)
     if forgotten or blocks_untyped_prose(covenant) or any(covenant.get(key) for key in ("withheld", "rules_applied", "commitments")):
@@ -179,10 +215,13 @@ def admitted_record(store, record, session=None):
                 response.raise_for_status()
                 current = response.json()
             current_digest = current["record_sha256"] if "record_sha256" in current else digest(current.get("record"))
-            if current.get("view", {}).get("state") != "available" or current_digest != digest(record):
+            own = digest(record)
+            if current.get("view", {}).get("state") != "available" or current_digest != own:
                 raise HTTPException(423, "Memory policy or content changed")
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(503, "Current memory permission is unavailable") from exc
+    if with_digest:
+        return record, own if own is not None else digest(record)
     return record
 
 
@@ -200,6 +239,7 @@ def validate_context(context, session=None):
         raise HTTPException(422, "Invalid memory conditioning manifest")
     if session is None:
         with AdmissionSession() as own:
+            own.prefetch(item.get("record_id") for item in influences if isinstance(item, dict))
             return validate_context(context, session=own)
     for item in influences:
         if not isinstance(item, dict) or not re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", str(item.get("record_id", ""))) or not re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256", ""))):

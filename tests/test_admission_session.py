@@ -204,3 +204,44 @@ def test_without_rights_removes_only_what_the_assertion_wrote():
     curated = deepcopy(bare)
     curate(curated)
     assert without_rights(curated) == bare, "containers the assertion created go with it"
+
+
+def test_without_rights_copies_only_the_rights_paths_and_never_touches_the_record():
+    import copy
+    from server.memory_policy import without_rights
+
+    record = {"akousma_id": "akm_1", "auditum": {"listenings": [{"claims": list(range(50))}]},
+              "provenance": {"consent_status": "owned", "rights_note": "n", "source": "s"},
+              "extensions": {"akousmata.app": {"consent_set_by": "curator", "other": 1}}}
+    before = copy.deepcopy(record)
+    bare = without_rights(record)
+    assert record == before, "the admitted record is not modified"
+    assert bare["auditum"] is record["auditum"], "content outside the rights paths is shared, not copied"
+    assert bare["provenance"] == {"source": "s"} and bare["extensions"] == {"akousmata.app": {"other": 1}}
+
+
+def test_the_rights_free_digest_is_computed_only_when_needed():
+    from server import memory_policy as mp
+
+    plain = {"akousma_id": "akm_2", "provenance": {"source": "s"}}
+    admitted = mp.Admitted(plain, mp.digest(plain))
+    assert mp.matches_admitted(admitted, admitted.full)
+    assert admitted._bare is None, "a matching full digest needs no second digest"
+    assert admitted.bare == admitted.full, "a record with no rights has one digest"
+    curated = {"akousma_id": "akm_3", "provenance": {"source": "s", "consent_status": "owned"}}
+    before_rights = {"akousma_id": "akm_3", "provenance": {"source": "s"}}
+    admitted = mp.Admitted(curated, mp.digest(curated))
+    assert mp.matches_admitted(admitted, mp.digest(before_rights))
+    full, bare = admitted
+    assert (full, bare) == (mp.digest(curated), mp.digest(before_rights))
+
+
+def test_a_validation_that_owns_its_session_prefetches_every_influence(monkeypatch):
+    from server import memory_policy as mp
+
+    fetched = []
+    monkeypatch.setattr(mp.AdmissionSession, "prefetch", lambda self, ids: fetched.append(list(ids)))
+    monkeypatch.setattr(mp.AdmissionSession, "admitted_digest", lambda self, rid: mp.Admitted({"akousma_id": rid}, "a" * 64))
+    context = {"memory_influences": [{"record_id": "akm_a", "sha256": "a" * 64}, {"record_id": "akm_b", "sha256": "a" * 64}]}
+    mp.validate_context(context)
+    assert fetched == [["akm_a", "akm_b"]]
