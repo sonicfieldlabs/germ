@@ -1,5 +1,6 @@
 """Permission and exact-input admission for memory-conditioned generation."""
 
+import copy
 import hashlib
 import json
 import os
@@ -12,6 +13,47 @@ from akousma.retained_policy import retained_covenant, blocks_untyped_prose
 
 def digest(record):
     return hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+# What Akousmata's curator writes when rights are asserted (akousmata_app.records.set_consent),
+# and nothing else. A rights assertion is not a change in what was heard.
+RIGHTS_FIELDS = (
+    ("provenance", "consent_status"),
+    ("provenance", "rights_note"),
+    ("extensions", "akousmata.app", "consent_set_by"),
+)
+
+
+def without_rights(record):
+    """The record as it was before a curator recorded its rights: those fields removed, and
+    any container the assertion created, and left otherwise empty, removed with them."""
+    value = copy.deepcopy(record)
+    for path in RIGHTS_FIELDS:
+        trail, node = [], value
+        for key in path[:-1]:
+            if not isinstance(node, dict) or not isinstance(node.get(key), dict):
+                node = None
+                break
+            trail.append((node, key))
+            node = node[key]
+        if not isinstance(node, dict) or path[-1] not in node:
+            continue
+        del node[path[-1]]
+        for parent, key in reversed(trail[1:] if path[0] == "provenance" else trail):
+            if parent[key] == {}:
+                del parent[key]
+    return value
+
+
+def matches_admitted(admitted, expected):
+    """A conditioning dependency still holds when the record is the one it bound, or that record
+    with only its rights recorded since. Found 25 September 2026: recording consent rewrites a
+    record under its id, and a render made in memory mode binds the digest of every record it
+    drew on (66-110), so recording rights refused every such render as changed memory."""
+    if admitted is None:
+        return False
+    full, bare = admitted
+    return expected in (full, bare)
 
 
 class AdmissionSession:
@@ -99,12 +141,14 @@ class AdmissionSession:
         return response.json()
 
     def admitted_digest(self, identifier):
-        """The digest of the admitted record, or the refusal, computed once per request."""
+        """The admitted record's digest and its digest without recorded rights, or the refusal,
+        computed once per request."""
         if identifier not in self._verdicts:
             try:
                 record = self.store.get(identifier)
+                admitted = admitted_record(self.store, record, session=self) if record else None
                 self._verdicts[identifier] = (
-                    digest(admitted_record(self.store, record, session=self)) if record else None
+                    (digest(admitted), digest(without_rights(admitted))) if admitted else None
                 )
             except HTTPException as exc:
                 self._verdicts[identifier] = exc
@@ -160,5 +204,5 @@ def validate_context(context, session=None):
     for item in influences:
         if not isinstance(item, dict) or not re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", str(item.get("record_id", ""))) or not re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256", ""))):
             raise HTTPException(422, "Invalid memory conditioning dependency")
-        if session.admitted_digest(item["record_id"]) != item.get("sha256"):
+        if not matches_admitted(session.admitted_digest(item["record_id"]), item.get("sha256")):
             raise HTTPException(423, "Memory changed or was forgotten before generation admission")

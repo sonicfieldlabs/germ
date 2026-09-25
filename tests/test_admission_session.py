@@ -158,3 +158,49 @@ def test_a_prefetched_digest_that_differs_is_refused(world):
                 session=session,
             )
     assert refused.value.status_code == 423
+
+
+def curate(record, status="licensed", note="Operator attestation"):
+    """What akousmata_app.records.set_consent does to a record, and nothing more."""
+    record.setdefault("provenance", {})["consent_status"] = status
+    record["provenance"]["rights_note"] = note
+    record.setdefault("extensions", {}).setdefault("akousmata.app", {})["consent_set_by"] = "human"
+
+
+def test_recording_rights_after_a_render_does_not_read_as_changed_memory(world):
+    """25 Sept: recording consent rewrote each record, and every memory-mode render bound the
+    digests of the records it drew on, so recording rights refused all such renders."""
+    record, stores, routing = world
+    record["provenance"] = {"origin": "file"}
+    context = influenced(record)
+    curate(record)
+    with AdmissionSession() as session:
+        validate_context(context, session=session)
+    record["summary"] = "A different account"
+    with AdmissionSession() as session:
+        with pytest.raises(HTTPException):
+            validate_context(context, session=session)
+
+
+def test_rights_already_recorded_when_the_render_was_made_are_not_forgotten(world):
+    record, stores, routing = world
+    record["provenance"] = {"origin": "file"}
+    curate(record, status="licensed", note="First attestation")
+    context = influenced(record)
+    record["provenance"]["rights_note"] = "A later, different attestation"
+    with AdmissionSession() as session:
+        with pytest.raises(HTTPException):
+            validate_context(context, session=session)
+
+
+def test_without_rights_removes_only_what_the_assertion_wrote():
+    from server.memory_policy import without_rights
+
+    original = {"provenance": {"origin": "file"}, "extensions": {"other": {"x": 1}}, "summary": "s"}
+    curated = deepcopy(original)
+    curate(curated)
+    assert without_rights(curated) == original
+    bare = {"provenance": {"origin": "file"}, "summary": "s"}
+    curated = deepcopy(bare)
+    curate(curated)
+    assert without_rights(curated) == bare, "containers the assertion created go with it"
