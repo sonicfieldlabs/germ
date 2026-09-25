@@ -31,6 +31,10 @@ os.environ["GERMINATOR_ALLOWED_INPUT_ROOTS"] = str(_TEST_OUTPUT_ROOT)
 # Preserve the vendored model repo as a valid model root, swapping the real
 # output tree for the isolated one.
 os.environ["GERMINATOR_ALLOWED_MODEL_ROOTS"] = f"{_TEST_OUTPUT_ROOT},vendor/stable-audio-3"
+# The host's heavy-operation lease is shared with a running stack. Tests take their own,
+# so they neither wait behind live listening nor hold it up (24 September: the suite ran
+# 235 s instead of 8 while a Testing loop listened).
+os.environ["LISTENINGSTACK_RESOURCE_DIR"] = str(_TEST_OUTPUT_ROOT / "resources")
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001

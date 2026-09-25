@@ -94,3 +94,25 @@ def test_library_rechecks_cached_conditioned_outputs(monkeypatch):
     assert library.library_items() == [item]
     store.revoked.add("memory")
     assert library.library_items() == []
+
+
+def test_a_job_records_how_long_it_waited_for_the_heavy_lease(monkeypatch):
+    """24 Sept: a render waited behind another lane's listening and only its total was recorded."""
+    from server.routes import _utils
+    from server.schemas import GenerateRequest, GenerationResult
+    import akousma.resource_admission as admission
+    import server.memory_policy as policy
+
+    recorded = {}
+    monkeypatch.setattr(policy, "validate_conditioning", lambda request: None)
+    monkeypatch.setattr(admission, "last_wait_seconds", lambda: 12.3456)
+    fake = SimpleNamespace(
+        generate=lambda request: GenerationResult(job_id="fixture", status="done", mode="text_to_audio"),
+        register_cancel_event=lambda *a: None,
+        clear_cancel_event=lambda _: None,
+    )
+    monkeypatch.setattr(_utils.registry, "get", lambda _: fake)
+    monkeypatch.setattr(_utils.storage, "get_job", lambda _: None)
+    monkeypatch.setattr(_utils.storage, "update_job", lambda job_id, **kw: recorded.update(kw.get("metrics") or {}))
+    _utils.run_provider_method_with_existing_job(GenerateRequest(prompt="fixture"), job_id="fixture", mode="text_to_audio", method_name="generate")
+    assert recorded["admission_wait_seconds"] == 12.346 and "elapsed_seconds" in recorded

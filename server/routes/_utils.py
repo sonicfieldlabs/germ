@@ -84,6 +84,21 @@ def request_model_for_mode(mode: ModeId, payload: dict[str, Any]) -> tuple[BaseM
     return model_cls(**payload), method_name
 
 
+def _admission_wait() -> dict:
+    """Seconds the provider waited for the host's heavy-operation lease, when it took one.
+
+    A render and a listening share one lease per host. On 24 September a Stable Audio
+    render in a Swarm took 213 s while another lane's Thinking listening ran, against
+    about 55 s alone, and nothing recorded how much of it was waiting.
+    """
+    try:
+        from akousma.resource_admission import last_wait_seconds
+    except ImportError:
+        return {}
+    waited = last_wait_seconds()
+    return {} if waited is None else {"admission_wait_seconds": round(waited, 3)}
+
+
 def run_provider_method_with_existing_job(
     request_model: BaseModel,
     *,
@@ -127,7 +142,10 @@ def run_provider_method_with_existing_job(
             storage.record_result(result)
         storage.update_job(
             job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
+            metrics={
+                "elapsed_seconds": round(time.perf_counter() - started, 6),
+                **_admission_wait(),
+            },
         )
         return result
     except Exception as exc:
