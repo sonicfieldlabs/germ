@@ -177,20 +177,91 @@ class AdmissionSession:
         response.raise_for_status()
         return response.json()
 
+    def _raw(self, identifier):
+        conn = getattr(self.store, "conn", None)
+        if conn is None:
+            return False  # a store without a connection: read it through get()
+        row = conn.execute("SELECT record FROM akousmata WHERE akousma_id=?", (identifier,)).fetchone()
+        return row[0] if row else None
+
     def admitted_digest(self, identifier):
         """The admitted record's digest and its digest without recorded rights, or the refusal,
         computed once per request."""
         if identifier not in self._verdicts:
             try:
-                record = self.store.get(identifier)
-                admitted, full = admitted_record(self.store, record, session=self, with_digest=True) if record else (None, None)
-                self._verdicts[identifier] = Admitted(admitted, full) if admitted else None
+                raw = self._raw(identifier)
+                if raw is False:
+                    record = self.store.get(identifier)
+                    admitted, full = admitted_record(self.store, record, session=self, with_digest=True) if record else (None, None)
+                    self._verdicts[identifier] = Admitted(admitted, full) if admitted else None
+                elif raw is None:
+                    self._verdicts[identifier] = None
+                else:
+                    self._verdicts[identifier] = admitted_pure(self.store, identifier, _PURE.get(raw), session=self)
             except HTTPException as exc:
                 self._verdicts[identifier] = exc
         verdict = self._verdicts[identifier]
         if isinstance(verdict, HTTPException):
             raise verdict
         return verdict
+
+
+class _PureMemo:
+    """What a stored record yields independently of any policy, keyed by the SHA-256 of its
+    stored text: its cumulative covenant verdict, its digest and its digest without recorded
+    rights. Each is a pure function of those bytes, so the memo is exact; forgetting and
+    Oída's current state are still read on every request. Parsing and digesting the ~300 KB
+    records a memory render drew on, on every playback request, cost seconds (25 September)."""
+
+    def __init__(self, limit=2048):
+        import threading
+        from collections import OrderedDict
+
+        self.limit, self.items, self.lock = limit, OrderedDict(), threading.Lock()
+
+    def get(self, raw):
+        key = hashlib.sha256(raw.encode()).hexdigest()
+        with self.lock:
+            hit = self.items.get(key)
+            if hit is not None:
+                self.items.move_to_end(key)
+                return hit
+        record = json.loads(raw)
+        covenant = retained_covenant(record)
+        full = digest(record)
+        value = {
+            "identifier": record.get("akousma_id"),
+            "covenant_blocks": bool(blocks_untyped_prose(covenant) or any(covenant.get(key) for key in ("withheld", "rules_applied", "commitments"))),
+            "full": full,
+            "bare": digest(without_rights(record)) if _has_rights(record) else full,
+        }
+        with self.lock:
+            self.items[key] = value
+            while len(self.items) > self.limit:
+                self.items.popitem(last=False)
+        return value
+
+
+_PURE = _PureMemo()
+
+
+def admitted_pure(store, identifier, pure, session):
+    """``admitted_record`` over a record's pure derivations: forgetting and, in a managed
+    workspace, Oída's current state and digest are read afresh; the rest comes from ``pure``."""
+    if pure["identifier"] != identifier:
+        raise HTTPException(423, "Selected memory is withheld or forgotten")
+    forgotten = getattr(store, "forgotten", lambda _: None)(identifier)
+    if forgotten or pure["covenant_blocks"]:
+        raise HTTPException(423, "Selected memory is withheld or forgotten")
+    if os.getenv("LISTENINGSTACK_WORKSPACE_ID"):
+        try:
+            current = session.current(identifier)
+            current_digest = current["record_sha256"] if "record_sha256" in current else digest(current.get("record"))
+            if current.get("view", {}).get("state") != "available" or current_digest != pure["full"]:
+                raise HTTPException(423, "Memory policy or content changed")
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(503, "Current memory permission is unavailable") from exc
+    return (pure["full"], pure["bare"])
 
 
 def admitted_record(store, record, session=None, with_digest=False):

@@ -245,3 +245,32 @@ def test_a_validation_that_owns_its_session_prefetches_every_influence(monkeypat
     context = {"memory_influences": [{"record_id": "akm_a", "sha256": "a" * 64}, {"record_id": "akm_b", "sha256": "a" * 64}]}
     mp.validate_context(context)
     assert fetched == [["akm_a", "akm_b"]]
+
+
+def test_the_stored_text_path_agrees_with_admitted_record_on_a_real_store(tmp_path, monkeypatch):
+    import akousma
+    import server.akousma_store
+    from server import memory_policy as mp
+
+    monkeypatch.delenv("LISTENINGSTACK_WORKSPACE_ID", raising=False)
+    store = akousma.AkousmataStore(root=tmp_path / "store")
+    auditum = akousma.auditum(route_decisions=[akousma.route_decision("fixture", gate="input", outcome="abstain", subject="synthetic", reason="none", actor="test")])
+    plain = akousma.new_akousma(audio={"asset_id": "p"}, originating_app="oida", summary="Plain", auditum=auditum)
+    curated = akousma.new_akousma(audio={"asset_id": "c"}, originating_app="oida", summary="Curated", auditum=auditum)
+    curated.setdefault("provenance", {})["consent_status"] = "owned"
+    for record in (plain, curated):
+        store.put(record)
+    forgotten = set()
+    monkeypatch.setattr(type(store), "forgotten", lambda self, i: i in forgotten, raising=False)
+    monkeypatch.setattr(server.akousma_store, "open_store", lambda: store)
+    monkeypatch.setattr(type(store), "close", lambda self: None, raising=False)
+    for record in (plain, curated):
+        rid = record["akousma_id"]
+        stored = store.get(rid)
+        with mp.AdmissionSession() as session:
+            assert session._raw(rid) is not False, "a real store is read as stored text"
+            assert tuple(session.admitted_digest(rid)) == (mp.digest(stored), mp.digest(mp.without_rights(stored)))
+        forgotten.add(rid)
+        with mp.AdmissionSession() as session, pytest.raises(HTTPException):
+            session.admitted_digest(rid)
+        forgotten.discard(rid)
