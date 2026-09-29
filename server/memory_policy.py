@@ -1,6 +1,5 @@
 """Permission and exact-input admission for memory-conditioned generation."""
 
-import copy
 import hashlib
 import json
 import os

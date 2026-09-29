@@ -47,7 +47,7 @@ def resolve_audio_path(store, record: dict[str, Any]) -> Path | None:
     if not uri:
         return None
     if uri.startswith("akousmata://"):
-        path = store.resolve_uri(uri)
+        path = store.resolve_uri(uri, content_hash=audio.get("content_hash"))
         return path if path and path.is_file() else None
     if uri.startswith("file://"):
         parsed = urlsplit(uri)

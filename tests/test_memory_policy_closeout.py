@@ -23,12 +23,17 @@ def test_conditioning_rejects_selected_and_excludes_optional_private_memory(monk
     allowed = {"akousma_id": "allowed", "auditum": {"contract": "fixture"}, "summary": "PUBLIC_TONE"}
     private = {**deepcopy(allowed), "akousma_id": "private", "summary": "PRIVATE_CANARY"}
     covenant = {"rules_applied": ["do_not_reveal:speech"]}
-    if location == "top": private["covenant"] = covenant
-    if location == "native": private["extensions"] = {"oida.native-policy": {"covenant": covenant}}
-    if location == "listening": private["listening"] = {"oida.listen": {"payload": {"listening_context": {"covenant": covenant}}}}
-    if location == "auditum": private["auditum"]["covenant"] = covenant
+    if location == "top":
+        private["covenant"] = covenant
+    if location == "native":
+        private["extensions"] = {"oida.native-policy": {"covenant": covenant}}
+    if location == "listening":
+        private["listening"] = {"oida.listen": {"payload": {"listening_context": {"covenant": covenant}}}}
+    if location == "auditum":
+        private["auditum"]["covenant"] = covenant
     store = Store({"allowed": allowed, "private": private})
-    if location == "forgotten": store.revoked.add("private")
+    if location == "forgotten":
+        store.revoked.add("private")
     monkeypatch.delenv("LISTENINGSTACK_WORKSPACE_ID", raising=False)
     monkeypatch.setattr(workspace, "open_store", lambda: store)
     monkeypatch.setattr(workspace, "derive_prompt_contract", lambda record: {"prompt": record["summary"], "contract": "fixture"})
@@ -49,10 +54,12 @@ def test_manifest_rechecks_changes_and_forgetting(monkeypatch):
     context = {"memory_influences": [{"record_id": "memory", "sha256": digest(record)}]}
     validate_context(context)
     record["summary"] = "Changed"
-    with pytest.raises(HTTPException): validate_context(context)
+    with pytest.raises(HTTPException):
+        validate_context(context)
     record["summary"] = "Allowed"
     store.revoked.add("memory")
-    with pytest.raises(HTTPException): validate_context(context)
+    with pytest.raises(HTTPException):
+        validate_context(context)
 
 
 @pytest.mark.parametrize("revoke_during", [False, True])

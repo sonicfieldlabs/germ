@@ -844,6 +844,7 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
                         "value": 450,
                         "normalized": 0.5,
                         "timestamp": "2026-07-30T12:00:00Z",
+                        "acquisitionMode": "fixture",
                         "sourceId": "swpc_solar_wind",
                         "sphere": "cosmos",
                         "epistemicStatus": "reported",
@@ -5393,7 +5394,7 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     resolved = modulation_routes_from_frame(_frame())
     assert resolved["contract"] == "cosmo/modulation/v0.1"
     targets = {route["target"]: route for route in resolved["routes"]}
-    assert set(targets) == {"filter.cutoff", "grain.density"}
+    assert set(targets) == {"filter.cutoff"}
     assert targets["filter.cutoff"]["value"] == 440.0
     assert targets["filter.cutoff"]["outputValue"] == 440.0
     assert targets["filter.cutoff"]["inputValue"] == 50.0
@@ -5405,9 +5406,10 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     assert resolved["signals"][0]["epistemicStatus"] == "measured"
     assert resolved["signals"][0]["temporalCharacter"] == "stream"
     assert resolved["sources"][0]["id"] == "source-earth"
-    assert targets["grain.density"]["status"] == "uncertainty"
     # A skipped control is reported, not silently dropped and not zeroed.
     withheld = {item["target"]: item for item in resolved["withheld"]}
+    assert withheld["grain.density"]["consumerFreshness"]["status"] == "stale"
+    assert withheld["grain.density"]["value"] is None
     assert withheld["delay.time"]["status"] == "skipped"
     assert withheld["delay.time"]["value"] is None
     assert resolved["absences"] == [{"signalId": "s2", "reason": "provider unavailable"}]
@@ -5522,7 +5524,7 @@ def test_frame_route_reports_bridge_failure_without_backend_details(
     assert "refused" not in json.dumps(payload)
 
 
-def test_frame_route_resolves_a_live_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_frame_route_resolves_a_fixture_and_withholds_stale_control(monkeypatch: pytest.MonkeyPatch) -> None:
     class Bridge:
         def frame(self, *, mode: str = "fixture") -> dict:
             return _frame()
@@ -5532,5 +5534,6 @@ def test_frame_route_resolves_a_live_frame(monkeypatch: pytest.MonkeyPatch) -> N
     assert response.status_code == 200
     modulation = response.json()["modulation"]
     assert modulation["frameId"] == "frame_1"
-    assert len(modulation["routes"]) == 2
+    assert len(modulation["routes"]) == 1
+    assert any(r["consumerFreshness"]["status"] == "stale" for r in modulation["withheld"])
     assert modulation["attribution"] == [{"sourceId": "swpc", "text": "NOAA SWPC"}]

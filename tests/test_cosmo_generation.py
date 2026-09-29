@@ -16,8 +16,10 @@ def frame(status="applied", value=2):
         originMode="fixture",
         relation={"of": "signal"},
         sourceRegister="non-acoustic",
+        signals=[dict(id="carbon", confidence="high", timestamp="2026-09-01T00:00:00Z", staleAfterSeconds=1800)],
         receipts=[
             dict(
+                signalId="carbon",
                 mappingId="germ-carbon-duration",
                 receiptId="fixture:receipt",
                 target="duration",

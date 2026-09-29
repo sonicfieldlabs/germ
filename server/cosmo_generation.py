@@ -5,12 +5,13 @@ from hashlib import sha256
 import json
 import math
 
+from server.cosmo_freshness import frame_signal_freshness
 from server.schemas import GenerateRequest, validate_json_compatible
 
 BOUNDS = {"duration": (0.1, 30), "steps": (1, 250), "cfg_scale": (0, 25)}
 
 
-def apply_frame(request, frame, selection):
+def apply_frame(request, frame, selection, *, now=None):
     validate_json_compatible(frame)
     if (
         len(json.dumps(frame)) > 1024 * 1024
@@ -61,6 +62,9 @@ def apply_frame(request, frame, selection):
             or status == "uncertainty"
             and selection["accept_uncertainty"]
         )
+        r["consumer_freshness"] = frame_signal_freshness(frame, r.get("signalId"), now=now, receipt=r)
+        if accepted and not r["consumer_freshness"]["mappingAllowed"]:
+            raise ValueError("Selected assignment is not current: " + r["consumer_freshness"]["reason"])
         if accepted:
             value = r.get("outputValue")
             if (

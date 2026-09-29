@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Cosmoaudition freshness admission
+
+- Reevaluate source clocks and age limits when receiving generation frames, modulation routes and direct mappings. Expired, future, archive and unknown live evidence cannot select parameter values, including when held/uncertainty acceptance is enabled.
+- Preserve the original frame and add receiving freshness to decisions; keep canonical `sound_id` and optional MASA sidecars unchanged. Explicit fixtures remain simulation evidence.
+
 ## 0.6.0 — Bounded spectral generation
 
 - Additive, chirp, finite-band multisine noise, truncated FM and pulse oscillators at 44.1, 48, 96 and 192 kHz, with explicit Nyquist/resource admission, cancellation and digital spectral receipts.

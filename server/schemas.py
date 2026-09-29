@@ -387,6 +387,9 @@ class CosmoauditionNormalization(JSONRequestModel):
 
 
 class CosmoauditionSignal(JSONRequestModel):
+    acquisitionMode: Literal["live", "fixture", "archive"] | None = None
+    freshness: dict[str, Any] | None = None
+    observedInterval: dict[str, str] | None = None
     id: str = Field(min_length=1, max_length=256)
     label: str = Field(default="Observation", min_length=1, max_length=500)
     layer: CosmoauditionLayer = "earth"

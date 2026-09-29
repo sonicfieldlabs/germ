@@ -38,14 +38,16 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.7.0"' in project
-    # The local D4 integration needs unreleased A12 and Earworm 1.7 contracts.
-    assert 'path = "../earworm/packages/py-akousma"' in project
-    assert '"akouo-contract>=0.9.2"' in project
-    assert 'path = "../akouo"' in project
+    assert '"akousma>=0.8.3"' in project
+    # Current policy APIs and object safety must survive an isolated wheel install.
+    assert 'path = "vendor/akousma-0.8.3-py3-none-any.whl"' in project
+    assert '"akouo-contract>=0.10.0"' in project
+    assert 'path = "vendor/akouo_contract-0.10.0-py3-none-any.whl"' in project
     from akouo_contract.record_workflows import derivation_plan
     from akousma.record_evolution import next_record_errors
+    from akousma.retained_policy import retained_covenant, blocks_untyped_prose
     assert callable(derivation_plan) and callable(next_record_errors)
+    assert blocks_untyped_prose(retained_covenant({"provenance": {"consent_status": "restricted"}}))
 
 
 def test_stable_audio_uses_the_audited_torch_override() -> None:
