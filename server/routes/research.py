@@ -23,10 +23,10 @@ def options():
             config = deployment(tool)
             available = True
             reason = None
-        except (ValueError, OSError, KeyError) as exc:
+        except (ValueError, OSError, KeyError):
             config = {}
             available = False
-            reason = str(exc)
+            reason = "Research tool is unavailable; check its deployment configuration"
         entries.append(
             dict(
                 id=tool,

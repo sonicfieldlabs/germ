@@ -124,6 +124,9 @@ def test_optional_relisten_reuses_bridge_and_reports_failure_separately(library)
         response = execute(body)
     assert response["linkage_status"] == "complete"
     assert response["subsequent_listening"][0]["status"] == "error"
+    assert response["subsequent_listening"][0]["error"] == (
+        "Subsequent listening failed; the generation remains retained"
+    )
     assert listen.call_args.args[0].audio_path == response["outputs"][0]["audio_file"]
     assert listen.call_args.args[0].remember is False
 
@@ -186,6 +189,7 @@ def test_output_tamper_detected_and_provider_error_has_no_completed_receipt(libr
     with patch("server.generation_workflow.run_provider_method", side_effect=tampered):
         response = execute(payload(source))
     assert response["linkage_status"] == "incomplete" and not response["outputs"]
+    assert response["gaps"][0]["reason"] == "Retained output verification failed"
     with patch.object(
         registry.get("mock"), "generate", side_effect=RuntimeError("fixture failure")
     ):

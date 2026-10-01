@@ -25,6 +25,22 @@ def test_optional_and_profile_gate(monkeypatch, tmp_path):
         deployment("rave-guitar")
 
 
+def test_options_do_not_expose_deployment_exception(monkeypatch):
+    from server.routes import research
+
+    def fail(tool):
+        raise OSError("private deployment path and credential details")
+
+    monkeypatch.setattr(research, "deployment", fail)
+    result = research.options()
+    assert result["tools"]
+    for tool in result["tools"]:
+        assert not tool["available"]
+        assert tool["reason"] == (
+            "Research tool is unavailable; check its deployment configuration"
+        )
+
+
 def test_request_bounds():
     base = dict(tool="basic-pitch", key="a" * 64)
     for value in [
