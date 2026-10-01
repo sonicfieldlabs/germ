@@ -1,7 +1,7 @@
 # Runtime dependencies
 
-GERM requires `akousma>=0.8.3` and `akouo-contract>=0.10.0`. Its optional spectral
-extra requires `akousmata>=0.8.2` on Python >=3.11. Retained covenant policy and
+GERM requires `akousma>=0.8.4` and `akouo-contract>=0.10.1`. Its optional spectral
+extra requires `akousmata>=0.8.3` on Python >=3.11. Retained covenant policy and
 checked object resolution are supplied by those declared dependencies.
 
 `uv.lock` selects the canonical wheels under `vendor/`. `SHA256SUMS` and

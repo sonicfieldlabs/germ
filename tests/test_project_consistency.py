@@ -38,11 +38,11 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.8.3"' in project
+    assert '"akousma>=0.8.4"' in project
     # Current policy APIs and object safety must survive an isolated wheel install.
-    assert 'path = "vendor/akousma-0.8.3-py3-none-any.whl"' in project
-    assert '"akouo-contract>=0.10.0"' in project
-    assert 'path = "vendor/akouo_contract-0.10.0-py3-none-any.whl"' in project
+    assert 'path = "vendor/akousma-0.8.4-py3-none-any.whl"' in project
+    assert '"akouo-contract>=0.10.1"' in project
+    assert 'path = "vendor/akouo_contract-0.10.1-py3-none-any.whl"' in project
     from akouo_contract.record_workflows import derivation_plan
     from akousma.record_evolution import next_record_errors
     from akousma.retained_policy import retained_covenant, blocks_untyped_prose
@@ -57,13 +57,12 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.6.1"
-    assert 'version = "0.6.1"' in _read("pyproject.toml")
-    assert "Current release: `0.6.1`." in _read("README.md")
-    assert 'version: "0.6.1"' in _read("CITATION.cff")
-    assert 'date-released: "2026-09-12"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.6.1"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="9"' in _read("apps/macos/script/build_and_run.sh")
+    assert f'version = "{__version__}"' in _read("pyproject.toml")
+    assert f"Current source candidate: `{__version__}` (unpublished)." in _read("README.md")
+    assert f'version: "{__version__}"' in _read("CITATION.cff")
+    assert "date-released:" not in _read("CITATION.cff")
+    assert f'MARKETING_VERSION="{__version__}"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="10"' in _read("apps/macos/script/build_and_run.sh")
 
 
 def test_openapi_operation_ids_are_present_and_unique() -> None:
