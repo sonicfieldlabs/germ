@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import pytest
 from pathlib import Path
 
 # Resolve the temp root so it matches the canonical paths used by the storage
@@ -30,8 +31,23 @@ os.environ["GERMINATOR_ALLOWED_INPUT_ROOTS"] = str(_TEST_OUTPUT_ROOT)
 # Preserve the vendored model repo as a valid model root, swapping the real
 # output tree for the isolated one.
 os.environ["GERMINATOR_ALLOWED_MODEL_ROOTS"] = f"{_TEST_OUTPUT_ROOT},vendor/stable-audio-3"
+# The host's heavy-operation lease is shared with a running stack. Tests take their own,
+# so they neither wait behind live listening nor hold it up (24 September: the suite ran
+# 235 s instead of 8 while a Testing loop listened).
+os.environ["LISTENINGSTACK_RESOURCE_DIR"] = str(_TEST_OUTPUT_ROOT / "resources")
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     """Remove the isolated output tree once the whole session is done."""
     shutil.rmtree(_TEST_OUTPUT_ROOT, ignore_errors=True)
+
+
+# Match application lifecycle for legacy tests that use TestClient without a context.
+
+
+@pytest.fixture(autouse=True)
+def managed_job_runner():
+    from server.registry import job_runner
+    job_runner.startup()
+    yield
+    job_runner.shutdown(wait=True)

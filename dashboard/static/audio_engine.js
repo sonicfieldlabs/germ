@@ -189,7 +189,7 @@ export function encodeWavBlob(channelData, sampleRate, { bitDepth = 16, dither =
    - germ-recorder: lossless PCM tap for WAV master recording, harvest,
      and hardware capture.                                             */
 
-const WORKLET_SOURCE = `
+export const WORKLET_SOURCE = `
 class GermGranularProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -213,6 +213,7 @@ class GermGranularProcessor extends AudioWorkletProcessor {
     if (Number.isFinite(next.jitter)) p.jitter = Math.min(1, Math.max(0, next.jitter));
     if (Number.isFinite(next.scatter)) p.scatter = Math.min(1, Math.max(0, next.scatter));
     if (Number.isFinite(next.spray)) p.spray = Math.min(1, Math.max(0, next.spray));
+    if (["hann", "gaussian", "triangular"].includes(next.envelope)) p.envelope = next.envelope;
   }
   spawnGrain() {
     if (this.grains.length >= 48 || this.filled < sampleRate * 0.05) return;
@@ -262,7 +263,12 @@ class GermGranularProcessor extends AudioWorkletProcessor {
       const grain = this.grains[g];
       const remaining = Math.min(frames, grain.total - grain.i);
       for (let i = 0; i < remaining; i += 1) {
-        const window = 0.5 - 0.5 * Math.cos((twoPi * (grain.i + i)) / grain.total);
+        const phase = (grain.i + i) / grain.total;
+        const window = this.params.envelope === "gaussian"
+          ? Math.exp(-0.5 * Math.pow((phase - 0.5) / 0.18, 2))
+          : this.params.envelope === "triangular"
+            ? 1 - Math.abs(2 * phase - 1)
+            : 0.5 - 0.5 * Math.cos(twoPi * phase);
         const readPos = grain.pos + (grain.i + i) * grain.step;
         const base = Math.floor(readPos);
         const frac = readPos - base;

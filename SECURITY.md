@@ -25,21 +25,52 @@ normalize paths and require resolved files to remain inside their configured
 input, output, metadata, model, upload, or scratch roots before filesystem
 access. Upload writes are confined to managed upload or scratch directories.
 
-## Temporary Upstream PyTorch Exceptions
+## Temporary upstream PyTorch exceptions
 
-Stable Audio 3 still pins PyTorch 2.7.1 upstream. GERM overrides that constraint
-with Torch and Torchaudio 2.10.0, validated on macOS by the full GERM suite and
-the upstream Stable Audio CLI suite. This removes every currently fixable
-finding below PyTorch 2.10.
+The optional local runtime retains Torch and Torchaudio 2.10.0. Updating this
+pair requires separate model, dependency and accelerator qualification; this
+review does not claim new GPU/MPS or model-inference evidence.
 
-Two findings remain accepted temporarily for the optional local provider:
+The machine-readable policy is [advisory-exceptions.json](advisory-exceptions.json).
+The repository CODEOWNER, **@emeisazam**, owns follow-up. Reviewed **26 September
+2026**; exceptions expire **10 October 2026**, or earlier if the affected API,
+model trust boundary or runtime version changes. Review again before enabling
+an optional runtime. CI refuses an expired policy or a widened advisory set
+before invoking pip-audit; it suppresses exactly these two advisory identities.
 
-| Advisory | Affected API | GERM exposure | Review deadline |
-| --- | --- | --- | --- |
-| `PYSEC-2026-139` / `CVE-2026-4538` | `torch.export.load` of `.pt2` artifacts | GERM does not call this API or accept `.pt2` model artifacts. No patched PyTorch release is currently published. | 2026-09-02 |
-| `GHSA-rrmf-rvhw-rf47` / `CVE-2025-3000` | TorchScript compilation | GERM does not compile user-supplied TorchScript. Moving to PyTorch 2.13 requires upstream Stable Audio and accelerator validation. | 2026-09-02 |
+| Advisory | Current upstream evidence | Scoped repository review |
+| --- | --- | --- |
+| `PYSEC-2026-139` / `CVE-2026-4538` | [.pt2 deserialization advisory](https://github.com/advisories/GHSA-33x2-ppm4-v46v); no patched version is listed by the current audit feed. | No direct `torch.export.load` call or .pt2 model intake found in owner source. |
+| `CVE-2025-3000` / `GHSA-rrmf-rvhw-rf47` | [TorchScript advisory](https://github.com/advisories/GHSA-rrmf-rvhw-rf47); fixed in 2.13.0. | No direct `torch.jit.script` call found in owner source. |
 
-The exception ends immediately if GERM begins calling either API, if its model
-trust boundary changes, or when a compatible upstream runtime is available.
-The all-extras CI audit ignores only these identifiers and fails on any new
-finding.
+This is a bounded source review, not a transitive execution trace or permission
+to load untrusted model artifacts. GERM does use `torch.jit.load` for operator-selected research exports; that distinct API and its model trust requirements remain explicit. The reviewed optional runtime remains conditional on its existing operational
+qualification requirements.
+
+The September review also found two AnyIO advisories in the locked 4.13.0:
+[TLS hostname handling](https://github.com/advisories/GHSA-82r6-8w77-94w6) and
+[process-pool stderr handling](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
+Both have fixes in 4.14.2. The dependency floor now excludes older versions;
+these findings are not suppressed. New audit findings continue to fail CI.
+
+### Git dependency audit coverage
+
+`pip-audit --disable-pip` cannot process the Stable Audio Git requirement. The
+audit wrapper therefore records its exact reviewed source separately and audits
+all exported registry dependencies, including its transitive dependencies. It
+refuses unknown/changed source requirements or expired source reviews. The
+[upstream advisory page](https://github.com/Stability-AI/stable-audio-3/security/advisories)
+and public API returned no published advisories on 26 September; the checked
+commit is recorded in `advisory-exceptions.json`. This is not a source-code
+vulnerability scan. The audit emits a separate `.source-coverage.json` receipt
+so this limit is visible even when the registry audit passes.
+
+### Local review, 2026-09-13
+
+Repository call-site inspection found no new use of the excepted APIs. The
+all-extras dependency audit passes with exactly the same two exceptions; no
+additional advisory was suppressed. HTTPX2/HTTPCore2 were updated to 2.12.0,
+and the affected optional dependency bounds were refreshed. These software
+checks do not validate GPU/MPS inference with the new resolved dependencies.
+Keep optional model execution conditional on that validation and review the
+exceptions again before enabling it, or by the deadline above.

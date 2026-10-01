@@ -343,3 +343,19 @@ def delete_archive(archive_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Observation archive not found: {archive_id}")
     path.unlink()
     return {"status": "deleted", "id": archive_id}
+
+
+@router.post("/generate")
+def generate_from_cosmoaudition(body: dict[str, Any]):
+    from server.cosmo_generation import apply_frame
+    from server.schemas import GenerateRequest
+    from server.routes._utils import run_provider_method
+    try:
+        if set(body) != {"request", "selection", "mode"} or body["mode"] not in {"fixture", "live"}:
+            raise ValueError("Expected request, selection and fixture/live mode")
+        # Only the configured loopback producer supplies frames, never caller evidence.
+        frame = _bridge().get_json("/api/generation-frame", params={"mode": body["mode"]})
+        request = apply_frame(GenerateRequest(**body["request"]), frame, body["selection"])
+        return run_provider_method(request, "text-to-audio", "generate")
+    except (ValueError, KeyError, TypeError, CosmoauditionBridgeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

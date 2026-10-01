@@ -15,33 +15,34 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: germ
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          path: germ
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22.22.3"
+      - name: Verify reviewed canonical dependency wheels
+        run: shasum -a 256 -c vendor/SHA256SUMS
+
       - name: Install Python dependencies
         run: uv sync --extra dev --locked
       - name: Python tests
         run: uv run pytest -q
       - name: Ruff
         run: uv run ruff check server tests
-      # Stable Audio 3 still pins Torch 2.7.1 upstream. GERM overrides it with
-      # the validated 2.10 pair. The two remaining local-only API findings are
-      # tracked with a review deadline in SECURITY.md.
-      - name: Audit all dependency extras
+      - name: Audit dependency graph with dated exceptions
         run: |
-          uv export --all-extras --no-emit-project --no-emit-local \
-            --no-emit-package akousma --no-emit-package stable-audio-3 |
-            uvx --from pip-audit==2.10.1 pip-audit \
-              --requirement /dev/stdin \
-              --disable-pip \
-              --progress-spinner=off \
-              --ignore-vuln PYSEC-2026-139 \
-              --ignore-vuln CVE-2025-3000
+          uv export --locked --all-extras --no-emit-project --no-emit-local > "$RUNNER_TEMP/dependencies.txt"
+          uv run python scripts/audit_dependencies.py \
+            --requirements "$RUNNER_TEMP/dependencies.txt" \
+            --output "$RUNNER_TEMP/dependency-audit.json"
+
       - name: Dashboard syntax
         run: |
           node --check dashboard/static/app.js

@@ -38,10 +38,16 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.7.0"' in project
-    assert 'tag = "v0.7.0"' in project
-    assert 'subdirectory = "packages/py-akousma"' in project
-    assert 'path = "../earworm' not in project
+    assert '"akousma>=0.8.3"' in project
+    # Current policy APIs and object safety must survive an isolated wheel install.
+    assert 'path = "vendor/akousma-0.8.3-py3-none-any.whl"' in project
+    assert '"akouo-contract>=0.10.0"' in project
+    assert 'path = "vendor/akouo_contract-0.10.0-py3-none-any.whl"' in project
+    from akouo_contract.record_workflows import derivation_plan
+    from akousma.record_evolution import next_record_errors
+    from akousma.retained_policy import retained_covenant, blocks_untyped_prose
+    assert callable(derivation_plan) and callable(next_record_errors)
+    assert blocks_untyped_prose(retained_covenant({"provenance": {"consent_status": "restricted"}}))
 
 
 def test_stable_audio_uses_the_audited_torch_override() -> None:
@@ -51,13 +57,13 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
-    assert __version__ == "0.5.0"
-    assert 'version = "0.5.0"' in _read("pyproject.toml")
-    assert "Current release: `0.5.0`." in _read("README.md")
-    assert 'version: "0.5.0"' in _read("CITATION.cff")
-    assert 'date-released: "2026-08-11"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.5.0"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="8"' in _read("apps/macos/script/build_and_run.sh")
+    assert __version__ == "0.6.1"
+    assert 'version = "0.6.1"' in _read("pyproject.toml")
+    assert "Current release: `0.6.1`." in _read("README.md")
+    assert 'version: "0.6.1"' in _read("CITATION.cff")
+    assert 'date-released: "2026-09-12"' in _read("CITATION.cff")
+    assert 'MARKETING_VERSION="0.6.1"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="9"' in _read("apps/macos/script/build_and_run.sh")
 
 
 def test_openapi_operation_ids_are_present_and_unique() -> None:

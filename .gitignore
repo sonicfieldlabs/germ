@@ -25,6 +25,7 @@ apps/germ.app/
 .codex/
 
 # Local tool caches and state
+.cache/
 .uv-cache/
 .uv-tools/
 .playwright-cli/
@@ -34,3 +35,21 @@ apps/germ.app/
 /*.jpeg
 
 vendor/stable-audio-3/
+
+# Private local output; maintained fixtures remain in their source directories
+/audits/
+/local-plans/
+/reports/
+/screenshots/
+/receipts/
+/recordings/
+/captures/
+/output/
+/runtime/
+/settings.json
+/*.sqlite
+/*.sqlite-*
+/*.sqlite3
+/*.sqlite3-*
+/*.db
+/docs/audits/

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Cosmoaudition freshness admission
+
+- Package 0.6.2 with receiving-time freshness, repaired owner packages and the immutable Stable Audio source revision.
+- Reevaluate source clocks and age limits when receiving generation frames, modulation routes and direct mappings. Expired, future, archive and unknown live evidence cannot select parameter values, including when held/uncertainty acceptance is enabled.
+- Preserve the original frame and add receiving freshness to decisions; keep canonical `sound_id` and optional MASA sidecars unchanged. Explicit fixtures remain simulation evidence.
+
+## 0.6.0 — Bounded spectral generation
+
+- Additive, chirp, finite-band multisine noise, truncated FM and pulse oscillators at 44.1, 48, 96 and 192 kHz, with explicit Nyquist/resource admission, cancellation and digital spectral receipts.
+- Sonification from retained Cosmo observation series and additive reconstruction from currently authorized complex STFT frames; preserve source, mapping, clock and loss receipts.
+- Session-only playback opt-in across audio-serving routes and dashboard playback; native digital listening stays separate.
+- Filtered finite-excerpt sample rate conversion, replacing unfiltered linear downsampling.
+- Package the CPU runtime/dashboard for isolated candidates; qualify SoundFile 0.14 alongside the existing 0.13 support.
+- Optional `spectral` extra uses Akousmata's derivative authorization on Python 3.11+; the qualified Station candidate uses Python 3.13.
+
+
 ## 0.5.0 — Normalized observation and accountable-memory alignment
 
 - Upgraded the Sonic Matter Framework boundary to MASA 0.2.0 and

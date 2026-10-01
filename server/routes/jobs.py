@@ -7,13 +7,18 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from server.job_runner import JobQueueFullError
-from server.routes._utils import request_model_for_mode, run_provider_method_with_existing_job
+from server.routes._utils import preflight_deployment, request_model_for_mode, run_provider_method_with_existing_job
 from server.registry import job_runner, settings, storage
 from server.security import is_allowed_origin
 from server.schemas import JobStatus, JobSubmitRequest, JobSubmitResponse
 
 
 router = APIRouter()
+
+@router.get("/jobs/status")
+def runner_status():
+    return job_runner.status()
+
 
 @router.post("/jobs/submit", response_model=JobSubmitResponse)
 def submit_job(request: JobSubmitRequest) -> JobSubmitResponse:
@@ -27,6 +32,7 @@ def submit_job(request: JobSubmitRequest) -> JobSubmitResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    preflight_deployment(request_model)
     request_data = request_model.model_dump(exclude={"job_id"})
     job_id = storage.new_job(request.mode, request_data, status="queued")
     try:
@@ -39,10 +45,12 @@ def submit_job(request: JobSubmitRequest) -> JobSubmitResponse:
             method_name=method_name,
         )
     except JobQueueFullError as exc:
-        storage.update_job(job_id, status="error", error=str(exc))
+        storage.update_job(job_id, status="error", error=str(exc), metrics={"execution_state": "not_admitted"})
+        storage.write_job_receipt(job_id)
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except RuntimeError as exc:
-        storage.update_job(job_id, status="error", error=str(exc))
+        storage.update_job(job_id, status="error", error=str(exc), metrics={"execution_state": "not_admitted"})
+        storage.write_job_receipt(job_id)
         raise HTTPException(status_code=503, detail="background job runner is unavailable") from exc
     return JobSubmitResponse(
         job_id=job_id,
@@ -60,7 +68,22 @@ def get_job(job_id: str) -> JobStatus:
     job = storage.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+    from server.memory_policy import validate_context
+    validate_context(job.request.get("generation_context") or {})
     return job
+
+
+@router.get("/jobs/{job_id}/receipt")
+def job_receipt(job_id: str):
+    try:
+        value = storage.read_job_receipt(job_id)
+        from server.memory_policy import validate_context
+        validate_context(value.get("memory_conditioning") or {})
+        return value
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "No retained lifecycle receipt") from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/jobs/{job_id}/cancel")
@@ -98,11 +121,19 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
                 return
 
             payload = job.model_dump()
+            from server.memory_policy import validate_context
+            try:
+                validate_context(job.request.get("generation_context") or {})
+            except HTTPException:
+                await websocket.send_json({"job_id": job_id, "status": "withheld_or_unavailable"})
+                return
             signature = (payload["status"], payload["updated_at"])
             if signature != last_signature:
                 await websocket.send_json(payload)
                 last_signature = signature
-            if payload["status"] in {"done", "error", "cancelled"}:
+            execution_state = payload.get("metrics", {}).get("execution_state")
+            terminal = payload["status"] in {"done", "error", "cancelled"}
+            if terminal and execution_state not in {"admitted", "running", "cancellation_requested"} and (execution_state != "settled" or payload.get("metrics", {}).get("receipt_ready")):
                 return
             if time.monotonic() >= deadline:
                 await websocket.send_json(

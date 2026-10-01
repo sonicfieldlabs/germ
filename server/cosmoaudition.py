@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from server.cosmo_freshness import evaluate_signal, frame_signal_freshness
 from server.schemas import (
     CosmoauditionMapRequest,
     CosmoauditionMapping,
@@ -41,6 +42,7 @@ COSMOAUDITION_REMOTE_PATHS = frozenset(
         # status, emitted absences, and travelling attribution.
         "/api/modulation",
         "/api/frame",
+        "/api/generation-frame",
     }
 )
 # `/api/stream` is deliberately absent. It is Server-Sent Events, and this
@@ -392,7 +394,7 @@ def _control_bridge_reason(control: dict[str, Any], status: Any) -> str | None:
     return None
 
 
-def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
+def modulation_routes_from_frame(frame: dict[str, Any], *, now: str | None = None) -> dict[str, Any]:
     """Turn one modulation frame into GERM routes, keeping every status.
 
     This reads the frame's ``controls``, never its ``values``. The bare
@@ -416,6 +418,9 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
         status = control.get("status")
         output_value = control.get("outputValue")
         bridge_reason = _control_bridge_reason(control, status)
+        freshness = frame_signal_freshness(frame, control.get("signalId"), now=now, receipt=control)
+        if not freshness["mappingAllowed"] and bridge_reason is None:
+            bridge_reason = "freshness:" + freshness["reason"]
         executable = status in EXECUTABLE_FRAME_STATUSES and bridge_reason is None
         entry = {
             "target": control.get("target"),
@@ -425,6 +430,7 @@ def modulation_routes_from_frame(frame: dict[str, Any]) -> dict[str, Any]:
             "status": status,
             "reason": control.get("reason"),
             "bridgeReason": bridge_reason,
+            "consumerFreshness": freshness,
             # ``value`` is GERM's consumer-facing route value. Cosmoaudition's
             # modulation contract names the same field ``outputValue``; keep
             # both names so the crosswalk is explicit and lossless.
@@ -626,7 +632,7 @@ def _missing_decision(
     return _without_output(mapping, signal, previous, status="skipped", reason=reason)
 
 
-def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str, Any]:
+def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest, *, now: str | None = None) -> dict[str, Any]:
     mapping = request.mapping
     signal = request.signal
     previous = request.previousOutput
@@ -645,6 +651,9 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
         return _without_output(mapping, signal, previous, status="refused", reason="invalid-input")
     if signal.confidence == "error":
         return _missing_decision(request, reason="source-error")
+    freshness = evaluate_signal(signal.model_dump(), mode=signal.acquisitionMode or "live", now=now)
+    if not freshness["mappingAllowed"]:
+        return {**_without_output(mapping, signal, previous, status="refused", reason="freshness:" + freshness["reason"]), "consumerFreshness": freshness}
     if signal.value is None:
         return _missing_decision(request, reason="missing-value")
     if not math.isfinite(signal.value):
@@ -700,12 +709,8 @@ def execute_cosmoaudition_mapping(request: CosmoauditionMapRequest) -> dict[str,
         return _without_output(
             mapping, signal, previous, status="refused", reason="invalid-mapping"
         )
-    uncertain = signal.confidence in {"low", "stale"}
-    reason = (
-        "low-confidence"
-        if signal.confidence == "low"
-        else ("stale-input" if signal.confidence == "stale" else "mapped")
-    )
+    uncertain = signal.confidence == "low"
+    reason = "low-confidence" if uncertain else "mapped"
     return {
         **_base_decision(mapping, signal, previous),
         "status": "uncertainty" if uncertain else "applied",
