@@ -6,7 +6,7 @@
       "package": "torch",
       "version": "2.10.0",
       "owner": "@emeisazam (repository CODEOWNER)",
-      "reviewed_on": "2026-09-26",
+      "reviewed_on": "2026-09-30",
       "expires_on": "2026-10-10",
       "rationale": "The optional germ runtime retains its existing pinned Torch/Torchaudio pair. Repository source review found no direct call to torch.export.load / .pt2 loading. Third-party/model call paths and accelerator behavior are not newly qualified. Only trusted operator-selected model artifacts remain within the intended boundary.",
       "sources": [
@@ -23,9 +23,9 @@
       "package": "torch",
       "version": "2.10.0",
       "owner": "@emeisazam (repository CODEOWNER)",
-      "reviewed_on": "2026-09-26",
+      "reviewed_on": "2026-09-30",
       "expires_on": "2026-10-10",
-      "rationale": "The optional germ runtime retains its existing pinned Torch/Torchaudio pair. Repository source review found no direct call to torch.jit.script. Third-party/model call paths and accelerator behavior are not newly qualified. Only trusted operator-selected model artifacts remain within the intended boundary.",
+      "rationale": "The optional germ runtime retains its existing pinned Torch/Torchaudio pair. Repository source review found no direct call to torch.jit.script. Third-party/model call paths and accelerator behavior are not newly qualified. Only trusted operator-selected model artifacts remain within the intended boundary. The upstream advisory now identifies Torch 2.13.0 as patched; this optional pinned runtime has not been requalified with that replacement. The existing expiry is unchanged.",
       "sources": [
         "https://github.com/advisories/GHSA-rrmf-rvhw-rf47"
       ],
@@ -40,7 +40,7 @@
     {
       "requirement": "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@fa5ee841dd49bae0fa361fac26904adc27fd400e",
       "owner": "@emeisazam (repository CODEOWNER)",
-      "reviewed_on": "2026-09-26",
+      "reviewed_on": "2026-09-30",
       "expires_on": "2026-10-10",
       "rationale": "pip-audit cannot hash or index a Git requirement. The immutable upstream commit and public advisory page were checked; no public repository advisories were returned on the review date. This is a source identity/advisory-feed review, not a full source vulnerability scan or model qualification. All registry transitive dependencies remain in the audit.",
       "sources": [
