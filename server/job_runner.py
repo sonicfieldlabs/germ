@@ -21,6 +21,7 @@ class JobRunner:
         self._futures: dict[str, Future[Any]] = {}
         self._cancel_events: dict[str, Event] = {}
         self._accepting = False
+        self._settlement_recording_failures = 0
         self._drained = Event()
         self._drained.set()
         self.startup()
@@ -31,6 +32,7 @@ class JobRunner:
                 return
             if self._futures:
                 raise RuntimeError("Previous workers have not settled")
+            self.storage.reconcile_interrupted_jobs()
             self.executor = ThreadPoolExecutor(
                 max_workers=self._workers, thread_name_prefix="germ-job"
             )
@@ -44,6 +46,7 @@ class JobRunner:
                 workers=self._workers,
                 capacity=self._capacity,
                 outstanding=len(self._futures),
+                settlement_recording_failures=self._settlement_recording_failures,
             )
 
     def idle_control(self, action):
@@ -71,6 +74,7 @@ class JobRunner:
             if not self._slots.acquire(blocking=False):
                 raise JobQueueFullError("background job queue is full")
             try:
+                self.storage.update_job(runner_job_id, metrics={"execution_state": "admitted"})
                 future = self.executor.submit(invoke)
             except Exception:
                 self._slots.release()
@@ -78,7 +82,6 @@ class JobRunner:
             self._drained.clear()
             self._futures[runner_job_id] = future
             self._cancel_events[runner_job_id] = cancel_event
-            self.storage.update_job(runner_job_id, metrics={"execution_state": "admitted"})
         future.add_done_callback(lambda completed: self._forget(runner_job_id, completed))
         ready.set()
         return future
@@ -106,27 +109,31 @@ class JobRunner:
         return {"cancelled": True, "status": "cancelled"}
 
     def _forget(self, job_id: str, completed: Future) -> None:
-        # Capture escaped worker failures instead of leaving a permanently running job.
-        if not completed.cancelled():
-            error = completed.exception()
-            if error is not None:
-                self.storage.update_job(job_id, status="error", error=str(error)[:2000])
-        current = self.storage.get_job(job_id)
-        if current and current.status in {"running", "queued"}:
-            self.storage.update_job(
-                job_id, status="error", error="worker exited without a terminal result"
-            )
-        self.storage.update_job(job_id, metrics={"execution_state": "settled"})
-        self.storage.write_job_receipt(job_id)
-        settled = self.storage.get_job(job_id)
-        self.storage.update_job(job_id, metrics={"receipt_ready": bool(settled and not settled.metrics.get("lifecycle_receipt_error"))})
-        with self._lock:
-            future = self._futures.pop(job_id, None)
-            self._cancel_events.pop(job_id, None)
-            if future is not None:
-                self._slots.release()
-            if not self._futures:
-                self._drained.set()
+        try:
+            if not completed.cancelled():
+                error = completed.exception()
+                if error is not None:
+                    self.storage.update_job(job_id, status="error", error=str(error)[:2000])
+            current = self.storage.get_job(job_id)
+            if current and current.status in {"running", "queued"}:
+                self.storage.update_job(job_id, status="error", error="worker exited without a terminal result")
+            self.storage.update_job(job_id, metrics={"execution_state": "settled"})
+            self.storage.write_job_receipt(job_id)
+            settled = self.storage.get_job(job_id)
+            self.storage.update_job(job_id, metrics={"receipt_ready": bool(settled and not settled.metrics.get("lifecycle_receipt_error"))})
+        except Exception:
+            # A failed disk write must not leak capacity. Durable state remains unknown
+            # and restart reconciliation exposes that uncertainty without replay.
+            with self._lock:
+                self._settlement_recording_failures += 1
+        finally:
+            with self._lock:
+                future = self._futures.pop(job_id, None)
+                self._cancel_events.pop(job_id, None)
+                if future is not None:
+                    self._slots.release()
+                if not self._futures:
+                    self._drained.set()
 
     def wait_for_settlement(self, timeout: float) -> bool:
         return self._drained.wait(timeout)

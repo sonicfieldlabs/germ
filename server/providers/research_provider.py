@@ -1,16 +1,19 @@
 """Research artifacts use the existing GERM queue and lifecycle receipts."""
 
-from pathlib import Path
 import json
 import os
+import shutil
+import signal
 import subprocess
 import tempfile
 import time
-import shutil
+from pathlib import Path
+
 from akousma.resource_admission import admitted
+
 from server.providers.base import AudioGenerationProvider, admission_checkpoint
-from server.schemas import GenerationResult
 from server.research.deployment import deployment, sha
+from server.schemas import GenerationResult
 
 
 class ResearchProvider(AudioGenerationProvider):
@@ -44,6 +47,7 @@ class ResearchProvider(AudioGenerationProvider):
     @admitted("germ", checkpoint=admission_checkpoint)
     def audio_to_audio(self, request):
         import soundfile as sf
+
         from server.research.requests import Controls
 
         config = deployment(request.model, verify=True)
@@ -106,7 +110,7 @@ class ResearchProvider(AudioGenerationProvider):
                 model_path=config["model_path"],
                 start_seconds=control.start_seconds,
                 seconds=request.duration,
-                seed=request.seed if request.seed >= 0 else 0,
+                seed=max(request.seed, 0),
                 latent_scale=control.latent_scale,
                 latent_bias=control.latent_bias,
             )
@@ -129,14 +133,17 @@ class ResearchProvider(AudioGenerationProvider):
                     check()
                     if process.returncode:
                         raise ValueError("Research worker failed; no artifact admitted")
-                    result = json.loads((work / "result.json").read_text())
+                    result_path = work / "result.json"
+                    if result_path.is_symlink() or result_path.stat().st_size > 1024 * 1024:
+                        raise ValueError("Research result manifest exceeds bounds")
+                    result = json.loads(result_path.read_text())
                 finally:
                     if process.poll() is None:
-                        process.terminate()
+                        os.killpg(process.pid, signal.SIGTERM)
                         try:
                             process.wait(3)
                         except subprocess.TimeoutExpired:
-                            process.kill()
+                            os.killpg(process.pid, signal.SIGKILL)
                             process.wait()
             if sha(source) != digest:
                 raise ValueError("Research source changed during processing")
@@ -154,6 +161,7 @@ class ResearchProvider(AudioGenerationProvider):
                     or path.suffix not in {".wav", ".mid", ".json"}
                     or path.is_symlink()
                     or not path.is_file()
+                    or path.stat().st_size > 32 * 1024 * 1024
                     or sha(path) != artifact["sha256"]
                 ):
                     raise ValueError("Invalid research artifact")

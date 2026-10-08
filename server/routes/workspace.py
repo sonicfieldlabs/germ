@@ -22,6 +22,7 @@ router = APIRouter(prefix="/workspace")
 
 class Render(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
     mode: Literal["prompt", "memory", "audio"]
     model: str = Field(default="sm-sfx", max_length=80)
     edit: Literal["variation", "inpaint", "continue"] = "variation"
@@ -298,10 +299,10 @@ def render(request: Render):
                 fields["lineage"]["operation"] = job_mode
             fields["generation_context"]["operation"] = job_mode
         prepared.append(
-            JobSubmitRequest(mode=job_mode, request=fields)
+            JobSubmitRequest(mode=job_mode, request=fields, request_id=request.request_id + "." + str(len(prepared)) if request.request_id else None)
         )
     state = job_runner.status()
-    if state["capacity"] - state["outstanding"] < len(prepared):
+    if request.request_id is None and state["capacity"] - state["outstanding"] < len(prepared):
         raise HTTPException(429, "Generation queue is full; wait for a render to finish")
     tickets, errors = [], []
     for job in prepared:
@@ -314,6 +315,7 @@ def render(request: Render):
             errors.append(str(exc.detail))
             break
     return {
+        "request_id": request.request_id,
         "jobs": tickets,
         "errors": errors,
         "memory_count": len(context.get("memory_influences", [])),

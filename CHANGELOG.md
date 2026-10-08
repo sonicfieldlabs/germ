@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 — 2026-10-08
+
+- Persist generation request identities before acknowledgement, recover retained requests after restart, and refuse uncertain replay. Preserve cancellation and deadline uncertainty explicitly.
+- Source release only; no package registry publication or service activation.
+
 ## Unreleased — Cosmoaudition freshness admission
 
 - Package 0.6.2 with receiving-time freshness, repaired owner packages and the immutable Stable Audio source revision.

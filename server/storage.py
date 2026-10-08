@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,6 +88,10 @@ class StorageManager:
         self._lineage_child_locks: OrderedDict[Path, RLock] = OrderedDict()
         self.library_version = 0
         self.ensure_dirs()
+        from server.job_journal import JobJournal
+
+        self.job_journal = JobJournal(settings.output_root)
+        self._jobs_recovered = False
 
     @staticmethod
     def _iso_age_seconds(value: Any) -> float | None:
@@ -161,10 +166,13 @@ class StorageManager:
         *,
         status: str = "running",
     ) -> str:
+        return self.admit_job(mode, request_data, status=status)[0]
+
+    def admit_job(self, mode, request_data, *, status="queued", request_id=None):
         job_id = str(uuid4())
         timestamp = utc_now_iso()
         with self._lock:
-            self.jobs[job_id] = {
+            job = {
                 "job_id": job_id,
                 "status": status,
                 "mode": mode,
@@ -178,16 +186,30 @@ class StorageManager:
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
+            job, created = self.job_journal.admit(job, request_id)
+            job_id = job["job_id"]
+            self.jobs[job_id] = job
             self._evict_old_jobs()
-        return job_id
+        return job_id, created
+
+    def reconcile_interrupted_jobs(self):
+        with self._lock:
+            if self._jobs_recovered:
+                return
+            for job in self.job_journal.reconcile(utc_now_iso()):
+                self.jobs[job["job_id"]] = job
+                self.write_job_receipt(job["job_id"])
+            self._jobs_recovered = True
 
     def request_job_cancellation(self, job_id: str) -> bool:
         with self._lock:
-            job = self.jobs.get(job_id)
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
             if not job or job["status"] in {"done", "error"}:
                 return False
             job.update(status="cancelled", error="job cancellation requested", updated_at=utc_now_iso())
             job["metrics"] = {**job.get("metrics", {}), "execution_state": "cancellation_requested"}
+            self.job_journal.save(job)
+            self.jobs[job_id] = job
             return True
 
     def update_job(
@@ -201,7 +223,7 @@ class StorageManager:
         metrics: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
-            job = self.jobs.get(job_id)
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
             if not job:
                 return
             if status is not None and not (job["status"] == "cancelled" and status != "cancelled"):
@@ -216,6 +238,8 @@ class StorageManager:
                 current_metrics = job.get("metrics") if isinstance(job.get("metrics"), dict) else {}
                 job["metrics"] = {**current_metrics, **metrics}
             job["updated_at"] = utc_now_iso()
+            self.job_journal.save(job)
+            self.jobs[job_id] = job
 
     def add_job_listener(self, job_id: str) -> int:
         with self._lock:
@@ -1051,7 +1075,7 @@ class StorageManager:
 
     def record_result(self, result: GenerationResult) -> None:
         with self._lock:
-            job = self.jobs.get(result.job_id)
+            job = deepcopy(self.jobs.get(result.job_id) or self.job_journal.get(result.job_id))
             if not job:
                 timestamp = utc_now_iso()
                 job = {
@@ -1068,6 +1092,7 @@ class StorageManager:
                     "created_at": timestamp,
                     "updated_at": timestamp,
                 }
+                self.job_journal.admit(job)
                 self.jobs[result.job_id] = job
                 self._evict_old_jobs()
             late_result = job["status"] == "cancelled" and result.status != "cancelled"
@@ -1083,6 +1108,8 @@ class StorageManager:
             if not late_result:
                 job["error"] = result.error
             job["updated_at"] = utc_now_iso()
+            self.job_journal.save(job)
+            self.jobs[result.job_id] = job
             self._evict_old_jobs()
 
     def job_receipt_path(self, job_id: str) -> Path:
@@ -1091,9 +1118,21 @@ class StorageManager:
 
     def read_job_receipt(self, job_id: str) -> dict:
         path = self.job_receipt_path(job_id)
-        if path.stat().st_size > 1024 * 1024:
-            raise ValueError("Lifecycle receipt exceeds read limit")
-        return json.loads(path.read_text())
+        import os
+        import stat
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024:
+                raise ValueError("Lifecycle receipt exceeds read limit or is not regular")
+            payload = stream.read(1024 * 1024 + 1)
+            after = os.fstat(stream.fileno())
+        if len(payload) > 1024 * 1024 or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("Lifecycle receipt changed during read")
+        value = json.loads(payload)
+        if not isinstance(value, dict) or value.get("job_id") != job_id or value.get("contract") != "germ/job-lifecycle/v0.1":
+            raise ValueError("Lifecycle receipt identity mismatch")
+        return value
 
     def write_job_receipt(self, job_id: str) -> None:
         """Persist owner lifecycle evidence without copying source prose or resuming jobs."""
@@ -1122,8 +1161,18 @@ class StorageManager:
             self.update_job(job_id, metrics={"lifecycle_receipt_error": str(exc)[:1000]})
 
     def get_job(self, job_id: str) -> JobStatus | None:
+        if not isinstance(job_id, str) or not job_id:
+            return None
         with self._lock:
-            job = dict(self.jobs[job_id]) if job_id in self.jobs else None
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
+        if not job:
+            try:
+                receipt = self.read_job_receipt(job_id)
+                if receipt.get("job_id") != job_id or receipt.get("status") not in {"done", "error", "cancelled"}:
+                    return None
+                job = {"job_id": job_id, "status": receipt["status"], "mode": receipt.get("mode") or "unknown", "provider": receipt.get("provider"), "model": receipt.get("model"), "request": {"generation_context": receipt.get("memory_conditioning") or {}}, "audio_files": receipt.get("audio_files") or [], "metadata_files": receipt.get("metadata_files") or [], "error": receipt.get("error"), "metrics": {**(receipt.get("metrics") or {}), "legacy_terminal_receipt": True}, "created_at": receipt["created_at"], "updated_at": receipt["recorded_at"]}
+            except (FileNotFoundError, ValueError, KeyError):
+                return None
         return JobStatus(**job) if job else None
 
     def random_seed(self) -> int:

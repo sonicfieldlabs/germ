@@ -735,6 +735,14 @@ class WavetableOperationResult(BaseModel):
 
 
 class BaseGenerationRequest(JSONRequestModel):
+    @model_validator(mode="before")
+    @classmethod
+    def provider_model_default(cls, value):
+        if isinstance(value, dict) and "model" not in value:
+            from server.config import provider_default_model
+            value = {**value, "model": provider_default_model(value.get("provider", "mock"))}
+        return value
+
     masa_contracts: list[str] = Field(default_factory=lambda: ["masa/0.2.0"], max_length=16)
     provider: ProviderId = "mock"
     model: str = Field(default="mock-sine", min_length=1, max_length=500)
@@ -1201,6 +1209,7 @@ class JobStatus(BaseModel):
 class JobSubmitRequest(BaseModel):
     mode: ModeId
     request: dict[str, Any]
+    request_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class JobSubmitResponse(BaseModel):
