@@ -3,6 +3,7 @@
 ## 0.7.0 — 2026-10-08
 
 - Persist generation request identities before acknowledgement, recover retained requests after restart, and refuse uncertain replay. Preserve cancellation and deadline uncertainty explicitly.
+- Require patched fsspec in the optional model environment; retain the two narrowly reviewed Torch exceptions.
 - Source release only; no package registry publication or service activation.
 
 ## Unreleased — Cosmoaudition freshness admission

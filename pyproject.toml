@@ -41,6 +41,7 @@ Issues = "https://github.com/sonicfieldlabs/germ/issues"
 room = ["pyroomacoustics==0.10.0", "scipy>=1.14,<2"]
 spectral = ["akousmata>=0.8.3; python_version >= '3.11'"]
 python-provider = [
+    "fsspec>=2026.6.0",
     "transformers>=5.10.0",
     "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@fa5ee841dd49bae0fa361fac26904adc27fd400e",
 ]
