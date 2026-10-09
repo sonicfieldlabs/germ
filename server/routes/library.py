@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 
 from server.identity import LEGACY_ENGINE_NAME, PRODUCT_NAME, SOUND_MATTER_CONCEPT
 from server.registry import settings, storage
@@ -139,6 +141,18 @@ def _output_signature() -> tuple[int, tuple[tuple[str, int, int], ...]]:
         except OSError:
             continue
         directories.append((storage.relative_path(path), stat.st_mtime_ns, stat.st_size))
+    for external in settings.library_audio_roots:
+        if not external.is_dir():
+            continue
+        for path in [external, *external.rglob("*")]:
+            if path.is_symlink() or not storage.is_within(path, external):
+                continue
+            try:
+                if path.is_file() or path.is_dir():
+                    stat = path.stat()
+                    directories.append((str(path), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                continue
     return (storage.library_version, tuple(sorted(directories)))
 
 
@@ -151,7 +165,7 @@ def _cached_output_signature_unlocked() -> tuple[int, tuple[tuple[str, int, int]
     return _library_cache["current_signature"]
 
 
-def _audio_target(audio_path: str | None, absolute_audio_path: str | None = None) -> Path | None:
+def _audio_target(audio_path: str | None, absolute_audio_path: str | None = None, *, library_root: Path | None = None) -> Path | None:
     if not isinstance(audio_path, str):
         audio_path = None
     if not isinstance(absolute_audio_path, str):
@@ -159,7 +173,7 @@ def _audio_target(audio_path: str | None, absolute_audio_path: str | None = None
     if not audio_path and not absolute_audio_path:
         return None
 
-    output_root = settings.output_root.resolve()
+    output_root = (library_root or settings.output_root).resolve()
 
     def candidate(raw_path: Path) -> Path | None:
         target = raw_path.expanduser().resolve()
@@ -264,8 +278,8 @@ def _audio_item(path: Path) -> dict[str, Any]:
     }
 
 
-def _metadata_item(path: Path) -> dict[str, Any] | None:
-    if not storage.is_within(path, settings.metadata_dir):
+def _metadata_item(path: Path, *, library_root: Path | None = None) -> dict[str, Any] | None:
+    if not storage.is_within(path, library_root / "metadata" if library_root else settings.metadata_dir):
         return None
     data = _read_metadata_object(path)
     if data is None:
@@ -279,7 +293,7 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
 
     audio_path = data.get("output_audio_path")
     absolute_audio_path = data.get("absolute_output_audio_path")
-    target = _audio_target(audio_path, absolute_audio_path)
+    target = _audio_target(audio_path, absolute_audio_path, library_root=library_root)
     target_stat = None
     if target:
         try:
@@ -331,6 +345,7 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
         "metadata_file": storage.relative_path(path),
         "audio_exists": exists,
         "sample_rate": data.get("sample_rate"),
+        "generation_receipt": _dict_or_empty(data.get("research")) or _dict_or_empty(data.get("ace_step")) or _dict_or_empty(data.get("synthesis")),
         "init_noise_level": data.get("init_noise_level"),
         "morph_depth": data.get("morph_depth"),
         "inpaint_ranges": _list_or_empty(data.get("inpaint_ranges")),
@@ -350,6 +365,7 @@ def _metadata_item(path: Path) -> dict[str, Any] | None:
         or _dict_or_empty(lineage.get("operation_params")),
         "parent_branch": data.get("parent_branch") or lineage.get("parent_branch"),
         "source_region": data.get("source_region") or lineage.get("region"),
+        "generation_context": data.get("generation_context") or (lineage.get("operation_params") or {}).get("generation_context") or {},
         "lineage": lineage,
         "source_type": source_type,
         "source": source_data or "metadata",
@@ -510,6 +526,45 @@ def _build_library_items() -> list[dict[str, Any]]:
                 continue
             indexed_audio.add(relative)
 
+    for root in settings.library_audio_roots:
+        if not root.is_dir():
+            continue
+        for metadata_path in (root / "metadata").glob("*.json"):
+            item = _metadata_item(metadata_path, library_root=root)
+            if item and item.get("audio_file"):
+                absolute = str((settings.project_root / item["audio_file"]).resolve())
+                if absolute not in indexed_audio:
+                    item["read_only"] = True
+                    items.append(item)
+                    indexed_audio.add(absolute)
+        for path in root.rglob("*"):
+            if (path.suffix.lower() not in AUDIO_EXTENSIONS or not path.is_file()
+                    or not storage.is_within(path, root) or str(path.resolve()) in indexed_audio):
+                continue
+            try:
+                item = _audio_item(path)
+                # External roots are read-only library entries, never writable output paths.
+                sound_id = "library_" + hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:32]
+                item.update(id=sound_id, sound_id=sound_id, audio_file=str(path.resolve()),
+                            source_type="recording" if path.parent.name == "library-captures" else "upload",
+                            title=path.stem, file_size=path.stat().st_size)
+                item["lineage"].update(id=sound_id, audio_path=str(path.resolve()))
+                sidecar = path.with_suffix(path.suffix + ".json")
+                if storage.is_within(sidecar, root) and sidecar.is_file():
+                    metadata = _read_metadata_object(sidecar) or {}
+                    if metadata.get("contract") == "oida/library-capture/v1":
+                        item.update(title=metadata.get("label") or path.stem,
+                                    duration=metadata.get("duration_seconds"),
+                                    memory_ids=[metadata["record_id"]] if metadata.get("record_id") else [])
+                        if metadata.get("parent_sound_id"):
+                            item["parents"] = [metadata["parent_sound_id"]]
+                            item["lineage"]["parents"] = item["parents"]
+                        item["lineage"]["listening_capture"] = metadata
+                item["read_only"] = True
+                items.append(item)
+                indexed_audio.add(str(path.resolve()))
+            except OSError:
+                continue
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return items[:MAX_LIBRARY_ITEMS]
 
@@ -534,16 +589,19 @@ def list_library(
             limit=effective_limit,
             fields=selected_fields,
         )
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={"ETag": etag})
-        if _library_cache["built_signature"] != signature or _library_cache["items"] is None:
-            _library_cache["items"] = _build_library_items()
-            _library_cache["built_signature"] = signature
+        _refresh_library_unlocked(signature)
 
-        all_items = _library_cache["items"]
-        items = all_items[safe_offset : safe_offset + effective_limit]
-        if selected_fields:
-            items = [_project_item_fields(item, selected_fields) for item in items]
+        # Petri's legacy editor uses /files for playback and mutations. Its
+        # editable listing stays scoped to this output tree; external roots are
+        # exposed through the read-only workspace projection and opaque media route.
+        all_items = [item for item in _library_cache["items"] if not item.get("read_only")]
+    all_items = _permitted_items(all_items)
+    etag = '"' + hashlib.sha256((etag + json.dumps([item.get("id") for item in all_items])).encode()).hexdigest() + '"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "private, must-revalidate"})
+    items = all_items[safe_offset : safe_offset + effective_limit]
+    if selected_fields:
+        items = [_project_item_fields(item, selected_fields) for item in items]
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "private, must-revalidate"
     return {
@@ -556,3 +614,148 @@ def list_library(
         "metadata_dir": storage.relative_path(settings.metadata_dir),
         "wavetable_dir": storage.relative_path(settings.wavetable_dir),
     }
+
+
+def _refresh_library_unlocked(signature=None):
+    if signature is None:
+        signature = _cached_output_signature_unlocked()
+    if _library_cache["built_signature"] != signature or _library_cache["items"] is None:
+        items = _build_library_items()
+        memory_index = {}
+        for item in items:
+            ids = item.get("memory_ids")
+            if (not item.get("audio_exists") or not item.get("audio_file")
+                    or not isinstance(ids, list)
+                    or not all(isinstance(rid, str) and re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", rid) for rid in ids)):
+                continue
+            for rid in ids:
+                memory_index.setdefault(rid, {
+                    "key": library_key(item),
+                    "title": str(item.get("title") or "Retained listening audio")[:256],
+                    "memory_ids": [rid],
+                    "duration": item.get("duration"),
+                })
+        _library_cache.update(items=items, built_signature=signature, memory_index=memory_index,
+                              key_index={library_key(item): item for item in items})
+
+
+def library_memory_replay(record_id: str) -> list[dict]:
+    """Bounded exact-lineage lookup, invalidated with the canonical library index.
+
+    The item it names is checked for permission afresh, as the full listing would,
+    so a caller can ask for one record's audio without paying for every item's check.
+    """
+    with _library_cache_lock:
+        _refresh_library_unlocked()
+        item = _library_cache.get("memory_index", {}).get(record_id)
+        source = _library_cache.get("key_index", {}).get(item["key"]) if item else None
+    if item is None or source is None or not _permitted_items([source]):
+        return []
+    return [{**item, "memory_ids": list(item["memory_ids"])}]
+
+
+def library_items() -> list[dict[str, Any]]:
+    """Share Petri's cached index with other local clients."""
+    with _library_cache_lock:
+        _refresh_library_unlocked()
+        items = list(_library_cache["items"])
+    return _permitted_items(items)
+
+
+def _permitted_items(items):
+    # Never cache permission. Mid-flight revocation can leave physical artifacts,
+    # but those artifacts and their prompts must not become readable results.
+    # One request shares one admission session: each record is read once per request.
+    from server.memory_policy import AdmissionSession, validate_context
+    permitted = []
+    def context_of(item):
+        return item.get("generation_context") or (item.get("lineage", {}).get("operation_params") or {}).get("generation_context") or {}
+
+    def influence_ids():
+        for item in items:
+            context = context_of(item)
+            influences = context.get("memory_influences") if isinstance(context, dict) else None
+            for influence in influences if isinstance(influences, list) else []:
+                if isinstance(influence, dict):
+                    yield influence.get("record_id")
+
+    with AdmissionSession() as session:
+        session.prefetch(influence_ids())
+        for item in items:
+            context = context_of(item)
+            try:
+                validate_context(context, session=session)
+                permitted.append(item)
+            except (HTTPException, KeyError, ValueError):
+                continue
+    return permitted
+
+
+def library_key(item: dict) -> str:
+    return hashlib.sha256(str(item.get("sound_id") or item["id"]).encode()).hexdigest()
+
+
+def resolve_library_audio(key: str) -> tuple[dict, Path]:
+    if not re.fullmatch(r"[a-f0-9]{64}", key):
+        raise HTTPException(400, "Invalid library key")
+    with _library_cache_lock:
+        _refresh_library_unlocked()
+        item = _library_cache.get("key_index", {}).get(key)
+    # Validate only the selected item, freshly, outside the index lock.
+    if item is not None and not _permitted_items([item]):
+        item = None
+    if item is None or not item.get("audio_exists") or not item.get("audio_file"):
+        raise HTTPException(404, "Sound is no longer available in the library")
+    path = (settings.project_root / item["audio_file"]).resolve()
+    roots = [settings.output_root, *settings.library_audio_roots]
+    if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS or not any(storage.is_within(path, root) for root in roots):
+        raise HTTPException(404, "Library audio is unavailable")
+    return item, path
+
+
+@router.get("/library/audio/{key}/authorization")
+def library_audio_authorization(key: str):
+    item, path = resolve_library_audio(key)
+    if path.stat().st_size > 128 * 1024 * 1024:
+        raise HTTPException(413, "Sound exceeds the Station audio limit")
+    source_type = item.get("source_type")
+    kind = source_type if source_type in {"import", "discovery"} else (
+        "generated" if str(item.get("provider", "")).startswith(
+            ("stable_audio", "stability", "synthesis", "mock", "ace_step", "research")
+        ) else source_type or "audio"
+    )
+    context = ((item.get("lineage") or {}).get("operation_params") or {}).get("generation_context") or {}
+    title = (f"Memory composition · {len(context.get('memory_influences', []))} records"
+             if context.get("workspace_mode") == "memory"
+             else item.get("title") or item.get("prompt") or path.stem)
+    return {"contract": "germ/audio-authorization/v1", "path": str(path), "key": key,
+            "sound_id": item["sound_id"], "kind": kind, "title": title,
+            "memory_ids": item.get("memory_ids") or []}
+
+
+@router.get("/library/audio/{key}/resolve")
+def library_audio_location(key: str):
+    item, path = resolve_library_audio(key)
+    # Compute only on explicit resolution, not while painting the library index.
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    import soundfile as sf
+
+    try:
+        info = sf.info(str(path))
+        duration = info.frames / info.samplerate
+    except (OSError, RuntimeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, "Cannot verify retained audio duration") from exc
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise HTTPException(409, "Library audio changed during resolution")
+    return {"path": str(path), "sound_id": item["sound_id"], "sha256": digest.hexdigest(), "duration": duration}
+
+
+@router.get("/library/audio/{key}")
+def library_audio_file(key: str):
+    _, path = resolve_library_audio(key)
+    return FileResponse(path, headers={"Cache-Control": "private, no-store"})

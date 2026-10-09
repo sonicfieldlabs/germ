@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from copy import deepcopy
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,6 +88,10 @@ class StorageManager:
         self._lineage_child_locks: OrderedDict[Path, RLock] = OrderedDict()
         self.library_version = 0
         self.ensure_dirs()
+        from server.job_journal import JobJournal
+
+        self.job_journal = JobJournal(settings.output_root)
+        self._jobs_recovered = False
 
     @staticmethod
     def _iso_age_seconds(value: Any) -> float | None:
@@ -117,6 +122,7 @@ class StorageManager:
                 age = self._iso_age_seconds(job.get("updated_at") or job.get("created_at"))
                 if (
                     job.get("status") in terminal
+                    and job.get("metrics", {}).get("execution_state") not in {"admitted", "running", "cancellation_requested"}
                     and self.job_listeners.get(job_id, 0) <= 0
                     and (age is None or age >= JOB_EVICTION_GRACE_SECONDS)
                 ):
@@ -130,6 +136,7 @@ class StorageManager:
                         return
                     if (
                         job.get("status") in terminal
+                    and job.get("metrics", {}).get("execution_state") not in {"admitted", "running", "cancellation_requested"}
                         and self.job_listeners.get(job_id, 0) <= 0
                     ):
                         self.jobs.pop(job_id, None)
@@ -159,10 +166,13 @@ class StorageManager:
         *,
         status: str = "running",
     ) -> str:
+        return self.admit_job(mode, request_data, status=status)[0]
+
+    def admit_job(self, mode, request_data, *, status="queued", request_id=None):
         job_id = str(uuid4())
         timestamp = utc_now_iso()
         with self._lock:
-            self.jobs[job_id] = {
+            job = {
                 "job_id": job_id,
                 "status": status,
                 "mode": mode,
@@ -176,8 +186,31 @@ class StorageManager:
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
+            job, created = self.job_journal.admit(job, request_id)
+            job_id = job["job_id"]
+            self.jobs[job_id] = job
             self._evict_old_jobs()
-        return job_id
+        return job_id, created
+
+    def reconcile_interrupted_jobs(self):
+        with self._lock:
+            if self._jobs_recovered:
+                return
+            for job in self.job_journal.reconcile(utc_now_iso()):
+                self.jobs[job["job_id"]] = job
+                self.write_job_receipt(job["job_id"])
+            self._jobs_recovered = True
+
+    def request_job_cancellation(self, job_id: str) -> bool:
+        with self._lock:
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
+            if not job or job["status"] in {"done", "error"}:
+                return False
+            job.update(status="cancelled", error="job cancellation requested", updated_at=utc_now_iso())
+            job["metrics"] = {**job.get("metrics", {}), "execution_state": "cancellation_requested"}
+            self.job_journal.save(job)
+            self.jobs[job_id] = job
+            return True
 
     def update_job(
         self,
@@ -190,10 +223,10 @@ class StorageManager:
         metrics: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
-            job = self.jobs.get(job_id)
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
             if not job:
                 return
-            if status is not None:
+            if status is not None and not (job["status"] == "cancelled" and status != "cancelled"):
                 job["status"] = status
             if error is not None:
                 job["error"] = error
@@ -205,6 +238,8 @@ class StorageManager:
                 current_metrics = job.get("metrics") if isinstance(job.get("metrics"), dict) else {}
                 job["metrics"] = {**current_metrics, **metrics}
             job["updated_at"] = utc_now_iso()
+            self.job_journal.save(job)
+            self.jobs[job_id] = job
 
     def add_job_listener(self, job_id: str) -> int:
         with self._lock:
@@ -350,7 +385,14 @@ class StorageManager:
         error: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        job = self.get_job(getattr(request, "job_id", None))
+        if status == "done" and job and job.status == "cancelled":
+            status = "cancelled"
+            error = "completion arrived after cancellation request; output bytes retained"
         request_data = request.model_dump(exclude={"job_id"})
+        if status == "done":
+            from server.memory_policy import validate_context
+            validate_context(request_data.get("generation_context") or {})
         request_data["lora"] = self._compact_lora_specs(request_data.get("lora", []))
         runtime = self._runtime_from_provider(provider)
         germinator_mode = self._germinator_mode(mode)
@@ -536,6 +578,15 @@ class StorageManager:
             status=status,
             output_audio_path=output_audio_path,
         )
+        metadata["masa_contracts"] = request_data.get("masa_contracts", ["masa/0.2.0"])
+        metadata["generation_job_id"] = getattr(request, "job_id", None)
+        metadata["generation_lifecycle"] = {
+            "job_id": job.job_id if job else None,
+            "admitted_at": job.created_at if job else None,
+            "job_status_at_write": job.status if job else "untracked",
+            "output_status": status,
+            "metrics_at_write": dict(job.metrics) if job else {},
+        }
         metadata["masa"] = initial_masa
         with self._lock:
             self._write_json_atomic(metadata_path, metadata)
@@ -610,6 +661,20 @@ class StorageManager:
             from server.masa_bridge import MASA_VERSION, build_generation_record, sidecar_path_for
             from server.schemas import validate_json_compatible
 
+            if "masa/0.2.0" not in metadata.get("masa_contracts", ["masa/0.2.0"]):
+                return {**initial, "status": "not_negotiated", "reason": "No shared MASA generation contract"}
+            from hashlib import sha256
+            path = self.resolve_existing_path(output_audio_path)
+            if not self.is_within(path, self.settings.output_root):
+                raise ValueError("Generation output must remain inside the owner output directory")
+            digest = sha256()
+            length = 0
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    length += len(chunk)
+            integrity = {"state": "known", "value": {"algorithm": "sha-256", "digest": digest.hexdigest(), "byteLength": length, "status": "verified", "verifiedAt": utc_now_iso()}}
+            metadata["output_integrity"] = integrity
             record = build_generation_record(metadata)
             validate_json_compatible(record, label="MASA sidecar")
             sidecar_path = sidecar_path_for(metadata_path, self.settings.masa_dir)
@@ -620,6 +685,10 @@ class StorageManager:
                 "requested": True,
                 "version": MASA_VERSION,
                 "record_id": record["id"],
+                "receipt_id": record["history"]["events"][-1]["id"],
+                "output_sha256": digest.hexdigest(),
+                "negotiated_contract": "masa/0.2.0",
+                "profiles": record["profiles"],
                 "representation_id": record["representations"][-1]["id"],
                 "sidecar_path": self.relative_path(sidecar_path),
                 "canonical_identity": "sound_id",
@@ -667,8 +736,14 @@ class StorageManager:
             return {**state, "status": "not_recorded", "reason": f"generation_status:{status}"}
 
         try:
-            from server.akousma_store import organism_lineage_extension, record_generation
+            from server.akousma_store import organism_lineage_extension, record_generation, open_store
+            from server.memory_policy import validate_context
+            validate_context(request_data.get("generation_context") or {})
 
+            if isinstance(source.get("derivation"), dict):
+                from server.generation_workflow import check_sources
+                with open_store() as current_store:
+                    check_sources(current_store, source["derivation"])
             listening_context = request_data.get("listening_context")
             listening = (
                 {
@@ -689,7 +764,11 @@ class StorageManager:
                 else None
             )
             extensions = {"germ.prompt-contract": prompt_contract} if prompt_contract else {}
+            simulation = (metadata.get("synthesis") or {}).get("simulated")
+            if simulation:
+                extensions["germ.simulated"] = simulation
             record = record_generation(
+                designed=bool(simulation),
                 audio_path=output_audio_path,
                 prompt=str(metadata.get("prompt") or ""),
                 model=str(metadata.get("model") or ""),
@@ -996,7 +1075,7 @@ class StorageManager:
 
     def record_result(self, result: GenerationResult) -> None:
         with self._lock:
-            job = self.jobs.get(result.job_id)
+            job = deepcopy(self.jobs.get(result.job_id) or self.job_journal.get(result.job_id))
             if not job:
                 timestamp = utc_now_iso()
                 job = {
@@ -1013,21 +1092,87 @@ class StorageManager:
                     "created_at": timestamp,
                     "updated_at": timestamp,
                 }
+                self.job_journal.admit(job)
                 self.jobs[result.job_id] = job
                 self._evict_old_jobs()
-            job["status"] = result.status
+            late_result = job["status"] == "cancelled" and result.status != "cancelled"
+            if not late_result:
+                job["status"] = result.status
+            else:
+                job["metrics"] = {**job.get("metrics", {}), "late_provider_status": result.status}
             job["provider"] = result.provider
             job["model"] = result.model
             job["mode"] = result.mode or job.get("mode", "unknown")
             job["audio_files"] = result.audio_files
             job["metadata_files"] = result.metadata_files
-            job["error"] = result.error
+            if not late_result:
+                job["error"] = result.error
             job["updated_at"] = utc_now_iso()
+            self.job_journal.save(job)
+            self.jobs[result.job_id] = job
             self._evict_old_jobs()
 
+    def job_receipt_path(self, job_id: str) -> Path:
+        from hashlib import sha256
+        return self.settings.output_root / "job-receipts" / (sha256(job_id.encode()).hexdigest() + ".json")
+
+    def read_job_receipt(self, job_id: str) -> dict:
+        path = self.job_receipt_path(job_id)
+        import os
+        import stat
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 1024 * 1024:
+                raise ValueError("Lifecycle receipt exceeds read limit or is not regular")
+            payload = stream.read(1024 * 1024 + 1)
+            after = os.fstat(stream.fileno())
+        if len(payload) > 1024 * 1024 or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("Lifecycle receipt changed during read")
+        value = json.loads(payload)
+        if not isinstance(value, dict) or value.get("job_id") != job_id or value.get("contract") != "germ/job-lifecycle/v0.1":
+            raise ValueError("Lifecycle receipt identity mismatch")
+        return value
+
+    def write_job_receipt(self, job_id: str) -> None:
+        """Persist owner lifecycle evidence without copying source prose or resuming jobs."""
+        from hashlib import sha256
+        job = self.get_job(job_id)
+        if job is None:
+            return
+        path = self.job_receipt_path(job_id)
+        directory = path.parent
+        try:
+            request_hash = sha256(json.dumps(job.request, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            receipt = {
+                "contract": "germ/job-lifecycle/v0.1", "job_id": job_id,
+                "status": job.status, "created_at": job.created_at, "recorded_at": utc_now_iso(),
+                "provider": job.provider, "model": job.model, "mode": job.mode,
+                "request_sha256": request_hash,
+                "memory_conditioning": {"memory_influences": [{"record_id": item.get("record_id"), "sha256": item.get("sha256")} for item in (job.request.get("generation_context") or {}).get("memory_influences", [])]},
+                "audio_files": job.audio_files, "metadata_files": job.metadata_files,
+                "metrics": {k: v for k, v in job.metrics.items() if k != "receipt_ready"}, "error": str(job.error)[:2000] if job.error else None,
+                "scope": "Local runner lifecycle; artifact pointers do not certify audio or remote cancellation",
+            }
+            directory.mkdir(parents=True, exist_ok=True)
+            self._write_json_atomic(path, receipt)
+            self.update_job(job_id, metrics={"lifecycle_receipt": self.relative_path(path)})
+        except (OSError, ValueError, TypeError) as exc:
+            self.update_job(job_id, metrics={"lifecycle_receipt_error": str(exc)[:1000]})
+
     def get_job(self, job_id: str) -> JobStatus | None:
+        if not isinstance(job_id, str) or not job_id:
+            return None
         with self._lock:
-            job = dict(self.jobs[job_id]) if job_id in self.jobs else None
+            job = deepcopy(self.jobs.get(job_id) or self.job_journal.get(job_id))
+        if not job:
+            try:
+                receipt = self.read_job_receipt(job_id)
+                if receipt.get("job_id") != job_id or receipt.get("status") not in {"done", "error", "cancelled"}:
+                    return None
+                job = {"job_id": job_id, "status": receipt["status"], "mode": receipt.get("mode") or "unknown", "provider": receipt.get("provider"), "model": receipt.get("model"), "request": {"generation_context": receipt.get("memory_conditioning") or {}}, "audio_files": receipt.get("audio_files") or [], "metadata_files": receipt.get("metadata_files") or [], "error": receipt.get("error"), "metrics": {**(receipt.get("metrics") or {}), "legacy_terminal_receipt": True}, "created_at": receipt["created_at"], "updated_at": receipt["recorded_at"]}
+            except (FileNotFoundError, ValueError, KeyError):
+                return None
         return JobStatus(**job) if job else None
 
     def random_seed(self) -> int:

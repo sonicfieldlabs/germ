@@ -388,6 +388,8 @@ def read_output_metadata(request: MetadataReadRequest) -> dict:
         validate_json_compatible(metadata, label="metadata")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from server.memory_policy import validate_context
+    validate_context(metadata.get("generation_context") or {})
     return metadata
 
 
@@ -414,6 +416,11 @@ def serve_output_file(file_path: str) -> FileResponse:
     target = _resolve_output_file(file_path)
     if target.suffix.lower() not in SERVABLE_EXTENSIONS:
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    if target.suffix.lower() in AUDIO_EXTENSIONS:
+        _, metadata = _resolve_metadata_companion(target, None, require_explicit=False)
+        if metadata:
+            from server.memory_policy import validate_context
+            validate_context(metadata.get("generation_context") or {})
     return FileResponse(target)
 
 

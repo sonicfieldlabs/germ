@@ -28,34 +28,53 @@ MODE_SPECS: dict[ModeId, tuple[type[BaseModel], str]] = {
 }
 
 
-def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -> GenerationResult:
-    job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}))
-    request_model = request_model.model_copy(update={"job_id": job_id})
-    started = time.perf_counter()
+def preflight_deployment(request_model: BaseModel) -> None:
+    """Reject incomplete isolated deployments before creating a queued job.
+
+    This checks manifest structure, not multi-gigabyte hashes. The provider
+    repeats admission with digest verification immediately before execution.
+    """
     try:
-        provider = registry.get(getattr(request_model, "provider"))
-        method = getattr(provider, method_name)
-        # Providers record their own result; no extra record_result needed.
-        result = method(request_model)
-        storage.update_job(
-            job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
-        )
-        return result
-    except Exception as exc:
-        result = storage.write_error_metadata(
-            request=request_model,
-            mode=mode,
-            job_id=job_id,
-            error=str(exc),
-            provider=getattr(request_model, "provider", None),
-            model=getattr(request_model, "model", None),
-        )
-        storage.update_job(
-            job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
-        )
-        return result
+        if getattr(request_model, "provider", None) == "ace_step":
+            from server.ace.deployment import deployment
+            deployment()
+        elif getattr(request_model, "provider", None) == "research":
+            from server.research.deployment import deployment
+            deployment(request_model.model)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise HTTPException(422, "Isolated deployment admission failed; verify the deployment manifest") from exc
+
+
+def run_provider_method(request_model: BaseModel, mode: str, method_name: str) -> GenerationResult:
+    from server.registry import job_runner
+    from server.job_runner import JobQueueFullError
+    from concurrent.futures import CancelledError
+    preflight_deployment(request_model)
+    job_id = storage.new_job(mode, request_model.model_dump(exclude={"job_id"}), status="queued")
+    try:
+        future = job_runner.submit(job_id, run_provider_method_with_existing_job, request_model,
+                                   job_id=job_id, mode=mode, method_name=method_name)
+    except (JobQueueFullError, RuntimeError) as exc:
+        storage.update_job(job_id, status="error", error=str(exc), metrics={"execution_state": "not_admitted"})
+        storage.write_job_receipt(job_id)
+        raise HTTPException(429 if isinstance(exc, JobQueueFullError) else 503, str(exc)) from exc
+    try:
+        result = future.result()
+        # Future.result can wake before its done callbacks persist lifecycle
+        # receipts. A synchronous success must include that durable boundary.
+        deadline = time.monotonic() + 10
+        while True:
+            job = storage.get_job(job_id)
+            if job and job.metrics.get("lifecycle_receipt_error"):
+                raise HTTPException(503, "Generation settled but its lifecycle receipt could not be written; inspect job " + job_id)
+            if job and job.metrics.get("receipt_ready"):
+                return result
+            if time.monotonic() >= deadline:
+                raise HTTPException(503, "Generation settled but its lifecycle receipt is unconfirmed; inspect this job before retrying")
+            time.sleep(.01)
+    except CancelledError:
+        return GenerationResult(job_id=job_id, status="cancelled", mode=mode,
+                                error="job cancelled before execution")
 
 
 def request_model_for_mode(mode: ModeId, payload: dict[str, Any]) -> tuple[BaseModel, str]:
@@ -63,6 +82,21 @@ def request_model_for_mode(mode: ModeId, payload: dict[str, Any]) -> tuple[BaseM
     if mode == "inpainting" and isinstance(payload.get("inpaint_ranges"), str):
         payload = {**payload, "inpaint_ranges": parse_ranges_text(payload["inpaint_ranges"])}
     return model_cls(**payload), method_name
+
+
+def _admission_wait() -> dict:
+    """Seconds the provider waited for the host's heavy-operation lease, when it took one.
+
+    A render and a listening share one lease per host. On 24 September a Stable Audio
+    render in a Swarm took 213 s while another lane's Thinking listening ran, against
+    about 55 s alone, and nothing recorded how much of it was waiting.
+    """
+    try:
+        from akousma.resource_admission import last_wait_seconds
+    except ImportError:
+        return {}
+    waited = last_wait_seconds()
+    return {} if waited is None else {"admission_wait_seconds": round(waited, 3)}
 
 
 def run_provider_method_with_existing_job(
@@ -82,19 +116,36 @@ def run_provider_method_with_existing_job(
             error="job cancelled before execution",
             mode=mode,
         )
-    storage.update_job(job_id, status="running")
+    storage.update_job(job_id, status="running", metrics={"execution_state": "running"})
     started = time.perf_counter()
     provider = None
     try:
+        from server.memory_policy import validate_conditioning
+        validate_conditioning(request_model)
+        source = getattr(request_model, "source", {})
+        if isinstance(source.get("derivation"), dict):
+            from server.generation_workflow import admit_derivation
+            admit_derivation(request_model)
+        if cancel_event and cancel_event.is_set():
+            return GenerationResult(job_id=job_id, status="cancelled", mode=mode, error="job cancelled before provider admission")
         provider = registry.get(getattr(request_model, "provider"))
         if cancel_event:
             provider.register_cancel_event(job_id, cancel_event)
         method = getattr(provider, method_name)
         # Providers record their own result; no extra record_result needed.
         result = method(request_model)
+        # Providers may have written artifacts already. A failed recheck keeps
+        # the job failed and records that fact; it never claims erasure.
+        validate_conditioning(request_model)
+        if cancel_event and cancel_event.is_set() and result.status != "cancelled":
+            result = result.model_copy(update={"status": "cancelled", "error": "provider settled after cancellation request; any artifacts are retained"})
+            storage.record_result(result)
         storage.update_job(
             job_id,
-            metrics={"elapsed_seconds": round(time.perf_counter() - started, 6)},
+            metrics={
+                "elapsed_seconds": round(time.perf_counter() - started, 6),
+                **_admission_wait(),
+            },
         )
         return result
     except Exception as exc:

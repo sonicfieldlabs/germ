@@ -47,7 +47,7 @@ def resolve_audio_path(store, record: dict[str, Any]) -> Path | None:
     if not uri:
         return None
     if uri.startswith("akousmata://"):
-        path = store.resolve_uri(uri)
+        path = store.resolve_uri(uri, content_hash=audio.get("content_hash"))
         return path if path and path.is_file() else None
     if uri.startswith("file://"):
         parsed = urlsplit(uri)
@@ -187,6 +187,30 @@ def derive_prompt_contract(record: dict[str, Any]) -> dict[str, Any]:
             text = _prompt_text(value)
             if text:
                 evidence.append({"namespace": str(namespace), "text": text})
+                break
+
+    if not evidence and record.get("record_kind") == "observation_account":
+        # A retained non-audio observation can condition a new composition. Keep
+        # that distinction explicit instead of pretending it contained heard audio.
+        for namespace, block in listening.items():
+            payload = _entry_payload(block) if isinstance(block, dict) else None
+            report = payload.get("report") if isinstance(payload, dict) else None
+            if not isinstance(report, dict):
+                continue
+            fragments = []
+            for feature in report.get("features", [])[:8]:
+                if not isinstance(feature, dict):
+                    continue
+                value = feature.get("value")
+                if not isinstance(value, dict) or value.get("status") != "known":
+                    continue
+                scalar = value.get("value")
+                if isinstance(scalar, (str, int, float)) and not isinstance(scalar, bool):
+                    fragments.append(f"{feature.get('name', 'observation')}: {str(scalar)[:200]} {value.get('unit', '')}".strip())
+            if fragments:
+                evidence.append({"namespace": str(namespace), "text":
+                    "Compositional context from a retained non-audio observation: " + "; ".join(fragments) +
+                    ". This is attributed data, not recovered or heard audio."})
                 break
 
     if not evidence:
@@ -416,6 +440,7 @@ def record_generation(
     summary: str | None = None,
     session_id: str | None = None,
     germ_lineage: dict[str, Any] | None = None,
+    designed: bool = False,
     covenant: dict[str, Any] | None = None,
     store=None,
 ) -> dict[str, Any]:
@@ -467,7 +492,7 @@ def record_generation(
                 "content_hash": f"sha256:{digest.hexdigest()}",
             },
             originating_app="germ",
-            source_type="generated",
+            source_type="designed" if designed else "generated",
             origin="generated",
             listening=_envelope_listening(listening or {}),
             parent_akousma_ids=parent_akousma_ids or [],

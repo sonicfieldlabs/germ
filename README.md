@@ -8,7 +8,7 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.5.0`.
+Current source candidate: `0.7.0` (unpublished).
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
@@ -82,7 +82,7 @@ promising one universal hardware minimum.
 | How does it connect? | [The Listening Stack](https://sonicfield.org/stack) and [Oída integration](docs/oida-integration.md) |
 | How do I install a tested model? | [Local model setup](docs/local_setup.md) |
 | Which models and licenses apply? | [Models and licensing](docs/models-and-licensing.md) |
-| What is unfinished? | [Known limitations](#known-limitations) and [roadmap](ROADMAP.md) |
+| What is unfinished? | [Known limitations](#known-limitations) |
 | How can I help? | [Contribution guide](CONTRIBUTING.md) |
 | How should I cite it? | [CITATION.cff](CITATION.cff) |
 
@@ -351,7 +351,8 @@ curl -X POST http://127.0.0.1:5178/generate \
   fixture mode and archived observations remain available without granting
   GERM direct provider access.
 
-The [roadmap](ROADMAP.md) identifies current research priorities and non-goals.
+Current limitations are listed above; contribution boundaries are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Development
 
@@ -374,9 +375,36 @@ node scripts/smoke_dashboard.mjs
 - [Native macOS shell](docs/macos-shell.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Models and licensing](docs/models-and-licensing.md)
-- [Public roadmap](ROADMAP.md)
+- [Runtime dependencies](docs/dependencies.md)
 - [Changelog](CHANGELOG.md)
 
 ## License
 
 MPL-2.0. See [LICENSE](LICENSE).
+
+Unreleased owner tooling: [bounded MASA granulation execution](docs/processing-adapter.md)
+reuses the existing granular AudioWorklet and emits validated processing receipts.
+
+### Derivation templates
+
+The local G6/G4 integration adds retained-record variation, combination and structured
+agent-report plans at `/akousma/derivation/plan`, with template discovery at
+`/akousma/derivation/templates`. Plans preserve parents and permissions and use bounded
+parameters; they do not start generation. See [derivation](docs/derivation.md) for
+mapping rules, handoff and the required local AKOÚŌ/Earworm sibling checkouts.
+
+For explicit execution, `/akousma/derivation/generate` links the existing provider
+result to retained parents, output hashes and MASA Generation receipts. Optional
+Oída re-listening uses the existing bridge. See [linked generation](docs/linked-generation.md).
+
+Queued and synchronous generation now share bounded admission, cancellation and app
+shutdown handling. Retained job receipts are available at `/jobs/{id}/receipt`.
+See [job lifecycle](docs/job-lifecycle.md) for settlement states and provider limits.
+
+Local D4 adapters and decisions: [bounded CPU synthesis](docs/synthesis-adapters.md)
+uses the existing queue/library/receipt paths; [retained subsequent-listening
+decisions](docs/generation-decisions.md) use A13/E16 without automatic follow-up jobs.
+
+D5 local integration: [cosmo-and-agent-packs](docs/cosmo-and-agent-packs.md). Unreleased; no automatic publication.
+
+Local Phase 8: [designed aperture-test sources and optional simulated rooms](docs/simulated-fields.md) use bounded oscillators and MASA descendant receipts. These are digital simulations, not measured-room evidence.

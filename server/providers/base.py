@@ -81,3 +81,9 @@ class AudioGenerationProvider(ABC):
             return True
         job = self.storage.get_job(job_id)
         return bool(job and job.status == "cancelled")
+
+
+def admission_checkpoint(provider, *args, **kwargs):
+    request = args[0] if args else kwargs.get("request")
+    if provider.is_job_cancelled(getattr(request, "job_id", None)):
+        raise RuntimeError("job cancelled while waiting for heavy worker admission")

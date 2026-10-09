@@ -1,0 +1,339 @@
+{
+  "akousma_id": "ak:6c7e8e22-610c-4952-8500-55eb2c6736d6",
+  "schema_version": "1.7.0",
+  "created_at": "2026-09-07T17:40:39.638Z",
+  "subject": "asset:synthetic-01",
+  "provenance": {
+    "source_type": "unknown",
+    "origin": "unknown",
+    "originating_app": "oida",
+    "created_at": "2026-09-07T17:40:39.638Z"
+  },
+  "listening": {
+    "oida.agent-report": {
+      "contract": "akouo/agent-report/v0.1",
+      "payload": {
+        "contract": "akouo/agent-report/v0.1",
+        "report_id": "report:synthetic-01",
+        "listener_id": "agent:fixture",
+        "listening_pass_id": "pass:agent",
+        "subject_ref": "asset:synthetic-01",
+        "input_refs": [
+          "repr:16k"
+        ],
+        "apparatus_ref": "access:synthetic-wideband",
+        "report_format": "structured",
+        "recipients": [
+          {
+            "id": "agent:reviewer",
+            "type": "agent"
+          }
+        ],
+        "report_of_refs": [],
+        "features": [
+          {
+            "feature_id": "feature:duration",
+            "namespace": "fixture.audio",
+            "name": "time_scale",
+            "category": "measured",
+            "claim": {
+              "claim_id": "claim:duration",
+              "statement": "The declared model input window spans ten seconds.",
+              "confidence": "high",
+              "source": "metadata",
+              "evidence_refs": [
+                "receipt:filtered-resample"
+              ],
+              "listening_pass_id": "pass:agent",
+              "actionability": "informational"
+            },
+            "value": {
+              "status": "known",
+              "value": 10,
+              "unit": "s"
+            }
+          },
+          {
+            "feature_id": "feature:1",
+            "namespace": "fixture.audio",
+            "name": "frequency_band",
+            "category": "measured",
+            "claim": {
+              "claim_id": "claim:1",
+              "statement": "The declared model input window spans ten seconds.",
+              "confidence": "high",
+              "source": "metadata",
+              "evidence_refs": [
+                "receipt:filtered-resample"
+              ],
+              "listening_pass_id": "pass:agent",
+              "actionability": "informational"
+            },
+            "value": {
+              "status": "known",
+              "value": [
+                220,
+                880
+              ],
+              "unit": "Hz"
+            }
+          },
+          {
+            "feature_id": "feature:2",
+            "namespace": "fixture.audio",
+            "name": "texture",
+            "category": "measured",
+            "claim": {
+              "claim_id": "claim:2",
+              "statement": "The declared model input window spans ten seconds.",
+              "confidence": "high",
+              "source": "metadata",
+              "evidence_refs": [
+                "receipt:filtered-resample"
+              ],
+              "listening_pass_id": "pass:agent",
+              "actionability": "informational"
+            },
+            "value": {
+              "status": "known",
+              "value": "granular",
+              "unit": "descriptor"
+            }
+          },
+          {
+            "feature_id": "feature:3",
+            "namespace": "fixture.audio",
+            "name": "material",
+            "category": "measured",
+            "claim": {
+              "claim_id": "claim:3",
+              "statement": "The declared model input window spans ten seconds.",
+              "confidence": "high",
+              "source": "metadata",
+              "evidence_refs": [
+                "receipt:filtered-resample"
+              ],
+              "listening_pass_id": "pass:agent",
+              "actionability": "informational"
+            },
+            "value": {
+              "status": "known",
+              "value": "glass",
+              "unit": "descriptor"
+            }
+          }
+        ],
+        "limitations": [
+          "Synthetic conformance data; no physical capture or embodied listening is demonstrated."
+        ]
+      }
+    },
+    "oida.report-text": {
+      "contract": "oida/report-text/v1",
+      "payload": {
+        "text": "Report report:synthetic-01\ntime_scale: The declared model input window spans ten seconds. [measured; confidence high]\nfrequency_band: The declared model input window spans ten seconds. [measured; confidence high]\ntexture: The declared model input window spans ten seconds. [measured; confidence high]\nmaterial: The declared model input window spans ten seconds. [measured; confidence high]\nSynthetic conformance data; no physical capture or embodied listening is demonstrated.",
+        "report_ref": "report:synthetic-01"
+      }
+    }
+  },
+  "lineage": {
+    "parent_akousma_ids": []
+  },
+  "tags": [],
+  "annotations": {},
+  "summary": "DO NOT USE THIS PROSE FOR STRUCTURED DERIVATION",
+  "auditum": {
+    "contract": "earworm/auditum/v3",
+    "listenings": [
+      {
+        "listening_id": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+        "listener_id": "agent:fixture",
+        "listener_type": "agent",
+        "created_at": "2026-09-07T17:40:39.638Z",
+        "report_namespace": "oida.agent-report",
+        "contract": "akouo/agent-report/v0.1",
+        "listening_pass_ref": "pass:agent"
+      }
+    ],
+    "route_decisions": [
+      {
+        "decision_id": "decision:783e36fd-5b1d-430d-bd77-c1cdd832c608",
+        "gate": "inference",
+        "outcome": "proceed",
+        "subject": "asset:synthetic-01",
+        "reason": "Bounded local report construction; no action authority",
+        "decided_at": "2026-09-07T17:40:39.638Z",
+        "listening_id": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+        "producer_contract": "akouo/agent-report/v0.1",
+        "authority": {
+          "mode": "observe_only",
+          "actor": "agent:fixture",
+          "requires_confirmation": true,
+          "reversible": true
+        }
+      }
+    ],
+    "actions": [],
+    "disagreements": [],
+    "honest_absences": [
+      {
+        "id": "absence:435976d5-1096-4092-b871-44c77415b909",
+        "kind": "not_retained",
+        "subject": "raw audio",
+        "attributed_to": "owner retention boundary",
+        "listening_id": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+        "count": 1,
+        "note": "No raw audio asset is retained in this account"
+      }
+    ]
+  },
+  "extensions": {
+    "earworm_listening_access": {
+      "contract": "earworm/listening-access/v1",
+      "declaration_id": "access:synthetic-wideband",
+      "subject_ref": "asset:synthetic-01",
+      "capture": {
+        "status": "unknown",
+        "reason": "Synthetic fixture; no physical capture evidence."
+      },
+      "sampled_representation": {
+        "status": "known",
+        "representation_ref": "repr:96k",
+        "sample_rate_hz": 96000,
+        "retained_band_hz": {
+          "lower": 0,
+          "upper": 40000
+        },
+        "evidence_refs": [
+          "receipt:synthetic-source"
+        ],
+        "channels": 1
+      },
+      "model_input": {
+        "status": "known",
+        "model_ref": "model:fixture",
+        "representation_ref": "repr:16k",
+        "sample_rate_hz": 16000,
+        "effective_band_hz": {
+          "lower": 0,
+          "upper": 7500
+        },
+        "window_s": {
+          "start": 0,
+          "end": 10
+        },
+        "preprocessing_refs": [
+          "receipt:filtered-resample"
+        ],
+        "evidence_refs": [
+          "model-card:fixture",
+          "receipt:filtered-resample"
+        ],
+        "channels": 1,
+        "blind_spots": []
+      },
+      "human_access": [
+        {
+          "status": "unknown",
+          "reason": "No human access declaration supplied."
+        }
+      ]
+    },
+    "earworm_listening_context": {
+      "contract": "earworm/listening-context/v1",
+      "contexts": [
+        {
+          "listening_ref": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+          "subject_ref": "asset:synthetic-01",
+          "recipients": [
+            {
+              "id": "agent:reviewer",
+              "type": "agent"
+            }
+          ],
+          "access_declaration_ref": "access:synthetic-wideband",
+          "report": {
+            "ref": "report:synthetic-01",
+            "contract": "akouo/agent-report/v0.1",
+            "format": "structured",
+            "readability": {
+              "status": "known",
+              "value": "machine_readable"
+            },
+            "human_rendering": {
+              "status": "available",
+              "rendering_refs": [
+                "rendering:c8ef60b3-9119-4365-90f9-b5253d0beccb"
+              ]
+            }
+          },
+          "renderings": [
+            {
+              "rendering_id": "rendering:c8ef60b3-9119-4365-90f9-b5253d0beccb",
+              "source_ref": "report:synthetic-01",
+              "output_ref": "text:report:synthetic-01",
+              "transformation_ref": "render:report:synthetic-01",
+              "author_ref": "oida:structured-reporter",
+              "kind": "interpretation",
+              "media_type": "text/plain",
+              "access": {
+                "status": "known",
+                "value": "private"
+              }
+            }
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "claim_ref": "claim:duration",
+          "listening_ref": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+          "validity": {
+            "status": "unknown",
+            "reason": "No validity interval declared"
+          },
+          "retention": {
+            "status": "unknown",
+            "reason": "Owner retention policy"
+          }
+        },
+        {
+          "claim_ref": "claim:1",
+          "listening_ref": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+          "validity": {
+            "status": "unknown",
+            "reason": "No validity interval declared"
+          },
+          "retention": {
+            "status": "unknown",
+            "reason": "Owner retention policy"
+          }
+        },
+        {
+          "claim_ref": "claim:2",
+          "listening_ref": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+          "validity": {
+            "status": "unknown",
+            "reason": "No validity interval declared"
+          },
+          "retention": {
+            "status": "unknown",
+            "reason": "Owner retention policy"
+          }
+        },
+        {
+          "claim_ref": "claim:3",
+          "listening_ref": "listening:5bb6a978-b027-4170-82db-84c4833bc418",
+          "validity": {
+            "status": "unknown",
+            "reason": "No validity interval declared"
+          },
+          "retention": {
+            "status": "unknown",
+            "reason": "Owner retention policy"
+          }
+        }
+      ]
+    }
+  }
+}

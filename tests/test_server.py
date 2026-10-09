@@ -844,6 +844,7 @@ def test_cosmoaudition_bridge_mapping_and_archive(monkeypatch: pytest.MonkeyPatc
                         "value": 450,
                         "normalized": 0.5,
                         "timestamp": "2026-07-30T12:00:00Z",
+                        "acquisitionMode": "fixture",
                         "sourceId": "swpc_solar_wind",
                         "sphere": "cosmos",
                         "epistemicStatus": "reported",
@@ -1501,6 +1502,7 @@ def test_wavetable_import_and_exports() -> None:
     assert gwt_export.status_code == 200
     assert len(gwt_export.content) == 4 * 512 * 4
 
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     stack_export = client.get(f"/wavetables/{wavetable['id']}/export?format=wav-stack")
     assert stack_export.status_code == 200
     with wave.open(io.BytesIO(stack_export.content), "rb") as wav:
@@ -2128,8 +2130,9 @@ def test_generation_request_uses_modulated_prompt_as_effective_prompt() -> None:
     assert request.generation_context["prompt_contract"]["modulated"] is True
 
 
+@pytest.mark.parametrize("changed_audio", [False, True])
 def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, changed_audio: bool,
 ) -> None:
     audio_path = settings.audio_dir / "pytest_oida_relisten.wav"
     write_sine_wav(audio_path, duration=0.25, amplitude=0.2)
@@ -2167,6 +2170,8 @@ def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
         def post(self, url: str, *, json: dict) -> FakeResponse:
             self.calls.append((url, json))
             if url.endswith("/gateway/listen"):
+                if changed_audio:
+                    write_sine_wav(audio_path, duration=0.25, amplitude=0.3)
                 return FakeResponse(
                     {
                         "contract": "oida.gateway/v0.1",
@@ -2222,6 +2227,9 @@ def test_listener_relisten_delegates_understanding_to_oida_and_updates_metadata(
     updated = json.loads(metadata_path.read_text(encoding="utf-8"))
     latest = updated["extensions"]["germ.relisten"]["latest"]
     assert latest["event_id"] == "evt_reheard"
+    from hashlib import sha256
+    assert latest["output_sha256"] == (None if changed_audio else sha256(audio_path.read_bytes()).hexdigest())
+    assert ("relisten_source_changed_no_output_binding" in body["warnings"]) == changed_audio
     assert FakeClient.calls[0][0].endswith("/gateway/listen")
     assert FakeClient.calls[1][0].endswith("/generation/prompt")
 
@@ -3369,7 +3377,7 @@ def test_dashboard_static_app_serves() -> None:
 
 
 def test_api_reference_mentions_schema_routes() -> None:
-    docs = Path("docs/api_reference.md").read_text(encoding="utf-8")
+    docs = (Path(__file__).resolve().parents[1] / "docs/api_reference.md").read_text(encoding="utf-8")
     missing: list[str] = []
     excluded = {"/", "/dashboard", "/dashboard/"}
     for route in app.routes:
@@ -3397,6 +3405,7 @@ def test_generated_output_can_be_played_from_files_route() -> None:
     )
     assert response.status_code == 200
     audio_file = response.json()["audio_files"][0]
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     file_response = client.get(f"/files/{audio_file}")
     assert file_response.status_code == 200
     assert file_response.headers["content-type"].startswith("audio")
@@ -3442,6 +3451,7 @@ def test_files_route_refuses_to_serve_metadata_json() -> None:
     assert response.status_code == 200
     audio_file = response.json()["audio_files"][0]
     metadata_file = response.json()["metadata_files"][0]
+    assert client.post("/playback-session", headers={"origin": "http://testserver"}).status_code == 200
     # Audio is served, but the sibling metadata JSON is not exposed over GET.
     assert client.get(f"/files/{audio_file}").status_code == 200
     assert client.get(f"/files/{metadata_file}").status_code == 404
@@ -5384,7 +5394,7 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     resolved = modulation_routes_from_frame(_frame())
     assert resolved["contract"] == "cosmo/modulation/v0.1"
     targets = {route["target"]: route for route in resolved["routes"]}
-    assert set(targets) == {"filter.cutoff", "grain.density"}
+    assert set(targets) == {"filter.cutoff"}
     assert targets["filter.cutoff"]["value"] == 440.0
     assert targets["filter.cutoff"]["outputValue"] == 440.0
     assert targets["filter.cutoff"]["inputValue"] == 50.0
@@ -5396,9 +5406,10 @@ def test_frame_routes_keep_values_bound_to_their_decision_status() -> None:
     assert resolved["signals"][0]["epistemicStatus"] == "measured"
     assert resolved["signals"][0]["temporalCharacter"] == "stream"
     assert resolved["sources"][0]["id"] == "source-earth"
-    assert targets["grain.density"]["status"] == "uncertainty"
     # A skipped control is reported, not silently dropped and not zeroed.
     withheld = {item["target"]: item for item in resolved["withheld"]}
+    assert withheld["grain.density"]["consumerFreshness"]["status"] == "stale"
+    assert withheld["grain.density"]["value"] is None
     assert withheld["delay.time"]["status"] == "skipped"
     assert withheld["delay.time"]["value"] is None
     assert resolved["absences"] == [{"signalId": "s2", "reason": "provider unavailable"}]
@@ -5513,7 +5524,7 @@ def test_frame_route_reports_bridge_failure_without_backend_details(
     assert "refused" not in json.dumps(payload)
 
 
-def test_frame_route_resolves_a_live_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_frame_route_resolves_a_fixture_and_withholds_stale_control(monkeypatch: pytest.MonkeyPatch) -> None:
     class Bridge:
         def frame(self, *, mode: str = "fixture") -> dict:
             return _frame()
@@ -5523,5 +5534,6 @@ def test_frame_route_resolves_a_live_frame(monkeypatch: pytest.MonkeyPatch) -> N
     assert response.status_code == 200
     modulation = response.json()["modulation"]
     assert modulation["frameId"] == "frame_1"
-    assert len(modulation["routes"]) == 2
+    assert len(modulation["routes"]) == 1
+    assert any(r["consumerFreshness"]["status"] == "stale" for r in modulation["withheld"])
     assert modulation["attribution"] == [{"sourceId": "swpc", "text": "NOAA SWPC"}]

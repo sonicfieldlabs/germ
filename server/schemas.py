@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-ProviderId = Literal["mock", "stable_audio_python", "stable_audio_mlx", "stability_api"]
+ProviderId = Literal["research", "ace_step", "synthesis", "mock", "stable_audio_python", "stable_audio_mlx", "stability_api"]
 ModeId = Literal["text-to-audio", "audio-to-audio", "inpainting", "continuation"]
 SnapDivision = Literal["1/4", "1/8", "1/16", "1/32", "triplet"]
 TimeModuleType = Literal[
@@ -387,6 +387,9 @@ class CosmoauditionNormalization(JSONRequestModel):
 
 
 class CosmoauditionSignal(JSONRequestModel):
+    acquisitionMode: Literal["live", "fixture", "archive"] | None = None
+    freshness: dict[str, Any] | None = None
+    observedInterval: dict[str, str] | None = None
     id: str = Field(min_length=1, max_length=256)
     label: str = Field(default="Observation", min_length=1, max_length=500)
     layer: CosmoauditionLayer = "earth"
@@ -732,6 +735,15 @@ class WavetableOperationResult(BaseModel):
 
 
 class BaseGenerationRequest(JSONRequestModel):
+    @model_validator(mode="before")
+    @classmethod
+    def provider_model_default(cls, value):
+        if isinstance(value, dict) and "model" not in value:
+            from server.config import provider_default_model
+            value = {**value, "model": provider_default_model(value.get("provider", "mock"))}
+        return value
+
+    masa_contracts: list[str] = Field(default_factory=lambda: ["masa/0.2.0"], max_length=16)
     provider: ProviderId = "mock"
     model: str = Field(default="mock-sine", min_length=1, max_length=500)
     prompt: str = Field(default="", max_length=10_000)
@@ -1154,6 +1166,7 @@ class ListenerRelistenRequest(JSONRequestModel):
     intent: Literal["transform", "variation", "counterpoint", "sonification"] = "variation"
     privacy_mode: Literal["session", "incognito"] = "session"
     remember: bool = False
+    native_options: dict[str, Any] | None = None
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1163,7 +1176,7 @@ class ListenerRelistenResult(BaseModel):
     audio_path: str
     metadata_path: str | None = None
     route_preset: str
-    relisten_mode: Literal["generation_relisten", "gateway_listen"] = "gateway_listen"
+    relisten_mode: Literal["generation_relisten", "gateway_listen", "agent_native"] = "gateway_listen"
     source_generation_id: str | None = None
     listening_event_id: str
     generation_id: str
@@ -1172,6 +1185,7 @@ class ListenerRelistenResult(BaseModel):
     source_summary: str = ""
     listening_result: dict[str, Any] = Field(default_factory=dict)
     route_comparison: dict[str, Any] = Field(default_factory=dict)
+    native_result: dict[str, Any] = Field(default_factory=dict)
     remembered: bool = False
     akousma_id: str | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -1195,6 +1209,7 @@ class JobStatus(BaseModel):
 class JobSubmitRequest(BaseModel):
     mode: ModeId
     request: dict[str, Any]
+    request_id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class JobSubmitResponse(BaseModel):

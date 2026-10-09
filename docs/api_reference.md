@@ -8,6 +8,13 @@ http://127.0.0.1:5178
 
 ## GET /health
 
+## GET /owner/identity
+
+Returns `centaur/owner-identity/v1` with the process workspace, generation and an
+opaque effective-output binding. The route does not initialize output or load a
+provider. Workspace-bound mutations require the returned binding together with the
+workspace ID and generation headers.
+
 Returns server status, active provider, device, loaded models, and output directory.
 
 ## GET /models
@@ -908,3 +915,11 @@ is required; a verified written MASA sidecar is then deleted with that local
 record. Remembered or unresolved requested Akousmata are refused because their
 shared `file://` locator must remain valid. Unrelated JSON and unresolved
 sidecar evidence are preserved.
+
+## Spectral generation and playback sessions
+
+`POST /playback-session` grants a same-origin browser a temporary 15-minute playback session. `DELETE /playback-session` revokes it. Audio responses, including `/files/{file_path}` and `/library/audio/{key}`, refuse playback without this grant; loading any HTML document resets the grant. The cookie has no persistent expiry and the server keeps grants only in memory. Digital owner file resolution and listening do not grant hardware playback.
+
+`GET /workspace/spectral/sources` lists currently retained observation series and authorized complex STFT views. `POST /workspace/spectral/audify` and `POST /workspace/spectral/frame` accept `{selection, sample_rate, duration, gain, seed}` and submit existing generation jobs. Selection descriptors come from the sources route and are revalidated before rendering and publication. Missing series values are refused. Direct audification requires multiple points and uniform timestamps or explicit linear resampling; filtered point-count reduction is not admitted.
+
+CPU `additive`, `chirp`, `band-noise`, `fm`, and `pulse` accept `source.synthesis.sample_rate` in 44100, 48000, 96000, 192000 Hz. Other providers retain their native clock. See `docs/spectral-generation.md` for bounds, recipes and evidence limitations.

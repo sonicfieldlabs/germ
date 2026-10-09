@@ -9,7 +9,8 @@ import wave
 from pathlib import Path
 
 from server.config import Settings
-from server.providers.base import AudioGenerationProvider
+from server.providers.base import AudioGenerationProvider, admission_checkpoint
+from akousma.resource_admission import admitted
 from server.schemas import (
     AudioToAudioRequest,
     ContinueRequest,
@@ -87,6 +88,7 @@ class StableAudioMLXProvider(AudioGenerationProvider):
         )
         return self._run_sa3(inpaint_request, "continuation")
 
+    @admitted("germ", checkpoint=admission_checkpoint)
     def _run_sa3(self, request, mode: str) -> GenerationResult:
         job_id = request.job_id or self.storage.new_job(
             mode, request.model_dump(exclude={"job_id"})

@@ -4,7 +4,8 @@ import importlib.util
 from threading import RLock
 from typing import Any
 
-from server.providers.base import AudioGenerationProvider
+from server.providers.base import AudioGenerationProvider, admission_checkpoint
+from akousma.resource_admission import admitted
 from server.schemas import (
     AudioToAudioRequest,
     ContinueRequest,
@@ -46,6 +47,7 @@ class StableAudioPythonProvider(AudioGenerationProvider):
             "medium-base",
         ]
 
+    @admitted("germ", checkpoint=admission_checkpoint)
     def load_model(self, model_id: str, device: str = "auto") -> dict:
         with self._model_lock:
             return self._load_model_locked(model_id, device)
@@ -105,6 +107,7 @@ class StableAudioPythonProvider(AudioGenerationProvider):
         )
         return self._generate_with_model(inpaint_request, "continuation")
 
+    @admitted("germ", checkpoint=admission_checkpoint)
     def load_lora(self, paths: list[str]) -> dict:
         with self._model_lock:
             return self._load_lora_locked(paths)
@@ -130,6 +133,7 @@ class StableAudioPythonProvider(AudioGenerationProvider):
             "detail": str(loaded) if loaded is not None else None,
         }
 
+    @admitted("germ", checkpoint=admission_checkpoint)
     def set_lora_strength(self, strength: float, lora_index: int | None = None) -> dict:
         with self._model_lock:
             return self._set_lora_strength_locked(strength, lora_index)
@@ -153,6 +157,7 @@ class StableAudioPythonProvider(AudioGenerationProvider):
             "loaded_loras": self.loaded_loras,
         }
 
+    @admitted("germ", checkpoint=admission_checkpoint)
     def _generate_with_model(self, request, mode: str) -> GenerationResult:
         with self._model_lock:
             return self._generate_with_model_locked(request, mode)

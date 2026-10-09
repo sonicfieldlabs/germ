@@ -11,7 +11,12 @@ from server.identity import PRODUCT_NAME
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(PROJECT_ROOT / ".env")
+SOURCE_CHECKOUT = (PROJECT_ROOT / "pyproject.toml").is_file()
+if SOURCE_CHECKOUT:
+    load_dotenv(PROJECT_ROOT / ".env")
+DEFAULT_OUTPUT = "output" if SOURCE_CHECKOUT else str(
+    Path(os.getenv("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "germ"
+)
 DEFAULT_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "testserver"}
 
 
@@ -92,6 +97,10 @@ def _int_from_env(
     return value
 
 
+def provider_default_model(provider: str) -> str:
+    return {"stable_audio_mlx": "sm-sfx", "stable_audio_python": "small-sfx"}.get(provider, "mock-sine")
+
+
 class Settings:
     server_name = PRODUCT_NAME
     engine_name = "stable-audio-3"
@@ -113,9 +122,9 @@ class Settings:
         ) or "mock"
         self.default_model = _env(
             "GERM_DEFAULT_MODEL",
-            "small-sfx",
+            provider_default_model(self.active_provider),
             legacy="GERMINATOR_DEFAULT_MODEL",
-        ) or "small-sfx"
+        ) or (provider_default_model(self.active_provider))
         self.default_device = _env(
             "GERM_DEFAULT_DEVICE",
             "auto",
@@ -123,9 +132,10 @@ class Settings:
         ) or "auto"
         self.output_root = _path_from_env(
             "GERM_OUTPUT_DIR",
-            "output",
+            DEFAULT_OUTPUT,
             legacy="GERMINATOR_OUTPUT_DIR",
         )
+        self.library_audio_roots = _path_list_from_env("GERM_LIBRARY_AUDIO_ROOTS", [])
         self.audio_dir = self.output_root / "audio"
         self.metadata_dir = self.output_root / "metadata"
         self.upload_dir = self.output_root / "uploads"
@@ -168,6 +178,7 @@ class Settings:
             minimum=1.0,
             maximum=86400.0,
         )
+        self.worker_shutdown_seconds = _float_from_env("GERM_WORKER_SHUTDOWN_SECONDS", 7.0, minimum=0.0, maximum=60.0)
         self.job_workers = _int_from_env(
             "GERM_JOB_WORKERS",
             1,
