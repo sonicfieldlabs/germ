@@ -14,6 +14,8 @@ router = APIRouter(prefix="/research")
 
 @router.get("/options")
 def options():
+    from server.instrument_capabilities import catalog
+
     entries = []
     for tool, name, profile in [
         ("rave-guitar", "RAVE · IIL guitar", "noncommercial_research"),
@@ -45,6 +47,7 @@ def options():
             for n in ["Demucs separation", "Music Flamingo", "SheetSage2", "YuE2"]
         ],
         jobs=recent(),
+        instruments=catalog(),
     )
 
 
