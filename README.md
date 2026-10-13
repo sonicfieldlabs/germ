@@ -8,7 +8,7 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current release: `0.6.1`.
+Current source candidate: `0.6.2` (unpublished).
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
@@ -82,7 +82,7 @@ promising one universal hardware minimum.
 | How does it connect? | [The Listening Stack](https://sonicfield.org/stack) and [Oída integration](docs/oida-integration.md) |
 | How do I install a tested model? | [Local model setup](docs/local_setup.md) |
 | Which models and licenses apply? | [Models and licensing](docs/models-and-licensing.md) |
-| What is unfinished? | [Known limitations](#known-limitations) and [roadmap](ROADMAP.md) |
+| What is unfinished? | [Known limitations](#known-limitations) |
 | How can I help? | [Contribution guide](CONTRIBUTING.md) |
 | How should I cite it? | [CITATION.cff](CITATION.cff) |
 
@@ -351,7 +351,8 @@ curl -X POST http://127.0.0.1:5178/generate \
   fixture mode and archived observations remain available without granting
   GERM direct provider access.
 
-The [roadmap](ROADMAP.md) identifies current research priorities and non-goals.
+Current limitations are listed above; contribution boundaries are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Development
 
@@ -374,7 +375,7 @@ node scripts/smoke_dashboard.mjs
 - [Native macOS shell](docs/macos-shell.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Models and licensing](docs/models-and-licensing.md)
-- [Public roadmap](ROADMAP.md)
+- [Runtime dependencies](docs/dependencies.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

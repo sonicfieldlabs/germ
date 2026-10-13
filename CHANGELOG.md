@@ -2,6 +2,7 @@
 
 ## Unreleased — Cosmoaudition freshness admission
 
+- Package 0.6.2 with receiving-time freshness, repaired owner packages and the immutable Stable Audio source revision.
 - Reevaluate source clocks and age limits when receiving generation frames, modulation routes and direct mappings. Expired, future, archive and unknown live evidence cannot select parameter values, including when held/uncertainty acceptance is enabled.
 - Preserve the original frame and add receiving freshness to decisions; keep canonical `sound_id` and optional MASA sidecars unchanged. Explicit fixtures remain simulation evidence.
 

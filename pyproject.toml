@@ -1,6 +1,6 @@
 [project]
 name = "germ"
-version = "0.6.1"
+version = "0.6.2"
 description = "Local-first modular laboratory for generative microsound, Stable Audio workflows, and lineage-aware cultivation."
 readme = "README.md"
 license = "MPL-2.0"
@@ -8,10 +8,10 @@ requires-python = ">=3.10"
 authors = [{ name = "Sonic Field Labs" }]
 dependencies = [
     "anyio>=4.14.2,<5",
-    "akousma>=0.8.3",
+    "akousma>=0.8.4",
     "numpy>=1.26,<3",
     "soundfile>=0.13.1,<0.15",
-    "akouo-contract>=0.10.0",
+    "akouo-contract>=0.10.1",
     "fastapi>=0.139",
     "httpx>=0.27.0",
     "pydantic>=2.7.0",
@@ -27,10 +27,10 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-akousmata = { path = "vendor/akousmata-0.8.2-py3-none-any.whl" }
+akousmata = { path = "vendor/akousmata-0.8.3-py3-none-any.whl" }
 # Reviewed wheels, with the same exact bytes in owner-separated environments.
-akousma = { path = "vendor/akousma-0.8.3-py3-none-any.whl" }
-akouo-contract = { path = "vendor/akouo_contract-0.10.0-py3-none-any.whl" }
+akousma = { path = "vendor/akousma-0.8.4-py3-none-any.whl" }
+akouo-contract = { path = "vendor/akouo_contract-0.10.1-py3-none-any.whl" }
 
 [project.urls]
 Homepage = "https://github.com/sonicfieldlabs/germ"
@@ -39,10 +39,10 @@ Issues = "https://github.com/sonicfieldlabs/germ/issues"
 
 [project.optional-dependencies]
 room = ["pyroomacoustics==0.10.0", "scipy>=1.14,<2"]
-spectral = ["akousmata>=0.8.2; python_version >= '3.11'"]
+spectral = ["akousmata>=0.8.3; python_version >= '3.11'"]
 python-provider = [
     "transformers>=5.10.0",
-    "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git",
+    "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@fa5ee841dd49bae0fa361fac26904adc27fd400e",
 ]
 dev = [
     "httpx2>=2.12,<3",
@@ -71,3 +71,7 @@ packages = ["server"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+# Explicit source inputs exclude local reports, plans and operator state.
+[tool.hatch.build.targets.sdist]
+include = ["server", "dashboard/static", "scripts/processing-engine.mjs", "pyproject.toml", "README.md", "LICENSE", "vendor/*.whl", "vendor/SHA256SUMS", "vendor/compatibility.json", "vendor/NOTICE.md"]

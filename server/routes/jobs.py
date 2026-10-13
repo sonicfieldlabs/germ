@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from server.job_runner import JobQueueFullError
+from server.job_journal import JobConflict
 from server.routes._utils import preflight_deployment, request_model_for_mode, run_provider_method_with_existing_job
 from server.registry import job_runner, settings, storage
 from server.security import is_allowed_origin
@@ -15,9 +17,38 @@ from server.schemas import JobStatus, JobSubmitRequest, JobSubmitResponse
 
 router = APIRouter()
 
+def validate_retained_context(context, metrics):
+    from hashlib import sha256
+    from server.memory_policy import validate_context
+    binding = metrics.get("workspace_binding_sha256")
+    if binding is not None and binding != sha256(storage.job_journal.binding.encode()).hexdigest():
+        raise HTTPException(409, "Retained job belongs to another workspace generation")
+    validate_context(context)
+
+
 @router.get("/jobs/status")
 def runner_status():
     return job_runner.status()
+
+
+@router.get("/jobs/requests/{request_id}")
+def lookup_request(request_id: str):
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
+        raise HTTPException(400, "Invalid retained generation request")
+    from server.memory_policy import validate_context
+    try:
+        rows = [storage.job_journal.lookup_request(request_id), *[storage.job_journal.lookup_request(request_id + "." + str(i)) for i in range(4)]]
+    except JobConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    jobs = []
+    for row in rows:
+        if row:
+            validate_context(row.get("request", {}).get("generation_context") or {})
+            jobs.append({key: row.get(key) for key in ("job_id", "status", "mode", "provider", "model", "metrics")})
+    if not jobs:
+        raise HTTPException(404, "No retained admission for this request; execution remains unknown")
+    return dict(request_id=request_id, jobs=jobs, automatic_replay=False)
 
 
 @router.post("/jobs/submit", response_model=JobSubmitResponse)
@@ -34,7 +65,16 @@ def submit_job(request: JobSubmitRequest) -> JobSubmitResponse:
 
     preflight_deployment(request_model)
     request_data = request_model.model_dump(exclude={"job_id"})
-    job_id = storage.new_job(request.mode, request_data, status="queued")
+    try:
+        job_id, created = storage.admit_job(request.mode, request_data, request_id=request.request_id)
+    except JobConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        raise HTTPException(503, "Durable job admission unavailable") from exc
+    if not created:
+        retained = storage.get_job(job_id)
+        validate_retained_context(retained.request.get("generation_context") or {}, retained.metrics)
+        return JobSubmitResponse(job_id=job_id, status=retained.status, mode=request.mode, provider=retained.provider, model=retained.model, status_url=f"/jobs/{job_id}", events_url=f"/jobs/{job_id}/events")
     try:
         job_runner.submit(
             job_id,
@@ -68,8 +108,7 @@ def get_job(job_id: str) -> JobStatus:
     job = storage.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-    from server.memory_policy import validate_context
-    validate_context(job.request.get("generation_context") or {})
+    validate_retained_context(job.request.get("generation_context") or {}, job.metrics)
     return job
 
 
@@ -77,8 +116,7 @@ def get_job(job_id: str) -> JobStatus:
 def job_receipt(job_id: str):
     try:
         value = storage.read_job_receipt(job_id)
-        from server.memory_policy import validate_context
-        validate_context(value.get("memory_conditioning") or {})
+        validate_retained_context(value.get("memory_conditioning") or {}, value.get("metrics") or {})
         return value
     except FileNotFoundError as exc:
         raise HTTPException(404, "No retained lifecycle receipt") from exc
@@ -121,9 +159,8 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
                 return
 
             payload = job.model_dump()
-            from server.memory_policy import validate_context
             try:
-                validate_context(job.request.get("generation_context") or {})
+                validate_retained_context(job.request.get("generation_context") or {}, job.metrics)
             except HTTPException:
                 await websocket.send_json({"job_id": job_id, "status": "withheld_or_unavailable"})
                 return
