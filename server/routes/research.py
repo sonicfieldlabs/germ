@@ -14,6 +14,8 @@ router = APIRouter(prefix="/research")
 
 @router.get("/options")
 def options():
+    from server.instrument_capabilities import catalog
+
     entries = []
     for tool, name, profile in [
         ("rave-guitar", "RAVE · IIL guitar", "noncommercial_research"),
@@ -23,10 +25,10 @@ def options():
             config = deployment(tool)
             available = True
             reason = None
-        except (ValueError, OSError, KeyError) as exc:
+        except (ValueError, OSError, KeyError):
             config = {}
             available = False
-            reason = str(exc)
+            reason = "Research tool is unavailable; check its deployment configuration"
         entries.append(
             dict(
                 id=tool,
@@ -45,6 +47,7 @@ def options():
             for n in ["Demucs separation", "Music Flamingo", "SheetSage2", "YuE2"]
         ],
         jobs=recent(),
+        instruments=catalog(),
     )
 
 

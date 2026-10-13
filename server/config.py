@@ -97,6 +97,10 @@ def _int_from_env(
     return value
 
 
+def provider_default_model(provider: str) -> str:
+    return {"stable_audio_mlx": "sm-sfx", "stable_audio_python": "small-sfx"}.get(provider, "mock-sine")
+
+
 class Settings:
     server_name = PRODUCT_NAME
     engine_name = "stable-audio-3"
@@ -118,9 +122,9 @@ class Settings:
         ) or "mock"
         self.default_model = _env(
             "GERM_DEFAULT_MODEL",
-            "small-sfx",
+            provider_default_model(self.active_provider),
             legacy="GERMINATOR_DEFAULT_MODEL",
-        ) or "small-sfx"
+        ) or (provider_default_model(self.active_provider))
         self.default_device = _env(
             "GERM_DEFAULT_DEVICE",
             "auto",

@@ -56,14 +56,13 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
     assert '"torchaudio==2.10.0"' in project
 
 
-def test_source_candidate_matches_runtime_without_relabeling_the_published_release() -> None:
-    assert __version__ == "0.6.2"
-    assert 'version = "0.6.2"' in _read("pyproject.toml")
-    assert "Current source candidate: `0.6.2` (unpublished)." in _read("README.md")
-    assert 'version: "0.6.1"' in _read("CITATION.cff")
-    assert 'date-released: "2026-09-12"' in _read("CITATION.cff")
-    assert 'MARKETING_VERSION="0.6.1"' in _read("apps/macos/script/build_and_run.sh")
-    assert 'BUNDLE_VERSION="9"' in _read("apps/macos/script/build_and_run.sh")
+def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
+    assert f'version = "{__version__}"' in _read("pyproject.toml")
+    assert f"Current source candidate: `{__version__}` (unpublished)." in _read("README.md")
+    assert f'version: "{__version__}"' in _read("CITATION.cff")
+    assert "date-released:" not in _read("CITATION.cff")
+    assert f'MARKETING_VERSION="{__version__}"' in _read("apps/macos/script/build_and_run.sh")
+    assert 'BUNDLE_VERSION="10"' in _read("apps/macos/script/build_and_run.sh")
 
 
 def test_openapi_operation_ids_are_present_and_unique() -> None:

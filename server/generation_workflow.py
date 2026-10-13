@@ -124,8 +124,10 @@ def execute(body):
                         masa=masa,
                     )
                 )
-            except (ValueError, OSError, KeyError) as exc:
-                gaps.append(dict(metadata_file=filename, reason=str(exc)))
+            except (ValueError, OSError, KeyError):
+                gaps.append(
+                    dict(metadata_file=filename, reason="Retained output verification failed")
+                )
         if not result.metadata_files:
             gaps.append(dict(reason="Completed provider result has no retained metadata"))
     subsequent = []
@@ -155,9 +157,13 @@ def execute(body):
                         result=listened.model_dump(),
                     )
                 )
-            except Exception as exc:
+            except Exception:
                 subsequent.append(
-                    dict(status="error", generation_akousma_id=link["akousma_id"], error=str(exc))
+                    dict(
+                        status="error",
+                        generation_akousma_id=link["akousma_id"],
+                        error="Subsequent listening failed; the generation remains retained",
+                    )
                 )
     return dict(
         contract="germ/linked-generation/v0.1",

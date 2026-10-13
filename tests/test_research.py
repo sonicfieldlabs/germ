@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+
 from server.main import app
-from server.registry import storage
-from server.research.deployment import sha, deployment
-from server.research.requests import ResearchRequest
 from server.providers import research_provider as module
+from server.registry import storage
+from server.research.deployment import deployment, sha
+from server.research.requests import ResearchRequest
 from server.schemas import AudioToAudioRequest
 
 
@@ -23,6 +25,22 @@ def test_optional_and_profile_gate(monkeypatch, tmp_path):
     monkeypatch.delenv("GERM_RESEARCH_PROFILE", raising=False)
     with pytest.raises(ValueError):
         deployment("rave-guitar")
+
+
+def test_options_do_not_expose_deployment_exception(monkeypatch):
+    from server.routes import research
+
+    def fail(tool):
+        raise OSError("private deployment path and credential details")
+
+    monkeypatch.setattr(research, "deployment", fail)
+    result = research.options()
+    assert result["tools"]
+    for tool in result["tools"]:
+        assert not tool["available"]
+        assert tool["reason"] == (
+            "Research tool is unavailable; check its deployment configuration"
+        )
 
 
 def test_request_bounds():
@@ -81,8 +99,8 @@ def test_artifact_hash_and_path_gate():
 
 
 def test_cancellation_terminates_child_and_keeps_original(monkeypatch):
-    import soundfile as sf
     import numpy as np
+    import soundfile as sf
 
     p = storage.audio_dir / "research-cancel.wav"
     sf.write(p, np.zeros(48000), 48000)
@@ -98,6 +116,7 @@ def test_cancellation_terminates_child_and_keeps_original(monkeypatch):
     processes = []
 
     class Process:
+        pid = 424242
         returncode = None
 
         def __init__(self, *args, **kwargs):
@@ -114,6 +133,12 @@ def test_cancellation_terminates_child_and_keeps_original(monkeypatch):
             return -15
 
     monkeypatch.setattr(module.subprocess, "Popen", Process)
+
+    def kill_group(pid, signal):
+        assert pid == 424242
+        processes[-1].terminate()
+
+    monkeypatch.setattr(module.os, "killpg", kill_group)
     provider = module.ResearchProvider(storage)
     job = storage.new_job("audio-to-audio", {}, status="running")
     monkeypatch.setattr(provider, "is_job_cancelled", lambda _: bool(processes))
@@ -139,8 +164,9 @@ def test_cancellation_terminates_child_and_keeps_original(monkeypatch):
 
 
 def test_failed_publication_does_not_leave_completed_sound(monkeypatch):
-    import soundfile as sf
     import numpy as np
+    import soundfile as sf
+
     from server.routes import library
 
     p = storage.audio_dir / "publication-input.wav"
