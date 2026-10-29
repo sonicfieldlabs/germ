@@ -17,7 +17,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.31",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [tool.uv]
