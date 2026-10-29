@@ -63,7 +63,7 @@ checks but not a creative quality demonstration.
 
 | Path | Operating system | Hardware and software |
 | --- | --- | --- |
-| Mock service | macOS or Linux | Python 3.10+, `uv`; CPU only; no weights |
+| Mock service | macOS or Linux | Python 3.11+, `uv`; CPU only; no weights |
 | Stable Audio 3 Small, MLX | Apple Silicon macOS | Official `sa3` optimized tools and separately accepted Small SFX or Small Music weights |
 | Stable Audio 3 Small, Python | macOS or Linux | Upstream CPU path or compatible acceleration; 8 GB minimum and 16 GB system RAM suggested |
 | Stable Audio 3 Medium, Python | Linux/NVIDIA | Compatible CUDA GPU; upstream reports about 6.52 GB peak VRAM, while GERM suggests 24 GB system RAM |
@@ -230,7 +230,7 @@ Choose **GERM only** or **Oída + GERM** in the terminal assistant. GERM remains
 in this repository; the installer only coordinates its source, dependencies,
 provider, models, and local configuration.
 
-Requirements: Python 3.10+ and `uv`.
+Requirements: Python 3.11+ and `uv`.
 
 ```bash
 uv sync --extra dev
