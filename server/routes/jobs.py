@@ -38,7 +38,17 @@ def lookup_request(request_id: str):
         raise HTTPException(400, "Invalid retained generation request")
     from server.memory_policy import validate_context
     try:
-        rows = [storage.job_journal.lookup_request(request_id), *[storage.job_journal.lookup_request(request_id + "." + str(i)) for i in range(4)]]
+        # A render's jobs carry its id and their index joined with "-" (see workspace render); the
+        # "." form is kept for the lookup only, since the job contract never admitted it.
+        rows = [
+            storage.job_journal.lookup_request(request_id),
+            *[
+                storage.job_journal.lookup_request(request_id + sep + str(i))
+                for sep in ("-", ".")
+                for i in range(4)
+                if len(request_id) + len(sep) + 1 <= 100
+            ],
+        ]
     except JobConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     jobs = []

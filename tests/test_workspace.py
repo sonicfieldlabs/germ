@@ -467,3 +467,44 @@ def test_memory_replay_checks_the_named_item_as_the_full_listing_would(monkeypat
     monkeypatch.setattr(policy, "validate_context", refuse)
     assert client.get("/workspace/library/by-memory/akm_one").json()["items"] == []
     assert all(item["sound_id"] != "conditioned" for item in library.library_items())
+
+
+def test_an_identified_render_gives_its_jobs_ids_the_job_contract_admits(monkeypatch, tmp_path):
+    """A listening circuit's sounding names its render; each job's id must still validate.
+
+    Found on 30 October: the render joined its id and the job index with ".", which the job
+    contract refuses, so every identified render failed with a 500.
+    """
+    _, path, key, item = external_audio(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry.get("stable_audio_mlx"), "is_available", lambda: True)
+    admitted = []
+
+    def submit(job):
+        admitted.append(job)
+
+        class Ticket:
+            def model_dump(self):
+                return {"job_id": "test", "status": "queued"}
+
+        return Ticket()
+
+    monkeypatch.setattr(workspace, "submit_job", submit)
+    rid = "4f483656957f9e0ef1befaa405d4cf9cf9548fd625abf559562f9ab331b8d604"
+    r = client.post(
+        "/workspace/render",
+        json={"mode": "audio", "sound_keys": [key], "duration": 5, "request_id": rid},
+    )
+    assert r.status_code == 200, r.text
+    assert [job.request_id for job in admitted] == [rid + "-0"]
+
+
+def test_a_render_id_finds_the_jobs_it_admitted(monkeypatch):
+    """Khipu settles an identified render by its id; the jobs carry that id and their index."""
+    rid = "797996b2b10c8fdce00d86b4833a448f0a48006621fceafa4bdeb66a9a34551e"
+    row = {"job_id": "job-1", "status": "running", "mode": "text-to-audio", "provider": "stable_audio_mlx",
+           "model": "sm-music", "metrics": {}, "request": {"generation_context": {}}}
+    monkeypatch.setattr(storage.job_journal, "lookup_request", lambda key: row if key == rid + "-0" else None)
+    found = client.get(f"/jobs/requests/{rid}")
+    assert found.status_code == 200, found.text
+    assert [j["job_id"] for j in found.json()["jobs"]] == ["job-1"]
+    assert client.get("/jobs/requests/unknown").status_code == 404
