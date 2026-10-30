@@ -496,3 +496,15 @@ def test_an_identified_render_gives_its_jobs_ids_the_job_contract_admits(monkeyp
     )
     assert r.status_code == 200, r.text
     assert [job.request_id for job in admitted] == [rid + "-0"]
+
+
+def test_a_render_id_finds_the_jobs_it_admitted(monkeypatch):
+    """Khipu settles an identified render by its id; the jobs carry that id and their index."""
+    rid = "797996b2b10c8fdce00d86b4833a448f0a48006621fceafa4bdeb66a9a34551e"
+    row = {"job_id": "job-1", "status": "running", "mode": "text-to-audio", "provider": "stable_audio_mlx",
+           "model": "sm-music", "metrics": {}, "request": {"generation_context": {}}}
+    monkeypatch.setattr(storage.job_journal, "lookup_request", lambda key: row if key == rid + "-0" else None)
+    found = client.get(f"/jobs/requests/{rid}")
+    assert found.status_code == 200, found.text
+    assert [j["job_id"] for j in found.json()["jobs"]] == ["job-1"]
+    assert client.get("/jobs/requests/unknown").status_code == 404
