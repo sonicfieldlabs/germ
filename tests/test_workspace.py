@@ -467,3 +467,32 @@ def test_memory_replay_checks_the_named_item_as_the_full_listing_would(monkeypat
     monkeypatch.setattr(policy, "validate_context", refuse)
     assert client.get("/workspace/library/by-memory/akm_one").json()["items"] == []
     assert all(item["sound_id"] != "conditioned" for item in library.library_items())
+
+
+def test_an_identified_render_gives_its_jobs_ids_the_job_contract_admits(monkeypatch, tmp_path):
+    """A listening circuit's sounding names its render; each job's id must still validate.
+
+    Found on 30 October: the render joined its id and the job index with ".", which the job
+    contract refuses, so every identified render failed with a 500.
+    """
+    _, path, key, item = external_audio(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry.get("stable_audio_mlx"), "is_available", lambda: True)
+    admitted = []
+
+    def submit(job):
+        admitted.append(job)
+
+        class Ticket:
+            def model_dump(self):
+                return {"job_id": "test", "status": "queued"}
+
+        return Ticket()
+
+    monkeypatch.setattr(workspace, "submit_job", submit)
+    rid = "4f483656957f9e0ef1befaa405d4cf9cf9548fd625abf559562f9ab331b8d604"
+    r = client.post(
+        "/workspace/render",
+        json={"mode": "audio", "sound_keys": [key], "duration": 5, "request_id": rid},
+    )
+    assert r.status_code == 200, r.text
+    assert [job.request_id for job in admitted] == [rid + "-0"]
