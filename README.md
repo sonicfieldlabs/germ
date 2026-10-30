@@ -8,7 +8,7 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current source candidate: `0.7.0` (unpublished).
+Current source candidate: `0.8.0` (unpublished): the generator catalogue names each model's purpose (music, sfx or any), size and a recommended duration, so a listening loop can sound with Small Music after a musical ear and Small SFX otherwise. 0.7.0 is the GitHub release of 14 October 2026.
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
