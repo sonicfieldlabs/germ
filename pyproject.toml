@@ -22,8 +22,8 @@ dependencies = [
 
 [tool.uv]
 override-dependencies = [
-    "torch==2.10.0",
-    "torchaudio==2.10.0",
+    "torch==2.13.0",
+    "torchaudio==2.11.0",
 ]
 
 [tool.uv.sources]
@@ -41,6 +41,7 @@ Issues = "https://github.com/sonicfieldlabs/germ/issues"
 room = ["pyroomacoustics==0.10.1", "scipy>=1.14,<2"]
 spectral = ["akousmata>=0.8.3; python_version >= '3.11'"]
 python-provider = [
+    "torchcodec==0.17.0",
     "fsspec>=2026.6.0",
     "transformers>=5.21.0",
     "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@fa5ee841dd49bae0fa361fac26904adc27fd400e",
