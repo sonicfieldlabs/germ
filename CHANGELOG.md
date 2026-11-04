@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 — Unreleased
+
+- The generator catalogue (`descriptor`, `/workspace/capabilities` generators)
+  names each model's `purpose` (`music`, `sfx` or `any`), `size` (`small`,
+  `medium` or `cpu`) and a `recommended_duration` within its bounds. Stable Audio 3
+  Small Music and Small SFX are the efficient pair for a listening loop that
+  sounds by what it heard and then listens to what it sounded. No provider,
+  admission or model behaviour changed.
+
 ## 0.7.0 — 2026-10-08
 
 - Persist generation request identities before acknowledgement, recover retained requests after restart, and refuse uncertain replay. Preserve cancellation and deadline uncertainty explicitly.

@@ -299,7 +299,10 @@ def render(request: Render):
                 fields["lineage"]["operation"] = job_mode
             fields["generation_context"]["operation"] = job_mode
         prepared.append(
-            JobSubmitRequest(mode=job_mode, request=fields, request_id=request.request_id + "." + str(len(prepared)) if request.request_id else None)
+            # A job's id joins the render's id and its index with "-": the job contract admits only
+            # letters, digits, "_" and "-", so a "." refused every identified render (found on
+            # 30 October by a listening circuit's sounding).
+            JobSubmitRequest(mode=job_mode, request=fields, request_id=request.request_id + "-" + str(len(prepared)) if request.request_id else None)
         )
     state = job_runner.status()
     if request.request_id is None and state["capacity"] - state["outstanding"] < len(prepared):

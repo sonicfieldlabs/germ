@@ -44,6 +44,20 @@ MODELS = {
 }
 
 
+#: What each generator is for, so a host picks by what was heard instead of hard-coding a model:
+#: music, sfx (effects, textures, soundscapes) or any. Small checkpoints are the efficient default
+#: for a loop that sounds and then listens to what it sounded.
+PURPOSES = {
+    "sm-sfx": ("sfx", "small", 10),
+    "sm-music": ("music", "small", 20),
+    "medium": ("any", "medium", 30),
+    "synth-additive": ("sfx", "cpu", 5),
+    **{f"synth-{name}": ("sfx", "cpu", 5) for name in ("chirp", "band-noise", "fm", "pulse")},
+    "synth-string": ("music", "cpu", 5),
+    "ace-turbo": ("music", "medium", 30),
+}
+
+
 def descriptor(identifier):
     if identifier not in MODELS:
         raise HTTPException(422, "Unknown generation model")
@@ -56,6 +70,9 @@ def descriptor(identifier):
         min_duration=minimum,
         max_duration=maximum,
         operations=operations,
+        purpose=PURPOSES[identifier][0],
+        size=PURPOSES[identifier][1],
+        recommended_duration=PURPOSES[identifier][2],
     )
 
 
