@@ -43,7 +43,7 @@ spectral = ["akousmata>=0.8.3; python_version >= '3.11'"]
 python-provider = [
     "torchcodec==0.17.0",
     "fsspec>=2026.6.0",
-    "transformers>=5.22.1",
+    "transformers>=5.22.2",
     "stable-audio-3 @ git+https://github.com/Stability-AI/stable-audio-3.git@fa5ee841dd49bae0fa361fac26904adc27fd400e",
 ]
 dev = [
