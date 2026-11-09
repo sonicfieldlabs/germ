@@ -7,16 +7,16 @@ license = "MPL-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "Sonic Field Labs" }]
 dependencies = [
-    "anyio>=4.14.2,<5",
+    "anyio>=4.16.0,<5",
     "akousma>=0.8.4",
     "numpy>=1.26,<3",
     "soundfile>=0.14.0,<0.15",
     "akouo-contract>=0.10.1",
     "fastapi>=0.162.0",
     "httpx>=0.27.0",
-    "pydantic>=2.14.2",
+    "pydantic>=2.14.3",
     "python-dotenv>=1.2.4",
-    "python-multipart>=0.0.31",
+    "python-multipart>=0.0.33",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -49,7 +49,7 @@ python-provider = [
 dev = [
     "httpx2>=2.16.0,<3",
     "pytest>=9.2.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.4",
 ]
 
 [tool.pytest.ini_options]
