@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.8.0 — Unreleased
+## 0.8.1 — Unreleased
+
+- Use the store libraries Oída and Khipu use: akousma 0.11.0, akousmata 0.10.0
+  (spectral extra) and akouo-contract 0.13.0, vendored with the same bytes. The
+  shared store's opening no longer rereads every record under its derivatives
+  lock (akousmata 0.10.0).
+
+## 0.8.0 — 2026-11-04
 
 - The generator catalogue (`descriptor`, `/workspace/capabilities` generators)
   names each model's `purpose` (`music`, `sfx` or `any`), `size` (`small`,

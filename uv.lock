@@ -14,14 +14,14 @@ overrides = [
 
 [[package]]
 name = "akouo-contract"
-version = "0.10.1"
-source = { path = "vendor/akouo_contract-0.10.1-py3-none-any.whl" }
+version = "0.13.0"
+source = { path = "vendor/akouo_contract-0.13.0-py3-none-any.whl" }
 dependencies = [
     { name = "jsonschema" },
     { name = "referencing" },
 ]
 wheels = [
-    { filename = "akouo_contract-0.10.1-py3-none-any.whl", hash = "sha256:ed3ffdfcb02cf794f7303351a6e473259b78eba351efedb4b98645b5622649c2" },
+    { filename = "akouo_contract-0.13.0-py3-none-any.whl", hash = "sha256:27b8e41499056268d23fe958dd40417d9e4cb772ab3d170e77ef0bb669c6fcb2" },
 ]
 
 [package.metadata]
@@ -32,14 +32,14 @@ requires-dist = [
 
 [[package]]
 name = "akousma"
-version = "0.8.4"
-source = { path = "vendor/akousma-0.8.4-py3-none-any.whl" }
+version = "0.11.0"
+source = { path = "vendor/akousma-0.11.0-py3-none-any.whl" }
 dependencies = [
     { name = "jsonschema" },
     { name = "referencing" },
 ]
 wheels = [
-    { filename = "akousma-0.8.4-py3-none-any.whl", hash = "sha256:ed3c2c41dbc20804deae9da7fb9d5797c3074deb0e03a899ce47adb650e34539" },
+    { filename = "akousma-0.11.0-py3-none-any.whl", hash = "sha256:3f5e086d285ac36bf80be506d85756f7934d76357cd77822e114dccf6a0e87ca" },
 ]
 
 [package.metadata]
@@ -52,8 +52,8 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "akousmata"
-version = "0.8.3"
-source = { path = "vendor/akousmata-0.8.3-py3-none-any.whl" }
+version = "0.10.0"
+source = { path = "vendor/akousmata-0.10.0-py3-none-any.whl" }
 dependencies = [
     { name = "akouo-contract" },
     { name = "akousma" },
@@ -64,13 +64,13 @@ dependencies = [
     { name = "uvicorn" },
 ]
 wheels = [
-    { filename = "akousmata-0.8.3-py3-none-any.whl", hash = "sha256:b5138da23d7fe5289e40cc02816576ed21519aa217ffbd69052d2a2e7572213e" },
+    { filename = "akousmata-0.10.0-py3-none-any.whl", hash = "sha256:7c12297ddf7d40e4c579d40581d8c232ee4b55271c8362bdd5b5dc7f72f25508" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "akouo-contract", specifier = ">=0.10.1" },
-    { name = "akousma", specifier = ">=0.8.4" },
+    { name = "akouo-contract", specifier = ">=0.12.1" },
+    { name = "akousma", specifier = ">=0.11.0" },
     { name = "fastapi", specifier = ">=0.139" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.12,<3" },
@@ -397,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "germ"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "akouo-contract" },
@@ -436,9 +436,9 @@ spectral = [
 
 [package.metadata]
 requires-dist = [
-    { name = "akouo-contract", path = "vendor/akouo_contract-0.10.1-py3-none-any.whl" },
-    { name = "akousma", path = "vendor/akousma-0.8.4-py3-none-any.whl" },
-    { name = "akousmata", marker = "python_full_version >= '3.11' and extra == 'spectral'", path = "vendor/akousmata-0.8.3-py3-none-any.whl" },
+    { name = "akouo-contract", path = "vendor/akouo_contract-0.13.0-py3-none-any.whl" },
+    { name = "akousma", path = "vendor/akousma-0.11.0-py3-none-any.whl" },
+    { name = "akousmata", marker = "python_full_version >= '3.11' and extra == 'spectral'", path = "vendor/akousmata-0.10.0-py3-none-any.whl" },
     { name = "anyio", specifier = ">=4.16.0,<5" },
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "fsspec", marker = "extra == 'python-provider'", specifier = ">=2026.6.0" },
