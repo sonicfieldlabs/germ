@@ -1,8 +1,17 @@
+# Portable PR checks run once; full platform qualification is deliberate.
 name: CI
 
 on:
-  push:
   pull_request:
+    branches:
+    - main
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run complete platform and release qualification (prefer local execution)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -69,6 +78,7 @@ jobs:
         run: node scripts/smoke_dashboard.mjs
 
   optional-native:
+    if: inputs.full == true
     name: Optional native audio fixture
     runs-on: macos-latest
     timeout-minutes: 30

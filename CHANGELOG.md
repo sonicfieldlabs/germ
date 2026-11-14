@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.8.0 — Unreleased
+## 0.8.1 — Unreleased
+
+- Use the store libraries Oída and Khipu use: akousma 0.11.0, akousmata 0.10.0
+  (spectral extra) and akouo-contract 0.13.1, vendored with the same bytes. The
+  shared store's opening no longer rereads every record under its derivatives
+  lock (akousmata 0.10.0).
+
+## 0.8.0 — 2026-11-04
 
 - The generator catalogue (`descriptor`, `/workspace/capabilities` generators)
   names each model's `purpose` (`music`, `sfx` or `any`), `size` (`small`,
@@ -15,7 +22,7 @@
 - Require patched fsspec in the optional model environment; retain the two narrowly reviewed Torch exceptions.
 - Source release only; no package registry publication or service activation.
 
-## Unreleased — Cosmoaudition freshness admission
+## 0.6.2 — not released on its own; shipped in 0.7.0: Cosmoaudition freshness admission
 
 - Package 0.6.2 with receiving-time freshness, repaired owner packages and the immutable Stable Audio source revision.
 - Reevaluate source clocks and age limits when receiving generation frames, modulation routes and direct mappings. Expired, future, archive and unknown live evidence cannot select parameter values, including when held/uncertainty acceptance is enabled.

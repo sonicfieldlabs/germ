@@ -38,11 +38,11 @@ def test_runtime_entrypoints_share_the_canonical_germ_port() -> None:
 
 def test_akousma_dependency_matches_the_current_earworm_store_contract() -> None:
     project = _read("pyproject.toml")
-    assert '"akousma>=0.8.4"' in project
+    assert '"akousma>=0.11.0"' in project
     # Current policy APIs and object safety must survive an isolated wheel install.
-    assert 'path = "vendor/akousma-0.8.4-py3-none-any.whl"' in project
-    assert '"akouo-contract>=0.10.1"' in project
-    assert 'path = "vendor/akouo_contract-0.10.1-py3-none-any.whl"' in project
+    assert 'path = "vendor/akousma-0.11.0-py3-none-any.whl"' in project
+    assert '"akouo-contract>=0.13.1"' in project
+    assert 'path = "vendor/akouo_contract-0.13.1-py3-none-any.whl"' in project
     from akouo_contract.record_workflows import derivation_plan
     from akousma.record_evolution import next_record_errors
     from akousma.retained_policy import retained_covenant, blocks_untyped_prose
