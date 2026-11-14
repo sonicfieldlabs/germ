@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.1 — Unreleased
+## 0.8.1 — 2026-11-14
 
 - Use the store libraries Oída and Khipu use: akousma 0.11.0, akousmata 0.10.0
   (spectral extra) and akouo-contract 0.13.1, vendored with the same bytes. The
