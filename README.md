@@ -8,10 +8,10 @@ listened to, and traced through lineage. A listening from Oída can become a
 prompt or source in GERM; a successful render can become a descendant in
 Akousmata and return to Oída for another listening.
 
-Current source candidate: `0.8.1` (unpublished).
+Current release: `0.8.1` (GitHub, 14 November 2026).
 Its generator catalogue names each model's purpose (music, sfx or any), size and a
 recommended duration, so a listening loop can sound with Small Music after a musical
-ear and Small SFX otherwise. 0.7.0 is the GitHub release of 14 October 2026.
+ear and Small SFX otherwise. 0.8.0 was the release of 4 November and 0.7.0 that of 14 October 2026.
 
 GERM is part of two Sonic Field Labs constellations: it cultivates within
 [The Listening Stack](https://sonicfield.org/stack) and describes its material
@@ -201,12 +201,15 @@ listening, re-listening, sonic memory, and cultivation.
 
 | Component | Version / contract | GERM integration |
 | --- | --- | --- |
-| [OÍDA](https://github.com/sonicfieldlabs/oida) | 0.10.0 / `oida/gateway/v0.6` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
-| [Earworm](https://github.com/sonicfieldlabs/earworm) | 0.7.0 / Akousma spec 1.6 / `earworm/auditum/v2` | Preserve accountable listener types, route decisions, honest absence, disagreement, provenance, lineage, and additive revisions without treating them as equivalent. |
-| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | 0.7.0 | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata and retain supplied auditum blocks. |
-| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | 0.9.2 / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
-| [Algophony](https://github.com/sonicfieldlabs/algophony) | 0.5.2 | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
-| [ORAM](https://github.com/sonicfieldlabs/oram) | 0.4.1 | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
+| [OÍDA](https://github.com/sonicfieldlabs/oida) | `oida/gateway/v0.6` | Re-listen to generated sound, derive editable prompts, and retain a listening only when requested. |
+| [Earworm](https://github.com/sonicfieldlabs/earworm) | `akousma 0.11.0` (pinned) / Akousma spec 1.6 / `earworm/auditum/v2` | Preserve accountable listener types, route decisions, honest absence, disagreement, provenance, lineage, and additive revisions without treating them as equivalent. |
+| [Akousmata](https://github.com/sonicfieldlabs/akousmata) | `akousmata 0.10.0` (pinned; optional `spectral` extra) | Import remembered sound, prompt, or lineage; write successful generations back as child akousmata and retain supplied auditum blocks. |
+| [AKOÚŌ](https://github.com/sonicfieldlabs/akouo) | `akouo-contract 0.13.1` (pinned) / `akouo/v0.9` | Keeps embodied reports distinct from machine inference while structuring evidence permissions, apparatus, temporal passes, and covenants. |
+| [Algophony](https://github.com/sonicfieldlabs/algophony) | No version pinned | Can evaluate lineage-bearing generation batches without changing GERM's generation state. |
+| [ORAM](https://github.com/sonicfieldlabs/oram) | No version pinned | Uses the local GERM-compatible generation surface for constrained sound summoning and transformation. |
+
+The versions in this table are the ones this source pins. Each project's current
+release is on [listening.md's Stack page](https://listening.md/stack).
 
 The core handoff is:
 

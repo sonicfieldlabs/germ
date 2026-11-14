@@ -58,7 +58,12 @@ def test_stable_audio_uses_the_audited_torch_override() -> None:
 
 def test_release_version_is_consistent_across_runtime_and_packaging() -> None:
     assert f'version = "{__version__}"' in _read("pyproject.toml")
-    assert f"Current source candidate: `{__version__}` (unpublished)." in _read("README.md")
+    # The README names this version, as a candidate before its release and as the release after it.
+    readme = _read("README.md")
+    assert (
+        f"Current source candidate: `{__version__}` (unpublished)." in readme
+        or f"Current release: `{__version__}` (" in readme
+    )
     assert f'version: "{__version__}"' in _read("CITATION.cff")
     assert "date-released:" not in _read("CITATION.cff")
     assert f'MARKETING_VERSION="{__version__}"' in _read("apps/macos/script/build_and_run.sh")
